@@ -1,0 +1,121 @@
+<template>
+  <sc-page-shell tone="blue">
+    <view class="hero-panel vision-hero">
+      <text class="hero-kicker">VISION MEAL</text>
+      <text class="hero-title">拍一下，知道怎么吃。</text>
+      <text class="hero-subtitle">先识别餐盘，再匹配真实菜品和健康替代推荐。</text>
+    </view>
+
+    <sc-state-card v-if="store.error.value" type="error" title="视觉服务暂不可用" :desc="store.error.value" action-text="去菜单检索" @action="openDishes" />
+
+    <view class="panel-card camera-card">
+      <image v-if="imagePath" class="cover-image preview" :src="imagePath" mode="aspectFill" />
+      <view v-else class="placeholder">
+        <image class="camera-icon" src="/static/icons/camera.png" mode="aspectFit" />
+        <text class="placeholder-title">添加餐盘图片</text>
+        <text class="placeholder-desc">支持拍照或相册，建议光线充足。</text>
+      </view>
+      <view class="button-row">
+        <button class="secondary-btn" @tap="chooseImage">选择图片</button>
+        <button class="primary-btn" :loading="loading" :disabled="!imagePath" @tap="analyze">开始分析</button>
+      </view>
+      <text v-if="message" class="notice">{{ message }}</text>
+    </view>
+
+    <view v-if="result" class="panel-card">
+      <sc-section eyebrow="RESULT" :title="result.detectedName || '餐食分析'" :desc="result.summary || result.advice" />
+      <view v-if="result.nutrition" class="summary-grid">
+        <view><text class="num">{{ result.nutrition.calories || 0 }}</text><text>kcal</text></view>
+        <view><text class="num">{{ result.nutrition.protein || 0 }}g</text><text>蛋白</text></view>
+        <view><text class="num">{{ result.confidence || '—' }}</text><text>置信度</text></view>
+      </view>
+    </view>
+
+    <view v-if="matchedDishes.length" class="panel-card">
+      <sc-section eyebrow="MATCHED DISHES" title="真实菜品匹配" />
+      <view class="dish-stack">
+        <sc-dish-card v-for="dish in matchedDishes" :key="dish.id" :dish="dish" badge="可买" @tap="openDishes" />
+      </view>
+    </view>
+
+    <sc-state-card v-if="result && !matchedDishes.length" type="empty" title="未匹配到真实菜品" desc="可以去菜单检索相近菜品，或换一张更清晰的餐盘照片。" action-text="去菜单" @action="openDishes" />
+  </sc-page-shell>
+</template>
+
+<script setup>
+import { computed, ref } from 'vue';
+import { onShow } from '@dcloudio/uni-app';
+import { imageToBase64 } from '../../utils/format.js';
+import { useCanteenStore } from '../../stores/canteenStore.js';
+
+const store = useCanteenStore();
+const imagePath = ref('');
+const result = ref(null);
+const message = ref('');
+const loading = ref(false);
+const matchedDishes = computed(() => result.value?.matches || result.value?.recommendations || result.value?.dishes || []);
+
+onShow(() => {
+  if (!store.user.value) uni.redirectTo({ url: '/pages/login/login' });
+});
+function openDishes() { uni.switchTab({ url: '/pages/dishes/dishes' }); }
+
+function chooseImage() {
+  uni.chooseImage({
+    count: 1,
+    sizeType: ['compressed'],
+    sourceType: ['camera', 'album'],
+    success(response) {
+      const file = response.tempFiles?.[0];
+      if (file?.size > 5 * 1024 * 1024) {
+        message.value = '图片不能超过 5MB，请选择压缩图片。';
+        return;
+      }
+      imagePath.value = response.tempFilePaths[0];
+      result.value = null;
+      message.value = '图片已选择，可以开始分析。';
+    }
+  });
+}
+
+async function analyze() {
+  if (!imagePath.value) return;
+  loading.value = true;
+  message.value = '正在读取图片并调用视觉模型，请稍候。';
+  try {
+    result.value = await store.analyzeMealImage({
+      filename: 'miniapp-meal.jpg',
+      contentType: 'image/jpeg',
+      dataBase64: await imageToBase64(imagePath.value)
+    });
+    message.value = '分析完成。';
+  } catch (error) {
+    message.value = error.message;
+  } finally {
+    loading.value = false;
+  }
+}
+</script>
+
+<style scoped>
+.vision-hero { margin-bottom: 24rpx; }
+.preview { height: 430rpx; }
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 430rpx;
+  border-radius: 34rpx;
+  background: linear-gradient(135deg, #eef7ff, #e9f8ef);
+  color: #70877b;
+}
+.camera-icon { font-size: 86rpx; margin-bottom: 18rpx; }
+.placeholder-title { color: #20342b; font-size: 30rpx; font-weight: 950; }
+.placeholder-desc { margin-top: 8rpx; font-size: 23rpx; }
+.button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16rpx; margin-top: 22rpx; }
+.summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14rpx; margin-top: 22rpx; }
+.summary-grid view { padding: 22rpx; border-radius: 26rpx; background: #f4fbef; text-align: center; color: #70877b; font-size: 22rpx; }
+.summary-grid .num { display: block; color: #1f9f72; font-size: 32rpx; font-weight: 950; }
+.dish-stack { display: flex; flex-direction: column; gap: 18rpx; }
+</style>

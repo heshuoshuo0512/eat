@@ -1,0 +1,476 @@
+openapi: 3.1.0
+info:
+  title: Smart Canteen Enterprise MVP API
+  version: 0.5.0
+  description: Database-backed campus smart canteen API with RBAC, tenant management, menu operations, authenticated uploads, RAG, agent, vision meal analysis, AI usage metering and quota governance.
+servers:
+  - url: /api
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        requestId: { type: string }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      description: Public registration always creates a student; role is ignored.
+      properties:
+        username: { type: string }
+        password: { type: string }
+        nickname: { type: string }
+        role: { type: string, description: Ignored; always student. }
+    UploadRequest:
+      type: object
+      required: [filename, contentType, dataBase64]
+      properties:
+        filename: { type: string }
+        contentType: { type: string, enum: [image/png, image/jpeg, image/webp, image/gif] }
+        dataBase64: { type: string }
+    Upload:
+      type: object
+      properties:
+        id: { type: string }
+        filename: { type: string }
+        contentType: { type: string }
+        sizeBytes: { type: integer }
+        storageKey: { type: string, description: Tenant-scoped key in the form tenant_id/upload-uuid.ext; tenant id is sanitized before key generation. }
+        url: { type: string, description: Public URL from PUBLIC_UPLOAD_BASE_URL or S3_PUBLIC_URL. }
+        provider: { type: string, enum: [local, s3], description: local when S3_BUCKET is unset; s3 when S3_BUCKET and S3 client are configured. }
+    AgentRequest:
+      type: object
+      properties:
+        question: { type: string }
+        query: { type: string }
+        profile: { type: object }
+    AiSettings:
+      type: object
+      properties:
+        apiKey: { type: string, description: Full key accepted on write; reads return a mask only. }
+        baseUrl: { type: string }
+        embeddingModel: { type: string }
+        chatModel: { type: string }
+        visionModel: { type: string }
+        timeoutMs: { type: integer }
+    Tenant:
+      type: object
+      required: [id, name, status, plan, aiQuota, storageQuotaMb]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, disabled] }
+        plan: { type: string }
+        aiQuota: { type: integer }
+        storageQuotaMb: { type: integer }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    TenantInput:
+      type: object
+      required: [name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, disabled] }
+        plan: { type: string }
+        aiQuota: { type: integer }
+        storageQuotaMb: { type: integer }
+    MenuItemInput:
+      type: object
+      required: [dishId]
+      properties:
+        dishId: { type: string }
+        price: { type: number }
+        supplyLimit: { type: integer }
+        soldOut: { type: boolean }
+    MenuInput:
+      type: object
+      required: [canteenId, date, mealType]
+      properties:
+        id: { type: string }
+        canteenId: { type: string }
+        date: { type: string, format: date }
+        mealType: { type: string, enum: [breakfast, lunch, dinner, snack] }
+        status: { type: string, enum: [draft, published, archived] }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MenuItemInput' }
+    MenuItem:
+      allOf:
+        - $ref: '#/components/schemas/MenuItemInput'
+        - type: object
+          properties:
+            id: { type: string }
+            tenantId: { type: string }
+            menuId: { type: string }
+            dishName: { type: string }
+            createdAt: { type: string }
+            updatedAt: { type: string }
+    Menu:
+      type: object
+      properties:
+        id: { type: string }
+        tenantId: { type: string }
+        canteenId: { type: string }
+        canteenName: { type: string }
+        date: { type: string, format: date }
+        mealType: { type: string }
+        status: { type: string, enum: [draft, published, archived] }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MenuItem' }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    MenuListResponse:
+      type: object
+      properties:
+        menus:
+          type: array
+          items: { $ref: '#/components/schemas/Menu' }
+        total: { type: integer }
+    TodayMenuResponse:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        mealType: { type: string }
+        menus:
+          type: array
+          items: { $ref: '#/components/schemas/Menu' }
+        dishes:
+          type: array
+          items: { type: object }
+        source: { type: string, enum: [menu, fallback] }
+    AiQuota:
+      type: object
+      properties:
+        quota: { type: integer, description: Monthly successful AI call quota; 0 means unlimited. }
+        used: { type: integer }
+        remaining: { type: integer }
+        period: { type: string, example: '2026-07' }
+    AiUsageLog:
+      type: object
+      properties:
+        id: { type: string }
+        tenantId: { type: string }
+        userId: { type: string }
+        feature: { type: string, enum: [meal-advisor, student-vision, admin-vision-import] }
+        provider: { type: string }
+        model: { type: string }
+        status: { type: string, enum: [success, failure] }
+        inputTokens: { type: integer }
+        outputTokens: { type: integer }
+        imageCount: { type: integer }
+        estimatedCost: { type: number }
+        latencyMs: { type: integer }
+        error: { type: string }
+        createdAt: { type: string }
+    AiUsageResponse:
+      type: object
+      properties:
+        logs:
+          type: array
+          items: { $ref: '#/components/schemas/AiUsageLog' }
+        total: { type: integer }
+        quota: { $ref: '#/components/schemas/AiQuota' }
+        summary:
+          type: array
+          items: { type: object }
+    MenuBatchRequest:
+      type: object
+      required: [action, ids]
+      properties:
+        action: { type: string, enum: [publish, archive] }
+        ids:
+          type: array
+          items: { type: string }
+    MenuBatchResponse:
+      allOf:
+        - $ref: '#/components/schemas/MenuListResponse'
+        - type: object
+          properties:
+            updated: { type: integer }
+paths:
+  /health:
+    get:
+      security: []
+      responses: { '200': { description: OK; X-Request-Id is echoed in headers } }
+  /bootstrap:
+    get:
+      security: []
+      responses: { '200': { description: Full app state } }
+  /auth/login:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: Token and app state }
+        '401': { description: Invalid credentials }
+  /auth/register:
+    post:
+      security: []
+      description: Creates a student user. Any role field is ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201': { description: Token and app state for new student }
+        '409': { description: Username already exists }
+  /canteens:
+    get:
+      security: []
+      responses: { '200': { description: Tenant-scoped canteen list } }
+  /stalls:
+    get:
+      security: []
+      responses: { '200': { description: Tenant-scoped stall list } }
+  /dishes:
+    get:
+      security: []
+      parameters:
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: maxPrice, in: query, schema: { type: number } }
+        - { name: taste, in: query, schema: { type: string } }
+        - { name: halalOnly, in: query, schema: { type: boolean } }
+      responses: { '200': { description: Tenant-scoped dish list } }
+  /dishes/{id}:
+    get:
+      security: []
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Dish detail with stall, canteen and reviews }
+        '404': { description: Dish not found }
+  /rankings:
+    get:
+      security: []
+      responses: { '200': { description: Cached rankings } }
+  /recommend:
+    get:
+      security: []
+      responses: { '200': { description: Rule-based meal plan with source and today's menu metadata when menu-prioritized } }
+  /menus/today:
+    get:
+      security: []
+      description: Returns today's published, not-sold-out menu dishes for the requested meal type; falls back to dish library when no menu exists.
+      parameters:
+        - { name: mealType, in: query, schema: { type: string } }
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: Today menu bundle, content: { application/json: { schema: { $ref: '#/components/schemas/TodayMenuResponse' } } } }
+  /rag/search:
+    get:
+      security: []
+      parameters: [{ name: q, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: Ranked document citations } }
+  /agent/meal-advisor:
+    post:
+      security: []
+      description: RAG-grounded meal advisor; LLM text is constrained to citations and picks when AI is enabled. Successful AI calls count against monthly tenant quota.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentRequest' }
+      responses:
+        '200': { description: Answer, citations and recommended plan }
+        '429': { description: AI monthly quota exhausted }
+  /reviews:
+    post:
+      description: Requires review:create.
+      responses:
+        '201': { description: Updated dish detail }
+        '401': { description: Login required }
+  /health/profile:
+    put:
+      description: Requires profile:write.
+      responses: { '200': { description: Updated profile and recommendation } }
+  /uploads:
+    post:
+      description: Store image upload. Requires upload:create; anonymous uploads are rejected and owner_id is recorded. Storage keys are tenant-scoped as tenant_id/upload-uuid.ext. Set S3_BUCKET to route uploads to S3/MinIO; otherwise UPLOAD_DIR is used.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadRequest' }
+      responses:
+        '201': { description: Upload metadata, content: { application/json: { schema: { $ref: '#/components/schemas/Upload' } } } }
+        '401': { description: Login required }
+  /vision/meal-analyze:
+    post:
+      description: Student photo meal analysis. Requires agent:use and configured vision AI; recommendations are grounded in database dishes and source.menuSource indicates menu vs fallback. Successful calls count against monthly tenant quota.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadRequest' }
+      responses:
+        '200': { description: Suggestion, assessment, matches, plan, guidance and source.menuSource }
+        '401': { description: Login required }
+        '429': { description: AI monthly quota exhausted }
+  /admin/canteens:
+    post:
+      description: Create canteen. Requires canteen:write.
+      responses: { '201': { description: Full state } }
+  /admin/canteens/{id}:
+    put:
+      description: Edit canteen. Requires canteen:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Full state } }
+    delete:
+      description: Delete canteen. Requires canteen:delete.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Full state } }
+  /admin/dishes:
+    post:
+      description: Create dish. Requires dish:write.
+      responses: { '201': { description: Full state } }
+  /admin/dishes/import:
+    post:
+      description: Bulk import dishes. Requires dish:bulk_import.
+      responses: { '200': { description: Import summary and full state } }
+  /admin/dishes/vision-import:
+    post:
+      description: Admin vision prefill. Requires dish:write and configured vision AI; does not save to DB automatically. Successful calls count against monthly tenant quota.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadRequest' }
+      responses:
+        '200': { description: Safe dish suggestion for manual confirmation }
+        '429': { description: AI monthly quota exhausted }
+  /admin/dishes/{id}:
+    put:
+      description: Edit dish. Requires dish:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Full state } }
+    delete:
+      description: Soft-delete dish. Requires dish:delete.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Full state } }
+  /admin/tenants:
+    get:
+      description: List tenants. Requires tenant:manage.
+      responses: { '200': { description: Tenant list, content: { application/json: { schema: { type: object, properties: { tenants: { type: array, items: { $ref: '#/components/schemas/Tenant' } } } } } } }
+    post:
+      description: Create or upsert tenant. Requires tenant:manage.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TenantInput' }
+      responses: { '201': { description: Updated tenant list } }
+  /admin/tenants/{id}:
+    put:
+      description: Update tenant. Requires tenant:manage.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TenantInput' }
+      responses:
+        '200': { description: Updated tenant list }
+        '404': { description: Tenant not found }
+  /admin/menus:
+    get:
+      description: List tenant-scoped menus. Requires dish:write. Supports date, mealType, status, limit and offset query filters.
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - { name: mealType, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [draft, published, archived] } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer } }
+      responses: { '200': { description: Menu list with total, content: { application/json: { schema: { $ref: '#/components/schemas/MenuListResponse' } } } } }
+    post:
+      description: Create or upsert a tenant-scoped menu transactionally. Requires dish:write. canteenId and dishId values must belong to the current tenant.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MenuInput' }
+      responses:
+        '201': { description: Updated menu list }
+        '400': { description: Invalid tenant ownership for canteen or dish }
+  /admin/menus/{id}:
+    put:
+      description: Update menu and replace supplied menu items. Requires dish:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MenuInput' }
+      responses:
+        '200': { description: Updated menu list }
+        '404': { description: Menu not found }
+    delete:
+      description: Archive menu by setting status=archived. Requires dish:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Updated menu list }
+        '404': { description: Menu not found }
+  /admin/menus/batch:
+    post:
+      description: Batch publish or archive tenant-scoped menus. Requires dish:write.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MenuBatchRequest' }
+      responses:
+        '200': { description: Updated count and menu list, content: { application/json: { schema: { $ref: '#/components/schemas/MenuBatchResponse' } } } }
+        '400': { description: Invalid action or empty ids }
+  /admin/users:
+    get:
+      description: Requires user:read.
+      responses: { '200': { description: User list } }
+  /admin/users/{id}:
+    put:
+      description: Requires user:write; role must be one of student, operator, stall_admin, canteen_admin, auditor, finance, tenant_admin, admin.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Updated user } }
+  /admin/audit-logs:
+    get:
+      description: Requires audit:read.
+      responses: { '200': { description: Paginated audit logs } }
+  /admin/ai-settings:
+    get:
+      description: Requires ai:configure; API key is masked.
+      responses: { '200': { description: Safe settings and provider status } }
+    put:
+      description: Requires ai:configure; stores OpenAI-compatible AI settings server-side.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AiSettings' }
+      responses: { '200': { description: Safe settings and provider status } }
+    delete:
+      description: Requires ai:configure; clears stored AI settings.
+      responses: { '200': { description: Safe settings and provider status } }
+  /admin/ai-settings/test:
+    post:
+      description: Requires ai:configure; tests chat completion connectivity without returning secrets.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AiSettings' }
+      responses: { '200': { description: Provider test result } }
+  /admin/ai-usage:
+    get:
+      description: Requires ai:configure; returns tenant AI usage logs, grouped summary and monthly quota status. quota=0 means unlimited; exhausted quota causes AI endpoints to return 429.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Usage logs, summary and quota, content: { application/json: { schema: { $ref: '#/components/schemas/AiUsageResponse' } } } }

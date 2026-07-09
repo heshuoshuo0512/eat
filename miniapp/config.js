@@ -1,0 +1,6 @@
+export const API_BASE_URL = 'http://127.0.0.1:8787';
+
+export const DEMO_STUDENT = {
+  username: '演示学生',
+  password: 'student123'
+};

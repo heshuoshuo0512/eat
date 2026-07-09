@@ -1,0 +1,525 @@
+import { defineStore } from 'pinia';
+import { computed, ref } from 'vue';
+import { buildMealPlan, calculateRanking, normalizeProfile } from '../domain/recommendation.js';
+import { apiClient } from '../services/apiClient.js';
+
+function emptyState() {
+  return {
+    session: { user: null },
+    canteens: [],
+    stalls: [],
+    dishes: [],
+    reviews: [],
+    profile: normalizeProfile({ goal: 'fatLoss', budgetMax: 18, mealType: 'lunch' })
+  };
+}
+
+function filterDishes(dishes, filters = {}) {
+  const keyword = String(filters.keyword || '').trim().toLowerCase();
+  const maxPrice = Number(filters.maxPrice || 999);
+  const taste = filters.taste || '不限';
+  const halalOnly = Boolean(filters.halalOnly);
+  return dishes.filter((dish) => {
+    const haystack = [dish.name, dish.cuisine, dish.taste, ...dish.tags, ...dish.ingredients].join(' ').toLowerCase();
+    if (keyword && !haystack.includes(keyword)) return false;
+    if (dish.price > maxPrice) return false;
+    if (taste !== '不限' && dish.taste !== taste && !dish.tags.includes(taste)) return false;
+    if (halalOnly && !dish.halal) return false;
+    return true;
+  });
+}
+
+export const useCanteenStore = defineStore('canteen', () => {
+  const state = ref(emptyState());
+  const loading = ref(false);
+  const error = ref('');
+  const searchFilters = ref({ keyword: '', maxPrice: 25, taste: '不限', halalOnly: false });
+  const todayMenu = ref({ date: '', mealType: 'lunch', menus: [], dishes: [], source: 'fallback' });
+
+  const orders = ref([]);
+  const adminOrders = ref([]);
+  const agentMemory = ref({ summary: '', preferences: {} });
+  const agentEvalCases = ref([]);
+  const agentEvalRuns = ref([]);
+  const deploymentReadiness = ref(null);
+  function setState(nextState) {
+    state.value = { ...emptyState(), ...nextState, profile: normalizeProfile(nextState?.profile) };
+  }
+
+  async function load() {
+    loading.value = true;
+    error.value = '';
+    try {
+      setState(await apiClient.bootstrap());
+      todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
+    } catch (err) {
+      error.value = err.message;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  const user = computed(() => state.value.session.user);
+  const canteens = computed(() => state.value.canteens);
+  const stalls = computed(() => state.value.stalls);
+  const dishes = computed(() => state.value.dishes);
+  const profile = computed(() => state.value.profile);
+  const searchedDishes = computed(() => filterDishes(state.value.dishes, searchFilters.value));
+  const rankings = computed(() => {
+    const reviewsByTarget = new Map();
+    for (const review of state.value.reviews) {
+      reviewsByTarget.set(review.targetId, [...(reviewsByTarget.get(review.targetId) || []), review]);
+    }
+    const rankedDishes = calculateRanking(state.value.dishes, reviewsByTarget);
+    const rankedStalls = state.value.stalls.map((stall) => {
+      const stallDishes = rankedDishes.filter((dish) => dish.stallId === stall.id);
+      const rankScore = stallDishes.length ? stallDishes.reduce((sum, dish) => sum + dish.rankScore, 0) / stallDishes.length : stall.rating;
+      return { ...stall, rankScore: Number(rankScore.toFixed(2)), dishCount: stallDishes.length };
+    }).sort((left, right) => right.rankScore - left.rankScore);
+    const rankedCanteens = state.value.canteens.map((canteen) => {
+      const canteenStalls = rankedStalls.filter((stall) => stall.canteenId === canteen.id);
+      const rankScore = canteenStalls.length ? canteenStalls.reduce((sum, stall) => sum + stall.rankScore, 0) / canteenStalls.length : 0;
+      return { ...canteen, rankScore: Number(rankScore.toFixed(2)), stallCount: canteenStalls.length };
+    }).sort((left, right) => right.rankScore - left.rankScore);
+    return { dishes: rankedDishes, stalls: rankedStalls, canteens: rankedCanteens };
+  });
+  const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
+
+  async function login(payload) {
+    const result = await apiClient.login(payload);
+    setState(result.state);
+    return result.user;
+  }
+
+  function logout() {
+    apiClient.logout();
+    state.value.session.user = null;
+  }
+
+  function getDishDetail(id) {
+    const dish = state.value.dishes.find((item) => item.id === id);
+    if (!dish) return null;
+    const stall = state.value.stalls.find((item) => item.id === dish.stallId);
+    const canteen = state.value.canteens.find((item) => item.id === stall?.canteenId);
+    const detailReviews = state.value.reviews.filter((review) => review.targetType === 'dish' && review.targetId === id);
+    return { ...dish, stall, canteen, reviews: detailReviews };
+  }
+
+  async function addReview(payload) {
+    const detail = await apiClient.addReview(payload);
+    await load();
+    return detail;
+  }
+
+  async function saveProfile(payload) {
+    const result = await apiClient.saveProfile(payload);
+    setState(result.state);
+    todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
+    return result.profile;
+  }
+
+  async function upsertCanteen(payload) {
+    setState(await apiClient.upsertCanteen(payload));
+  }
+
+  async function deleteCanteen(id) {
+    setState(await apiClient.deleteCanteen(id));
+  }
+
+  async function upsertDish(payload) {
+    setState(await apiClient.upsertDish(payload));
+  }
+
+  async function deleteDish(id) {
+    setState(await apiClient.deleteDish(id));
+  }
+
+  async function importDishes(dishes) {
+    const result = await apiClient.importDishes(dishes);
+    setState(result.state);
+    return result.imported;
+  }
+
+  async function previewDishImport(csvText) {
+    return apiClient.previewDishImport(csvText);
+  }
+
+  async function confirmDishImport(csvText) {
+    const result = await apiClient.confirmDishImport(csvText);
+    setState(result.state);
+    return result;
+  }
+
+  async function uploadImage(payload) {
+    return apiClient.uploadImage(payload);
+  }
+
+  async function identifyDishImage(payload, options = {}) {
+    return apiClient.identifyDishImage(payload, options);
+  }
+
+  async function ragSearch(query) {
+    return apiClient.ragSearch(query);
+  }
+
+  async function analyzeMealImage(payload, options = {}) {
+    return apiClient.analyzeMealImage(payload, options);
+  }
+
+  async function askMealAdvisor(payload) {
+    return apiClient.askMealAdvisor(payload);
+  }
+
+  async function runAgent(payload) {
+    return apiClient.runAgent(payload);
+  }
+
+  async function runAgentStream(payload) {
+    return apiClient.runAgentStream(payload);
+  }
+
+  async function loadAgentEvals() {
+    return apiClient.agentEvals();
+  }
+
+  async function confirmAgentAction(id) {
+    return apiClient.confirmAgentAction(id);
+  }
+
+  async function rejectAgentAction(id) {
+    return apiClient.rejectAgentAction(id);
+  }
+
+  async function loadAgentEvents(sessionId) {
+    return apiClient.agentEvents(sessionId);
+  }
+
+  async function loadAgentActions(status = 'pending') {
+    return apiClient.listAgentActions(status);
+  }
+
+  async function loadAgentStream(sessionId) {
+    return apiClient.agentStream(sessionId);
+  }
+  async function loadAgentMemory() {
+    const result = await apiClient.agentMemory();
+    agentMemory.value = result.memory;
+    return result.memory;
+  }
+
+  async function saveAgentMemory(payload) {
+    const result = await apiClient.saveAgentMemory(payload);
+    agentMemory.value = result.memory;
+    return result.memory;
+  }
+
+  async function clearAgentMemory() {
+    const result = await apiClient.clearAgentMemory();
+    agentMemory.value = result.memory;
+    return result.memory;
+  }
+
+  async function loadAgentEvalCases() {
+    const result = await apiClient.listAgentEvalCases();
+    agentEvalCases.value = result.cases;
+    return result.cases;
+  }
+
+  async function saveAgentEvalCase(payload) {
+    const result = payload.id
+      ? await apiClient.updateAgentEvalCase(payload.id, payload)
+      : await apiClient.createAgentEvalCase(payload);
+    const idx = agentEvalCases.value.findIndex((item) => item.id === result.case.id);
+    if (idx === -1) agentEvalCases.value = [result.case, ...agentEvalCases.value];
+    else agentEvalCases.value[idx] = result.case;
+    return result.case;
+  }
+
+  async function deleteAgentEvalCase(id) {
+    const result = await apiClient.deleteAgentEvalCase(id);
+    agentEvalCases.value = agentEvalCases.value.filter((item) => item.id !== id);
+    return result;
+  }
+
+  async function runAgentEvalCase(id) {
+    const result = await apiClient.runAgentEvalCase(id);
+    agentEvalRuns.value = [result.run, ...agentEvalRuns.value.filter((item) => item.id !== result.run.id)];
+    return result.run;
+  }
+
+  async function loadDeploymentReadiness() {
+    const result = await apiClient.deploymentReadiness();
+    deploymentReadiness.value = result;
+    return result;
+  }
+
+  async function loadTodayMenu(mealType = state.value.profile.mealType) {
+    todayMenu.value = await apiClient.todayMenu(mealType);
+    return todayMenu.value;
+  }
+
+  async function createOrder(payload) {
+    const result = await apiClient.createOrder(payload);
+    orders.value = [result.order, ...orders.value.filter((order) => order.id !== result.order.id)];
+    todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
+    return result.order;
+  }
+
+  async function payOrder(id) {
+    const result = await apiClient.payOrder(id);
+    orders.value = orders.value.map((order) => order.id === id ? result.order : order);
+    return result.order;
+  }
+
+  async function cancelOrder(id) {
+    const result = await apiClient.cancelOrder(id);
+    orders.value = orders.value.map((order) => order.id === id ? result.order : order);
+    todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
+    return result.order;
+  }
+
+
+  async function loadOrders() {
+    const result = await apiClient.listOrders();
+    orders.value = result.orders;
+    return result.orders;
+  }
+
+  async function loadAdminOrders(status = '') {
+    const result = await apiClient.listAdminOrders(status);
+    adminOrders.value = result.orders;
+    return result.orders;
+  }
+
+  async function updateOrderStatus(id, status) {
+    const result = await apiClient.updateOrderStatus(id, status);
+    adminOrders.value = adminOrders.value.map((order) => order.id === id ? result.order : order);
+    return result.order;
+  }
+
+  async function loadOrderAnalytics() {
+    return apiClient.orderAnalytics();
+  }
+
+  const adminUsers = ref([]);
+  const adminAuditLogs = ref([]);
+  const adminAuditTotal = ref(0);
+  const aiSettings = ref(null);
+  const aiStatus = ref(null);
+  const aiUsageLogs = ref([]);
+  const aiUsageSummary = ref([]);
+  const aiUsageTotal = ref(0);
+  const aiQuotaStatus = ref({ quota: 0, used: 0, remaining: 0, period: '' });
+  const adminTenants = ref([]);
+  const adminMenus = ref([]);
+  const adminAnalytics = ref({ dishes: 0, reviews: 0, users: 0, menus: 0, todayPublished: 0, avgRating: 0, recentDishes: [] });
+  const adminReviews = ref([]);
+  const adminReviewTotal = ref(0);
+
+
+
+  async function loadUsers() {
+    const result = await apiClient.listUsers();
+    adminUsers.value = result.users;
+    return result.users;
+  }
+
+  async function updateUserRole(id, role) {
+    const result = await apiClient.updateUserRole(id, role);
+    const idx = adminUsers.value.findIndex((u) => u.id === id);
+    if (idx !== -1) adminUsers.value[idx] = result.user;
+    return result.user;
+  }
+
+  async function loadAuditLogs(limit, offset) {
+    const result = await apiClient.listAuditLogs(limit, offset);
+    adminAuditLogs.value = result.logs;
+    adminAuditTotal.value = result.total;
+    return result;
+  }
+
+  async function loadAiSettings() {
+    const result = await apiClient.getAiSettings();
+    aiSettings.value = result.settings;
+    aiStatus.value = result.status;
+    return result;
+  }
+
+  async function saveAiSettings(payload) {
+    const result = await apiClient.saveAiSettings(payload);
+    aiSettings.value = result.settings;
+    aiStatus.value = result.status;
+    return result;
+  }
+
+  async function clearAiSettings() {
+    const result = await apiClient.clearAiSettings();
+    aiSettings.value = result.settings;
+    aiStatus.value = result.status;
+    return result;
+  }
+
+  async function testAiSettings(payload) {
+    return apiClient.testAiSettings(payload);
+  }
+
+  async function loadAiUsage(limit = 50, offset = 0) {
+    const result = await apiClient.listAiUsage(limit, offset);
+    aiUsageLogs.value = result.logs;
+    aiUsageSummary.value = result.summary;
+    aiUsageTotal.value = result.total;
+    aiQuotaStatus.value = result.quota;
+    return result;
+  }
+
+  async function loadTenants() {
+    const result = await apiClient.listTenants();
+    adminTenants.value = result.tenants;
+    return result.tenants;
+  }
+
+  async function saveTenant(payload) {
+    const result = await apiClient.saveTenant(payload);
+    adminTenants.value = result.tenants;
+    return result.tenants;
+  }
+
+  async function loadMenus() {
+    const result = await apiClient.listMenus();
+    adminMenus.value = result.menus;
+    return result.menus;
+  }
+
+  async function saveMenu(payload) {
+    const result = await apiClient.saveMenu(payload);
+    adminMenus.value = result.menus;
+    return result.menus;
+  }
+
+  async function archiveMenu(id) {
+    const result = await apiClient.archiveMenu(id);
+    adminMenus.value = result.menus;
+    return result.menus;
+  }
+
+  async function batchMenuAction(ids, action) {
+    const result = await apiClient.batchMenuAction(ids, action);
+    adminMenus.value = result.menus;
+    return result;
+  }
+
+  async function loadAnalytics() {
+    const result = await apiClient.getAnalytics();
+    adminAnalytics.value = result;
+    return result;
+  }
+
+  async function loadReviewsAdmin(limit = 50, offset = 0) {
+    const result = await apiClient.listReviewsAdmin(limit, offset);
+    adminReviews.value = result.reviews;
+    adminReviewTotal.value = result.total;
+    return result;
+  }
+
+  async function deleteReviewAdmin(id) {
+    const result = await apiClient.deleteReview(id);
+    adminReviews.value = adminReviews.value.filter((r) => r.id !== id);
+    adminReviewTotal.value = Math.max(0, adminReviewTotal.value - 1);
+    return result;
+  }
+
+  return {
+    state,
+    loading,
+    error,
+    searchFilters,
+    user,
+    canteens,
+    stalls,
+    dishes,
+    profile,
+    searchedDishes,
+    rankings,
+    recommendation,
+    todayMenu,
+    orders,
+    adminOrders,
+    agentMemory,
+    agentEvalCases,
+    agentEvalRuns,
+    deploymentReadiness,
+    load,
+    login,
+    logout,
+    getDishDetail,
+    addReview,
+    saveProfile,
+    upsertCanteen,
+    deleteCanteen,
+    upsertDish,
+    deleteDish,
+    importDishes,
+    previewDishImport,
+    confirmDishImport,
+    uploadImage,
+    identifyDishImage,
+    analyzeMealImage,
+    ragSearch,
+    askMealAdvisor,
+    runAgent,
+    runAgentStream,
+    loadAgentEvals,
+    confirmAgentAction,
+    rejectAgentAction,
+    loadAgentActions,
+    loadAgentStream,
+    loadAgentEvents,
+    loadTodayMenu,
+    loadAgentMemory,
+    saveAgentMemory,
+    clearAgentMemory,
+    loadAgentEvalCases,
+    saveAgentEvalCase,
+    deleteAgentEvalCase,
+    runAgentEvalCase,
+    loadDeploymentReadiness,
+    createOrder,
+    payOrder,
+    cancelOrder,
+    loadOrders,
+    loadAdminOrders,
+    updateOrderStatus,
+    loadOrderAnalytics,
+    adminUsers,
+    adminAuditLogs,
+    adminAuditTotal,
+    aiSettings,
+    aiStatus,
+    aiUsageLogs,
+    aiUsageSummary,
+    aiUsageTotal,
+    aiQuotaStatus,
+    adminTenants,
+    adminMenus,
+    adminAnalytics,
+    adminReviews,
+    adminReviewTotal,
+    loadUsers,
+    updateUserRole,
+    loadAuditLogs,
+    loadAiSettings,
+    saveAiSettings,
+    clearAiSettings,
+    testAiSettings,
+    loadAiUsage,
+    loadTenants,
+    saveTenant,
+    loadMenus,
+    saveMenu,
+    archiveMenu,
+    batchMenuAction,
+    loadAnalytics,
+    loadReviewsAdmin,
+    deleteReviewAdmin
+  };
+});

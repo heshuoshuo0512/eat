@@ -1,0 +1,25 @@
+{
+  "name": "智慧食堂",
+  "appid": "__UNI__SMART_CANTEEN",
+  "description": "智慧食堂学生端微信小程序",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "mp-weixin": {
+    "appid": "",
+    "libVersion": "3.7.0",
+    "__usePrivacyCheck__": true,
+    "setting": {
+    "urlCheck": false,
+      "es6": true,
+      "postcss": true,
+      "minified": true
+    },
+    "usingComponents": true,
+    "permission": {
+      "scope.camera": {
+        "desc": "用于拍照识餐，分析餐食营养并推荐真实可购买菜品。"
+      }
+    }
+  },
+  "vueVersion": "3"
+}

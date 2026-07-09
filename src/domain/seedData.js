@@ -1,0 +1,191 @@
+export const canteens = [
+  {
+    id: 'north',
+    name: '北苑食堂',
+    location: '北区生活广场一层',
+    hours: '06:30 - 20:30',
+    crowdLevel: 72,
+    tags: ['早餐丰富', '高性价比', '近宿舍'],
+    description: '北区学生最常去的综合食堂，早餐、盖饭、粉面和清真档口集中。'
+  },
+  {
+    id: 'central',
+    name: '学苑餐厅',
+    location: '教学楼群西侧',
+    hours: '10:30 - 21:00',
+    crowdLevel: 58,
+    tags: ['午餐热门', '快餐', '低脂选择'],
+    description: '靠近教学区，适合课间快速就餐，也提供轻食和低脂套餐。'
+  },
+  {
+    id: 'south',
+    name: '南湖食堂',
+    location: '南区体育馆旁',
+    hours: '07:00 - 22:00',
+    crowdLevel: 43,
+    tags: ['夜宵', '地方风味', '大份量'],
+    description: '晚餐和夜宵选择多，适合运动后补充能量。'
+  }
+];
+
+export const stalls = [
+  { id: 'n-protein', canteenId: 'north', floor: '1F', name: '元气蛋白餐', category: '健康轻食', rating: 4.8, avgPrice: 16, open: true, description: '鸡胸肉、鱼肉、豆制品和杂粮饭为主。' },
+  { id: 'n-halal', canteenId: 'north', floor: '1F', name: '西北清真面馆', category: '清真面食', rating: 4.7, avgPrice: 15, open: true, description: '牛肉面、拌面、羊肉汤饭，全部清真。' },
+  { id: 'c-fast', canteenId: 'central', floor: '2F', name: '课间快餐', category: '盖饭套餐', rating: 4.4, avgPrice: 13, open: true, description: '出餐快，适合午休时间紧张的学生。' },
+  { id: 'c-light', canteenId: 'central', floor: '1F', name: '绿野轻食', category: '低脂沙拉', rating: 4.6, avgPrice: 18, open: true, description: '蔬菜、优质蛋白和低脂酱汁搭配。' },
+  { id: 's-local', canteenId: 'south', floor: '1F', name: '湖畔小炒', category: '地方小炒', rating: 4.5, avgPrice: 17, open: true, description: '现炒热菜，口味选择丰富。' },
+  { id: 's-energy', canteenId: 'south', floor: '2F', name: '运动补给站', category: '高能套餐', rating: 4.7, avgPrice: 20, open: true, description: '高蛋白、高碳水，适合训练后恢复。' }
+];
+
+export const dishes = [
+  {
+    id: 'd-chicken-bowl',
+    stallId: 'n-protein',
+    name: '香煎鸡胸杂粮饭',
+    price: 16,
+    taste: '黑椒',
+    cuisine: '轻食',
+    ingredients: ['鸡胸肉', '糙米', '西兰花', '玉米'],
+    tags: ['高蛋白', '低脂', '减脂推荐'],
+    halal: false,
+    mealTypes: ['lunch', 'dinner'],
+    nutrition: { calories: 486, protein: 38, fat: 11, carbs: 58 },
+    rating: 4.8,
+    reviewCount: 126,
+    sales: 530,
+    image: '🍱',
+    description: '主食、蛋白和蔬菜比例均衡，适合减脂和维持体重。'
+  },
+  {
+    id: 'd-fish-set',
+    stallId: 'n-protein',
+    name: '番茄龙利鱼套餐',
+    price: 18,
+    taste: '酸甜',
+    cuisine: '轻食',
+    ingredients: ['龙利鱼', '番茄', '米饭', '生菜'],
+    tags: ['高蛋白', '低热量', '不辣'],
+    halal: false,
+    mealTypes: ['lunch', 'dinner'],
+    nutrition: { calories: 438, protein: 34, fat: 8, carbs: 54 },
+    rating: 4.7,
+    reviewCount: 88,
+    sales: 390,
+    image: '🐟',
+    description: '鱼肉蛋白优质，脂肪低，口味清爽。'
+  },
+  {
+    id: 'd-beef-noodle',
+    stallId: 'n-halal',
+    name: '清真牛肉拉面',
+    price: 15,
+    taste: '咸鲜',
+    cuisine: '西北',
+    ingredients: ['牛肉', '拉面', '萝卜', '香菜'],
+    tags: ['清真', '热汤', '高碳水'],
+    halal: true,
+    mealTypes: ['breakfast', 'lunch', 'dinner'],
+    nutrition: { calories: 620, protein: 29, fat: 18, carbs: 86 },
+    rating: 4.7,
+    reviewCount: 153,
+    sales: 720,
+    image: '🍜',
+    description: '热汤面食，饱腹感强，适合常规午晚餐。'
+  },
+  {
+    id: 'd-egg-tomato',
+    stallId: 'c-fast',
+    name: '番茄鸡蛋盖饭',
+    price: 11,
+    taste: '酸甜',
+    cuisine: '家常',
+    ingredients: ['鸡蛋', '番茄', '米饭'],
+    tags: ['高性价比', '不辣', '快餐'],
+    halal: false,
+    mealTypes: ['lunch', 'dinner'],
+    nutrition: { calories: 560, protein: 20, fat: 17, carbs: 80 },
+    rating: 4.3,
+    reviewCount: 210,
+    sales: 980,
+    image: '🍛',
+    description: '价格低、出餐快，是高频基础餐。'
+  },
+  {
+    id: 'd-salad',
+    stallId: 'c-light',
+    name: '牛油果虾仁能量碗',
+    price: 22,
+    taste: '清爽',
+    cuisine: '轻食',
+    ingredients: ['虾仁', '牛油果', '生菜', '藜麦'],
+    tags: ['高蛋白', '健康脂肪', '维持推荐'],
+    halal: false,
+    mealTypes: ['lunch', 'dinner'],
+    nutrition: { calories: 512, protein: 32, fat: 21, carbs: 48 },
+    rating: 4.6,
+    reviewCount: 64,
+    sales: 210,
+    image: '🥗',
+    description: '蛋白和健康脂肪充足，预算较高时适合维持体重。'
+  },
+  {
+    id: 'd-tofu',
+    stallId: 's-local',
+    name: '麻婆豆腐双拼饭',
+    price: 13,
+    taste: '麻辣',
+    cuisine: '川湘',
+    ingredients: ['豆腐', '牛肉末', '米饭', '青菜'],
+    tags: ['下饭', '微辣', '高性价比'],
+    halal: false,
+    mealTypes: ['lunch', 'dinner'],
+    nutrition: { calories: 690, protein: 25, fat: 26, carbs: 88 },
+    rating: 4.5,
+    reviewCount: 132,
+    sales: 610,
+    image: '🌶️',
+    description: '口味重、饱腹感强，适合预算有限且能吃辣的学生。'
+  },
+  {
+    id: 'd-bulk',
+    stallId: 's-energy',
+    name: '牛肉鸡蛋增肌饭',
+    price: 21,
+    taste: '黑椒',
+    cuisine: '运动餐',
+    ingredients: ['牛肉', '鸡蛋', '米饭', '土豆'],
+    tags: ['增肌推荐', '高蛋白', '高碳水'],
+    halal: false,
+    mealTypes: ['lunch', 'dinner'],
+    nutrition: { calories: 760, protein: 46, fat: 24, carbs: 92 },
+    rating: 4.8,
+    reviewCount: 77,
+    sales: 280,
+    image: '🥩',
+    description: '蛋白和碳水都高，适合力量训练日。'
+  },
+  {
+    id: 'd-oat',
+    stallId: 'c-light',
+    name: '燕麦酸奶早餐杯',
+    price: 9,
+    taste: '酸甜',
+    cuisine: '早餐',
+    ingredients: ['燕麦', '酸奶', '香蕉', '坚果'],
+    tags: ['早餐', '低价', '高纤维'],
+    halal: false,
+    mealTypes: ['breakfast'],
+    nutrition: { calories: 330, protein: 14, fat: 9, carbs: 52 },
+    rating: 4.4,
+    reviewCount: 45,
+    sales: 190,
+    image: '🥣',
+    description: '轻负担早餐，适合赶早课。'
+  }
+];
+
+export const reviews = [
+  { id: 'r1', targetType: 'dish', targetId: 'd-chicken-bowl', user: '小林', rating: 5, content: '鸡胸肉不柴，黑椒味很稳，减脂期常点。', createdAt: '2026-06-18' },
+  { id: 'r2', targetType: 'dish', targetId: 'd-beef-noodle', user: '阿宁', rating: 5, content: '汤热，肉量比预期多，清真同学很方便。', createdAt: '2026-06-21' },
+  { id: 'r3', targetType: 'dish', targetId: 'd-egg-tomato', user: '晨晨', rating: 4, content: '便宜快，赶课的时候不用纠结。', createdAt: '2026-06-23' }
+];
