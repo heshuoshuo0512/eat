@@ -11,7 +11,7 @@
       </RouterLink>
       <p class="eyebrow">Smart Canteen Platform</p>
       <h1>先登录，再进入个性化食堂主页</h1>
-      <p class="hero-copy">学生获取食堂导航、排行榜、健康推荐和便捷点餐；管理员进入订单处理、菜单发布、评价管理和运营后台。</p>
+      <p class="hero-copy">学生获取食堂导航、排行榜和健康推荐；管理员进入数据录入、评价管理、智能体实验和运营后台。</p>
       <div class="metric-grid login-metrics">
         <article><strong>RBAC</strong><span>角色权限管控</span></article>
         <article><strong>RAG</strong><span>真实菜品检索</span></article>
@@ -60,7 +60,7 @@
       <section class="session-card compact">
         <p class="eyebrow">当前身份</p>
         <strong>{{ store.user.nickname }}</strong>
-        <small>{{ store.user.role === 'admin' ? '管理员端已解锁' : '学生端体验' }}</small>
+        <small>{{ isAdminFamily ? '管理员端已解锁' : '学生端体验' }}</small>
         <button class="ghost" type="button" @click="store.logout">退出登录</button>
       </section>
     </aside>
@@ -80,40 +80,39 @@ import { useCanteenStore } from './stores/canteenStore.js';
 const store = useCanteenStore();
 const route = useRoute();
 const router = useRouter();
+const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
 const roleFeatures = {
   student: new Set(['student']),
-  operator: new Set(['operations', 'orders_console', 'order_analytics', 'data_input', 'data_manage', 'agent']),
-  stall_admin: new Set(['operations', 'orders_console', 'order_analytics', 'data_input', 'data_manage', 'agent']),
-  canteen_admin: new Set(['operations', 'orders_console', 'order_analytics', 'data_input', 'data_manage', 'agent']),
-  auditor: new Set(['operations', 'order_analytics', 'data_manage', 'agent']),
-  finance: new Set(['operations', 'order_analytics', 'data_manage', 'agent']),
-  tenant_admin: new Set(['operations', 'orders_console', 'order_analytics', 'data_input', 'data_manage', 'ai_config', 'agent']),
-  admin: new Set(['operations', 'orders_console', 'order_analytics', 'data_input', 'data_manage', 'ai_config', 'agent']),
-  super_admin: new Set(['operations', 'orders_console', 'order_analytics', 'data_input', 'data_manage', 'ai_config', 'agent'])
+  operator: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'agent']),
+  stall_admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'agent']),
+  canteen_admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'agent']),
+  auditor: new Set(['operations', 'data_manage', 'reviews', 'agent']),
+  finance: new Set(['operations', 'data_manage', 'reviews', 'agent']),
+  tenant_admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'ai_config', 'agent']),
+  admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'ai_config', 'agent']),
+  super_admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'ai_config', 'agent'])
 };
 const navItems = [
-  { to: '/', label: '运营首页', feature: 'operations' },
   { to: '/', label: '学生首页', feature: 'student' },
   { to: '/canteens', label: '食堂导航', feature: 'student' },
   { to: '/dishes', label: '菜品检索', feature: 'student' },
   { to: '/rankings', label: '排行榜', feature: 'student' },
   { to: '/recommend', label: '健康推荐', feature: 'student' },
-  { to: '/visual-meal', label: '拍照识餐', feature: 'student', featured: true },
-  { to: '/orders', label: '点餐取餐', feature: 'student', featured: true },
-  { to: '/stall-console', label: '订单与取餐码', feature: 'orders_console' },
-  { to: '/order-analytics', label: '营业看板', feature: 'order_analytics' },
-  { to: '/admin/input', label: '发布今日菜单', feature: 'data_input' },
-  { to: '/admin', label: '菜品与评价管理', feature: 'data_manage' },
-  { to: '/agent', label: '智能顾问', feature: 'agent' },
-  { to: '/admin/ai', label: 'AI 配置', feature: 'ai_config' }
+  { to: '/', label: '运营概览', feature: 'operations' },
+  { to: '/admin/input', label: '数据录入与维护', feature: 'data_input' },
+  { to: '/admin', label: '评价管理', feature: 'reviews' },
+  { to: '/agent', label: 'RAG智能体实验室', feature: 'agent' },
+  { to: '/admin/ai', label: 'AI配置', feature: 'ai_config' }
 ];
 const visibleNavItems = computed(() => {
   const features = roleFeatures[store.user?.role] || roleFeatures.student;
   return navItems.filter((item) => features.has(item.feature));
 });
 
+const isAdminFamily = computed(() => adminRoleSet.has(store.user?.role));
+
 function navKey(item) {
-  return item.to;
+  return item.to + item.feature;
 }
 
 function isNavActive(item) {
@@ -130,7 +129,7 @@ const mobileNavOpen = ref(false);
 onMounted(async () => {
   await store.load();
   const audience = route.meta.audience;
-  const isAdmin = roleFeatures[store.user?.role]?.has('operations');
+  const isAdmin = adminRoleSet.has(store.user?.role);
   if ((audience === 'admin' && !isAdmin) || (audience === 'student' && isAdmin)) {
     await router.replace('/');
   }
@@ -148,8 +147,6 @@ function handleNavClick(navigate, event) {
   navigate(event);
   mobileNavOpen.value = false;
 }
-
-
 
 async function handleLogin() {
   loginError.value = validateLoginForm(loginForm);

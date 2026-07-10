@@ -78,6 +78,9 @@ export const apiClient = {
     const query = mealType ? `?mealType=${encodeURIComponent(mealType)}` : '';
     return request(`/api/menus/today${query}`);
   },
+  async recommend() {
+    return request('/api/recommend');
+  },
   async createOrder(payload) {
     return request('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
   },
@@ -226,5 +229,36 @@ export const apiClient = {
   },
   async deleteReview(id) {
     return request(`/api/admin/reviews/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+  async updateReviewStatus(id, status) {
+    return request(`/api/admin/reviews/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+  },
+  async upsertStall(payload) {
+    const path = payload.id ? `/api/admin/stalls/${encodeURIComponent(payload.id)}` : '/api/admin/stalls';
+    return request(path, { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+  },
+  async deleteStall(id) {
+    return request(`/api/admin/stalls/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+  async getEnvironment() {
+    return request('/api/admin/environment');
+  },
+  async saveEnvironment(payload) {
+    return request('/api/admin/environment', { method: 'PUT', body: JSON.stringify(payload) });
+  },
+  async getDishPreferences() {
+    return request('/api/preferences/dishes');
+  },
+  async updateDishPreference(payload) {
+    return request('/api/preferences/dishes', { method: 'PUT', body: JSON.stringify(payload) });
+  },
+  async recordDishDrawn(dishId) {
+    return request(`/api/preferences/dishes/${encodeURIComponent(dishId)}/drawn`, { method: 'POST' });
+  },
+  async recordDishEaten(dishId) {
+    return request(`/api/preferences/dishes/${encodeURIComponent(dishId)}/eaten`, { method: 'POST' });
+  },
+  async loadRecommendation() {
+    return request('/api/recommend');
   }
 };

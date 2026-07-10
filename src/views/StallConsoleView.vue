@@ -1,8 +1,8 @@
 <template>
   <section class="page-heading">
-    <p class="eyebrow">Stall Console</p>
+    <p class="eyebrow">实验性功能 · 模拟数据</p>
     <h1>档口订单工作台</h1>
-    <p>集中处理待接单、备餐中、待取餐订单，所有状态变更写入审计日志。</p>
+    <p>此页面为实验性功能，当前展示模拟订单数据。订单流程和支付功能尚未正式上线，仅供内部测试使用。</p>
   </section>
 
   <section class="card">
@@ -47,7 +47,7 @@
       <article class="metric-highlight"><strong>{{ pendingCount }}</strong><span>待接单</span></article>
       <article class="metric-highlight"><strong>{{ preparingCount }}</strong><span>备餐中</span></article>
       <article class="metric-highlight ready-metric"><strong>{{ readyCount }}</strong><span>待取餐</span></article>
-      <article><strong>¥{{ revenue }}</strong><span>队列金额</span></article>
+      <article><strong>¥{{ revenue }}</strong><span>模拟金额</span></article>
     </div>
 
     <div v-if="filteredOrders.length" class="order-queue">

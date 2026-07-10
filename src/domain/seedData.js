@@ -1,12 +1,29 @@
 export const canteens = [
   {
+    id: 'campus-main',
+    name: '校园主食堂',
+    location: '校园中心区',
+    hours: '06:00 - 22:00',
+    crowdLevel: 55,
+    tags: ['校园总览', '综合服务'],
+    description: '校园主食堂，包含北苑、学苑、南湖三大子食堂。',
+    parentId: null,
+    canteenType: 'primary',
+    image: '🏫',
+    imageUrl: 'https://images.unsplash.com/photo-1567521464027-f127ff144326?auto=format&fit=crop&w=1200&q=82'
+  },
+  {
     id: 'north',
     name: '北苑食堂',
     location: '北区生活广场一层',
     hours: '06:30 - 20:30',
     crowdLevel: 72,
     tags: ['早餐丰富', '高性价比', '近宿舍'],
-    description: '北区学生最常去的综合食堂，早餐、盖饭、粉面和清真档口集中。'
+    description: '北区学生最常去的综合食堂，早餐、盖饭、粉面和清真档口集中。',
+    parentId: 'campus-main',
+    canteenType: 'sub',
+    image: '🏢',
+    imageUrl: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=1200&q=82'
   },
   {
     id: 'central',
@@ -15,7 +32,11 @@ export const canteens = [
     hours: '10:30 - 21:00',
     crowdLevel: 58,
     tags: ['午餐热门', '快餐', '低脂选择'],
-    description: '靠近教学区，适合课间快速就餐，也提供轻食和低脂套餐。'
+    description: '靠近教学区，适合课间快速就餐，也提供轻食和低脂套餐。',
+    parentId: 'campus-main',
+    canteenType: 'sub',
+    image: '🏛️',
+    imageUrl: 'https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?auto=format&fit=crop&w=1200&q=82'
   },
   {
     id: 'south',
@@ -24,7 +45,11 @@ export const canteens = [
     hours: '07:00 - 22:00',
     crowdLevel: 43,
     tags: ['夜宵', '地方风味', '大份量'],
-    description: '晚餐和夜宵选择多，适合运动后补充能量。'
+    description: '晚餐和夜宵选择多，适合运动后补充能量。',
+    parentId: 'campus-main',
+    canteenType: 'sub',
+    image: '🏠',
+    imageUrl: 'https://images.unsplash.com/photo-1544148103-0773bf10d330?auto=format&fit=crop&w=1200&q=82'
   }
 ];
 
@@ -34,7 +59,8 @@ export const stalls = [
   { id: 'c-fast', canteenId: 'central', floor: '2F', name: '课间快餐', category: '盖饭套餐', rating: 4.4, avgPrice: 13, open: true, description: '出餐快，适合午休时间紧张的学生。' },
   { id: 'c-light', canteenId: 'central', floor: '1F', name: '绿野轻食', category: '低脂沙拉', rating: 4.6, avgPrice: 18, open: true, description: '蔬菜、优质蛋白和低脂酱汁搭配。' },
   { id: 's-local', canteenId: 'south', floor: '1F', name: '湖畔小炒', category: '地方小炒', rating: 4.5, avgPrice: 17, open: true, description: '现炒热菜，口味选择丰富。' },
-  { id: 's-energy', canteenId: 'south', floor: '2F', name: '运动补给站', category: '高能套餐', rating: 4.7, avgPrice: 20, open: true, description: '高蛋白、高碳水，适合训练后恢复。' }
+  { id: 's-energy', canteenId: 'south', floor: '2F', name: '运动补给站', category: '高能套餐', rating: 4.7, avgPrice: 20, open: true, description: '高蛋白、高碳水，适合训练后恢复。' },
+  { id: 'n-cold', canteenId: 'north', floor: '1F', name: '清凉小食坊', category: '冷食小吃', rating: 4.5, avgPrice: 12, open: true, description: '凉皮、凉面、冷饮和消暑小吃。' }
 ];
 
 export const dishes = [
@@ -50,6 +76,7 @@ export const dishes = [
     halal: false,
     mealTypes: ['lunch', 'dinner'],
     nutrition: { calories: 486, protein: 38, fat: 11, carbs: 58 },
+    expandedNutrition: { fiber: 4.2, sodium: 520, sugar: 3, calcium: 45, iron: 2.8 },
     rating: 4.8,
     reviewCount: 126,
     sales: 530,
@@ -69,6 +96,7 @@ export const dishes = [
     halal: false,
     mealTypes: ['lunch', 'dinner'],
     nutrition: { calories: 438, protein: 34, fat: 8, carbs: 54 },
+    expandedNutrition: { fiber: 2.8, sodium: 480, sugar: 6, calcium: 55, iron: 1.9 },
     rating: 4.7,
     reviewCount: 88,
     sales: 390,
@@ -88,6 +116,7 @@ export const dishes = [
     halal: true,
     mealTypes: ['breakfast', 'lunch', 'dinner'],
     nutrition: { calories: 620, protein: 29, fat: 18, carbs: 86 },
+    expandedNutrition: { fiber: 2.1, sodium: 890, sugar: 4, calcium: 38, iron: 3.5 },
     rating: 4.7,
     reviewCount: 153,
     sales: 720,
@@ -107,6 +136,7 @@ export const dishes = [
     halal: false,
     mealTypes: ['lunch', 'dinner'],
     nutrition: { calories: 560, protein: 20, fat: 17, carbs: 80 },
+    expandedNutrition: { fiber: 1.8, sodium: 620, sugar: 8, calcium: 62, iron: 2.2 },
     rating: 4.3,
     reviewCount: 210,
     sales: 980,
@@ -126,6 +156,7 @@ export const dishes = [
     halal: false,
     mealTypes: ['lunch', 'dinner'],
     nutrition: { calories: 512, protein: 32, fat: 21, carbs: 48 },
+    expandedNutrition: { fiber: 6.5, sodium: 380, sugar: 4, calcium: 78, iron: 3.2 },
     rating: 4.6,
     reviewCount: 64,
     sales: 210,
@@ -145,6 +176,7 @@ export const dishes = [
     halal: false,
     mealTypes: ['lunch', 'dinner'],
     nutrition: { calories: 690, protein: 25, fat: 26, carbs: 88 },
+    expandedNutrition: { fiber: 3.1, sodium: 780, sugar: 5, calcium: 120, iron: 4.1 },
     rating: 4.5,
     reviewCount: 132,
     sales: 610,
@@ -164,6 +196,7 @@ export const dishes = [
     halal: false,
     mealTypes: ['lunch', 'dinner'],
     nutrition: { calories: 760, protein: 46, fat: 24, carbs: 92 },
+    expandedNutrition: { fiber: 3.5, sodium: 720, sugar: 6, calcium: 58, iron: 4.8 },
     rating: 4.8,
     reviewCount: 77,
     sales: 280,
@@ -183,17 +216,94 @@ export const dishes = [
     halal: false,
     mealTypes: ['breakfast'],
     nutrition: { calories: 330, protein: 14, fat: 9, carbs: 52 },
+    expandedNutrition: { fiber: 5.8, sodium: 120, sugar: 16, calcium: 180, iron: 2.4 },
     rating: 4.4,
     reviewCount: 45,
     sales: 190,
     image: '🥣',
     imageUrl: 'https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&w=900&q=80',
     description: '轻负担早餐，适合赶早课。'
+  },
+  {
+    id: 'd-liangpi',
+    stallId: 'n-cold',
+    name: '陕西凉皮',
+    price: 12,
+    taste: '酸辣',
+    cuisine: '西北',
+    ingredients: ['凉皮', '黄瓜', '面筋', '醋', '辣椒油', '蒜'],
+    tags: ['消暑', '清爽', '酸辣', '冷食'],
+    halal: false,
+    mealTypes: ['lunch', 'dinner'],
+    nutrition: { calories: 380, protein: 20, fat: 9, carbs: 52 },
+    expandedNutrition: { fiber: 2.5, sodium: 680, sugar: 8, calcium: 35, iron: 2.1 },
+    rating: 4.6,
+    reviewCount: 98,
+    sales: 420,
+    image: '🥢',
+    imageUrl: 'https://images.unsplash.com/photo-1555126634-323283e090fa?auto=format&fit=crop&w=900&q=80',
+    description: '经典消暑小吃，酸辣开胃，天热时首选。'
+  },
+  {
+    id: 'd-cold-noodle',
+    stallId: 'n-cold',
+    name: '韩式冷面',
+    price: 14,
+    taste: '酸甜',
+    cuisine: '韩式',
+    ingredients: ['荞麦面', '鸡蛋', '黄瓜', '泡菜', '牛肉汤'],
+    tags: ['消暑', '冷食', '清爽'],
+    halal: false,
+    mealTypes: ['lunch', 'dinner'],
+    nutrition: { calories: 420, protein: 18, fat: 10, carbs: 68 },
+    expandedNutrition: { fiber: 2.0, sodium: 590, sugar: 10, calcium: 42, iron: 2.6 },
+    rating: 4.5,
+    reviewCount: 67,
+    sales: 310,
+    image: '🍜',
+    imageUrl: 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=900&q=80',
+    description: '冰爽酸甜，夏天解暑利器。'
+  },
+  {
+    id: 'd-musubi',
+    stallId: 'c-fast',
+    name: '日式饭团套餐',
+    price: 10,
+    taste: '咸鲜',
+    cuisine: '日式',
+    ingredients: ['米饭', '海苔', '金枪鱼', '黄瓜'],
+    tags: ['快餐', '低价', '便携'],
+    halal: false,
+    mealTypes: ['breakfast', 'lunch'],
+    nutrition: { calories: 340, protein: 15, fat: 6, carbs: 58 },
+    expandedNutrition: { fiber: 1.5, sodium: 450, sugar: 3, calcium: 28, iron: 1.6 },
+    rating: 4.2,
+    reviewCount: 56,
+    sales: 380,
+    image: '🍙',
+    imageUrl: 'https://images.unsplash.com/photo-1553621042-f6e147245754?auto=format&fit=crop&w=900&q=80',
+    description: '方便快捷，适合课间赶时间。'
   }
 ];
 
 export const reviews = [
   { id: 'r1', targetType: 'dish', targetId: 'd-chicken-bowl', user: '小林', rating: 5, content: '鸡胸肉不柴，黑椒味很稳，减脂期常点。', createdAt: '2026-06-18' },
   { id: 'r2', targetType: 'dish', targetId: 'd-beef-noodle', user: '阿宁', rating: 5, content: '汤热，肉量比预期多，清真同学很方便。', createdAt: '2026-06-21' },
-  { id: 'r3', targetType: 'dish', targetId: 'd-egg-tomato', user: '晨晨', rating: 4, content: '便宜快，赶课的时候不用纠结。', createdAt: '2026-06-23' }
+  { id: 'r3', targetType: 'dish', targetId: 'd-egg-tomato', user: '晨晨', rating: 4, content: '便宜快，赶课的时候不用纠结。', createdAt: '2026-06-23' },
+  { id: 'r4', targetType: 'dish', targetId: 'd-liangpi', user: '小王', rating: 5, content: '天热吃凉皮太舒服了，酸辣味道正宗。', createdAt: '2026-07-05' },
+  { id: 'r5', targetType: 'dish', targetId: 'd-liangpi', user: '小李', rating: 4, content: '夏天必点，量可以再多一点就完美了。', createdAt: '2026-07-08' }
 ];
+
+export const userDishPreferences = [
+  { userId: 'u-demo-student', dishId: 'd-chicken-bowl', favorite: 1, eatenCount: 8, drawnCount: 12 },
+  { userId: 'u-demo-student', dishId: 'd-liangpi', favorite: 1, eatenCount: 5, drawnCount: 7 },
+  { userId: 'u-demo-student', dishId: 'd-beef-noodle', favorite: 0, eatenCount: 3, drawnCount: 6 },
+  { userId: 'u-demo-student', dishId: 'd-salad', favorite: 0, eatenCount: 2, drawnCount: 4 },
+  { userId: 'u-demo-student', dishId: 'd-egg-tomato', favorite: 0, eatenCount: 6, drawnCount: 10 }
+];
+
+export const campusEnvironment = {
+  tenantId: 'default',
+  temperature: 34,
+  weatherLabel: '晴热'
+};

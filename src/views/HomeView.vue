@@ -25,7 +25,7 @@
           <span>菜品</span>
         </article>
         <article>
-          <strong>{{ topDish?.computedRating.toFixed(1) }}</strong>
+          <strong>{{ topDish?.computedRating?.toFixed(1) || '—' }}</strong>
           <span>最高评分</span>
         </article>
       </div>
@@ -48,6 +48,41 @@
           <small>{{ dish.tags.join(' / ') }}</small>
           <span class="pill">综合分 {{ dish.rankScore }}</span>
         </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">智能推荐</p>
+          <h2>{{ recommendationLabel }}</h2>
+          <span v-if="recContext.source" class="pill">{{ recContext.source === 'today_menu' ? '来自今日菜单' : '菜品库推荐' }}</span>
+        </div>
+        <div class="table-actions">
+          <button class="ghost" type="button" :disabled="recLoading" @click="loadRecommendation">{{ recLoading ? '加载中...' : '刷新推荐' }}</button>
+          <RouterLink class="text-link" to="/recommend">定制推荐</RouterLink>
+        </div>
+      </div>
+      <p v-if="contextSummary" class="hero-copy">{{ contextSummary }}</p>
+      <p v-if="recContext.menu?.date" class="muted">菜单日期：{{ recContext.menu.date }} · {{ mealTypeLabel(recContext.menu.mealType) }}</p>
+      <div v-if="recContext.ranked.length" class="dish-list dense">
+        <RouterLink v-for="(dish, idx) in recContext.ranked" :key="dish.id" class="dish-row" :to="{ path: '/dishes', query: { dish: dish.id } }">
+          <span class="rank-badge">{{ idx + 1 }}</span>
+          <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb-sm" />
+          <span v-else class="emoji">{{ dish.image }}</span>
+          <span>
+            <strong>{{ dish.name }}</strong>
+            <small>{{ dish.nutrition?.calories || 0 }} kcal · 蛋白 {{ dish.nutrition?.protein || 0 }}g · ¥{{ dish.price }}</small>
+            <small v-if="formatWhy(dish.why)" class="rec-reason">{{ formatWhy(dish.why) }}</small>
+          </span>
+          <span v-if="dish.recommendationScore" class="pill">推荐分 {{ dish.recommendationScore.toFixed(1) }}</span>
+        </RouterLink>
+      </div>
+      <p v-else class="muted">{{ recLoading ? '正在加载推荐...' : '暂无推荐数据，请先在管理端录入菜品和菜单。' }}</p>
+      <div v-if="recContext.totals" class="metric-grid compact" style="margin-top:12px;">
+        <article><strong>{{ recContext.totals.calories || 0 }}</strong><span>kcal 合计</span></article>
+        <article><strong>{{ recContext.totals.protein || 0 }}g</strong><span>蛋白</span></article>
+        <article><strong>¥{{ recContext.totals.price || 0 }}</strong><span>总价</span></article>
       </div>
     </section>
 
@@ -86,13 +121,13 @@
             <span class="emoji">🏫</span>
             <span>食堂导航</span>
           </RouterLink>
-          <RouterLink class="quick-link-item" to="/visual-meal">
-            <span class="emoji">📸</span>
-            <span>拍照识别</span>
+          <RouterLink class="quick-link-item" to="/rankings">
+            <span class="emoji">🏆</span>
+            <span>查看排行榜</span>
           </RouterLink>
-          <RouterLink class="quick-link-item" to="/orders">
-            <span class="emoji">📋</span>
-            <span>我的订单</span>
+          <RouterLink class="quick-link-item" to="/dishes">
+            <span class="emoji">🔍</span>
+            <span>检索菜品</span>
           </RouterLink>
         </div>
       </article>
@@ -105,74 +140,222 @@
       <div>
         <p class="eyebrow">管理后台</p>
         <h1>食堂运营管理中心</h1>
-        <p class="hero-copy">管理菜单、处理订单、审核评价、查看数据分析，一站式运营工具。</p>
+        <p class="hero-copy">数据录入、评价审核、AI 智能体实验，一站式运营工具。</p>
       </div>
       <div class="metric-grid compact">
+        <article>
+          <strong>{{ store.canteens.length }}</strong>
+          <span>食堂数</span>
+        </article>
+        <article>
+          <strong>{{ store.stalls.length }}</strong>
+          <span>档口数</span>
+        </article>
         <article>
           <strong>{{ store.dishes.length }}</strong>
           <span>菜品总数</span>
         </article>
         <article>
-          <strong>{{ store.stalls.length }}</strong>
-          <span>档口数量</span>
+          <strong>{{ store.adminReviewTotal }}</strong>
+          <span>评价总数</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">数据概览</p>
+          <h2>运营核心指标</h2>
+        </div>
+        <button class="ghost" type="button" @click="refreshAdminMetrics">刷新</button>
+      </div>
+      <div class="metric-grid">
+        <article>
+          <strong>{{ store.adminAnalytics.dishes }}</strong>
+          <span>活跃菜品</span>
         </article>
         <article>
-          <strong>{{ store.canteens.length }}</strong>
-          <span>食堂数量</span>
+          <strong>{{ store.adminAnalytics.menus }}</strong>
+          <span>菜单总数</span>
         </article>
         <article>
-          <strong>{{ store.rankings.dishes.length }}</strong>
-          <span>已评分菜品</span>
+          <strong>{{ store.adminAnalytics.todayPublished }}</strong>
+          <span>今日已发布</span>
+        </article>
+        <article>
+          <strong>{{ store.adminAnalytics.reviews }}</strong>
+          <span>评价总数</span>
+        </article>
+        <article>
+          <strong>{{ store.adminAnalytics.users }}</strong>
+          <span>注册用户</span>
+        </article>
+        <article>
+          <strong>{{ store.adminAnalytics.avgRating }}</strong>
+          <span>平均评分</span>
+        </article>
+      </div>
+      <div v-if="store.adminAnalytics.recentDishes?.length" class="table-wrap">
+        <table>
+          <thead><tr><th>最近新增菜品</th><th>档口</th><th>价格</th><th>热量</th></tr></thead>
+          <tbody>
+            <tr v-for="dish in store.adminAnalytics.recentDishes" :key="dish.id">
+              <td>{{ dish.name }}</td>
+              <td>{{ stallName(dish.stallId) }}</td>
+              <td>¥{{ dish.price }}</td>
+              <td>{{ dish.nutrition?.calories || 0 }} kcal</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <p class="eyebrow">数据完整度</p>
+        <h2>数据资产健康度</h2>
+      </div>
+      <div class="metric-grid">
+        <article>
+          <strong>{{ dataCompleteness.canteens }}%</strong>
+          <span>食堂信息</span>
+        </article>
+        <article>
+          <strong>{{ dataCompleteness.stalls }}%</strong>
+          <span>档口信息</span>
+        </article>
+        <article>
+          <strong>{{ dataCompleteness.dishes }}%</strong>
+          <span>菜品营养</span>
+        </article>
+        <article>
+          <strong>{{ dataCompleteness.profiles }}%</strong>
+          <span>用户画像</span>
+        </article>
+      </div>
+      <p class="muted">基于已录入数据的完整度评估；食堂需要名称、位置、营业时间，菜品需要价格、营养和档口关联。</p>
+    </section>
+
+    <section v-if="aiReadiness" class="card">
+      <div class="section-title">
+        <p class="eyebrow">AI Readiness</p>
+        <h2>AI 部署就绪度</h2>
+      </div>
+      <div class="metric-grid">
+        <article>
+          <strong>{{ aiReadiness.enabled ? '已启用' : '未启用' }}</strong>
+          <span>AI 提供商</span>
+        </article>
+        <article>
+          <strong>{{ aiReadiness.source || '无' }}</strong>
+          <span>来源</span>
+        </article>
+        <article>
+          <strong>{{ aiReadiness.chatModel || '—' }}</strong>
+          <span>对话模型</span>
+        </article>
+        <article>
+          <strong>{{ aiReadiness.embeddingModel || '—' }}</strong>
+          <span>嵌入模型</span>
         </article>
       </div>
     </section>
 
     <section class="grid two-columns">
-      <RouterLink class="card admin-card" to="/stall-console">
-        <div class="admin-card-icon">📦</div>
-        <h2>订单队列</h2>
-        <p>查看并处理待完成、已支付的订单，更新订单状态。</p>
-      </RouterLink>
-
       <RouterLink class="card admin-card" to="/admin/input">
         <div class="admin-card-icon">📝</div>
-        <h2>菜单发布</h2>
-        <p>管理菜品数据、发布今日菜单、导入导出菜品信息。</p>
+        <h2>数据录入与维护</h2>
+        <p>管理食堂、档口、菜品数据，CSV 批量导入，视觉拍照识别，今日菜单发布。</p>
       </RouterLink>
 
       <RouterLink class="card admin-card" to="/admin">
         <div class="admin-card-icon">⭐</div>
-        <h2>评价与数据管理</h2>
-        <p>审核用户评价、管理用户角色、查看审计日志。</p>
-      </RouterLink>
-
-      <RouterLink class="card admin-card" to="/order-analytics">
-        <div class="admin-card-icon">📊</div>
-        <h2>数据分析</h2>
-        <p>查看销售趋势、菜品热度、营业统计等运营数据。</p>
+        <h2>评价管理</h2>
+        <p>审核用户评价，批准/拒绝/删除，查看评价分析和数据资产。</p>
       </RouterLink>
 
       <RouterLink class="card admin-card" to="/agent">
         <div class="admin-card-icon">🤖</div>
-        <h2>AI 顾问</h2>
-        <p>智能运营助手，数据分析建议、菜品推荐策略。</p>
+        <h2>RAG 智能体实验室</h2>
+        <p>基于真实菜品库的 RAG 检索增强生成，测试推荐迭代和运营建议。</p>
+      </RouterLink>
+
+      <RouterLink class="card admin-card" to="/admin/ai">
+        <div class="admin-card-icon">⚙️</div>
+        <h2>AI 配置</h2>
+        <p>配置 AI 提供商、模型、密钥、测试连接、查看用量和部署就绪状态。</p>
       </RouterLink>
     </section>
   </template>
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
 
-const adminRoles = ['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin'];
-const isAdmin = computed(() => store.user && adminRoles.includes(store.user.role));
+const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
+const isAdmin = computed(() => store.user && adminRoleSet.has(store.user.role));
 
 const topDish = computed(() => store.rankings.dishes[0]);
 const menuSourceLabel = computed(() => (store.todayMenu.dishes.length ? '今日供应' : '菜品库兜底'));
+
+const recContext = computed(() => store.contextualRecommendation);
+const recLoading = ref(false);
+const aiReadiness = ref(null);
+
+const recommendationLabel = computed(() => recContext.value.goalLabel ? `${recContext.value.goalLabel}推荐` : '今日智能推荐');
+
+const contextSummary = computed(() => {
+  const ctx = recContext.value.context;
+  if (!ctx || typeof ctx !== 'object') return typeof ctx === 'string' ? ctx : '';
+  const parts = [];
+  if (ctx.timeOfDay) {
+    const timeMap = { breakfast: '当前早餐', lunch: '当前午餐', dinner: '当前晚餐' };
+    parts.push(timeMap[ctx.timeOfDay] || ctx.timeOfDay);
+  }
+  if (ctx.environment) {
+    const env = ctx.environment;
+    const temp = env.temperature ?? 25;
+    const weather = env.weatherLabel || '晴';
+    parts.push(`${temp}°C ${weather}`);
+  }
+  const prof = ctx.profile;
+  if (prof) {
+    if (prof.preferLowCrowd) parts.push('低拥挤偏好');
+    if (prof.halalOnly) parts.push('清真限定');
+    if (prof.dietaryPattern && prof.dietaryPattern !== 'regular') {
+      const dietMap = { vegetarian: '素食', vegan: '纯素', lowCarb: '低碳水' };
+      parts.push(dietMap[prof.dietaryPattern] || prof.dietaryPattern);
+    }
+  }
+  return parts.length ? parts.join(' · ') : '';
+});
+
+function formatWhy(why) {
+  if (!why) return '';
+  if (typeof why === 'string') return why;
+  if (!Array.isArray(why) || !why.length) return '';
+  return why.slice(0, 2).join(' · ');
+}
+
+function mealTypeLabel(mt) {
+  return { lunch: '午餐', dinner: '晚餐', breakfast: '早餐' }[mt] || mt || '';
+}
+
+const dataCompleteness = computed(() => {
+  const canteens = store.canteens;
+  const stalls = store.stalls;
+  const dishes = store.dishes;
+  const canteenScore = canteens.length ? Math.round(canteens.filter(c => c.name && c.location && c.hours).length / canteens.length * 100) : 0;
+  const stallScore = stalls.length ? Math.round(stalls.filter(s => s.name && s.canteenId).length / stalls.length * 100) : 0;
+  const dishScore = dishes.length ? Math.round(dishes.filter(d => d.name && d.price && d.nutrition?.calories && d.stallId).length / dishes.length * 100) : 0;
+  const profileScore = store.adminAnalytics.users ? Math.min(100, Math.round((store.adminAnalytics.users > 0 ? 60 : 0) + (store.adminAnalytics.reviews > 0 ? 40 : 0))) : 0;
+  return { canteens: canteenScore, stalls: stallScore, dishes: dishScore, profiles: profileScore };
+});
 
 function dishStallLabel(dish) {
   const stall = store.stalls.find(s => s.id === dish.stallId);
@@ -180,6 +363,40 @@ function dishStallLabel(dish) {
   const canteen = store.canteens.find(c => c.id === stall.canteenId);
   return canteen ? `${stall.name} · ${canteen.name}` : stall.name;
 }
+
+function stallName(id) {
+  return store.stalls.find((stall) => stall.id === id)?.name || '未绑定';
+}
+
+async function loadRecommendation() {
+  recLoading.value = true;
+  try {
+    await store.fetchRecommendation();
+  } finally {
+    recLoading.value = false;
+  }
+}
+
+async function refreshAdminMetrics() {
+  try {
+    await Promise.all([
+      store.loadAnalytics(),
+      store.loadReviewsAdmin(50, 0)
+    ]);
+  } catch { /* silent */ }
+}
+
+onMounted(async () => {
+  if (isAdmin.value) {
+    await refreshAdminMetrics();
+    try {
+      const result = await store.loadDeploymentReadiness();
+      aiReadiness.value = result;
+    } catch { /* silent */ }
+  } else {
+    await loadRecommendation();
+  }
+});
 </script>
 
 <style scoped>
@@ -251,5 +468,24 @@ function dishStallLabel(dish) {
   margin: 0;
   color: var(--text-secondary, #666);
   font-size: 0.9rem;
+}
+
+.rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary, #4f46e5);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.rec-reason {
+  color: var(--primary, #4f46e5);
+  font-style: italic;
 }
 </style>

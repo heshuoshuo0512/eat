@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { canteens as seedCanteens, dishes as seedDishes, reviews as seedReviews, stalls as seedStalls } from '../src/domain/seedData.js';
+import { canteens as seedCanteens, dishes as seedDishes, reviews as seedReviews, stalls as seedStalls, userDishPreferences as seedUserDishPreferences, campusEnvironment as seedCampusEnvironment } from '../src/domain/seedData.js';
 import { hashPassword } from './security.js';
 import { runMigrations } from './migrations.js';
 
@@ -406,6 +406,52 @@ function migrate(db) {
   try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'unpaid'"); } catch {}
   try { db.exec("ALTER TABLE orders ADD COLUMN paid_at TEXT"); } catch {}
 
+  // ── Migration 003: contextual recommendation schema ──────────────
+  // Canteen hierarchy
+  try { db.exec("ALTER TABLE canteens ADD COLUMN parent_id TEXT REFERENCES canteens(id) ON DELETE SET NULL"); } catch {}
+  try { db.exec("ALTER TABLE canteens ADD COLUMN canteen_type TEXT NOT NULL DEFAULT 'primary'"); } catch {}
+  try { db.exec("ALTER TABLE canteens ADD COLUMN image TEXT NOT NULL DEFAULT ''"); } catch {}
+  // Expanded nutrition
+  try { db.exec("ALTER TABLE dishes ADD COLUMN fiber REAL NOT NULL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN sodium REAL NOT NULL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN sugar REAL NOT NULL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN calcium REAL NOT NULL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN iron REAL NOT NULL DEFAULT 0"); } catch {}
+  // Expanded health profile
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN dietary_pattern TEXT NOT NULL DEFAULT 'balanced'"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN spice_level INTEGER NOT NULL DEFAULT 3"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN nutrition_focus_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN prefer_low_crowd INTEGER NOT NULL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN favorite_tags_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  // User dish preferences (DB-backed)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_dish_preferences (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      favorite INTEGER NOT NULL DEFAULT 0,
+      eaten_count INTEGER NOT NULL DEFAULT 0,
+      drawn_count INTEGER NOT NULL DEFAULT 0,
+      last_eaten_at TEXT,
+      last_drawn_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, user_id, dish_id)
+    );
+  `);
+  // Campus environment (DB-backed)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campus_environment (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      temperature REAL NOT NULL DEFAULT 25,
+      weather_label TEXT NOT NULL DEFAULT '晴',
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id)
+    );
+  `);
+
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL AND wechat_openid != '';
     CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
@@ -433,6 +479,9 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_agent_eval_runs_user_created ON agent_eval_runs(tenant_id, user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_agent_eval_cases_tenant_enabled ON agent_eval_cases(tenant_id, enabled);
     CREATE INDEX IF NOT EXISTS idx_agent_eval_case_runs_case_created ON agent_eval_case_runs(tenant_id, case_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_user ON user_dish_preferences(tenant_id, user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_dish ON user_dish_preferences(tenant_id, dish_id);
+    CREATE INDEX IF NOT EXISTS idx_canteens_parent ON canteens(tenant_id, parent_id);
   `);
 }
 
@@ -447,25 +496,63 @@ function seed(db) {
     const insertUser = db.prepare('INSERT INTO users (id, username, password_hash, nickname, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
     insertUser.run('u-demo-student', '演示学生', hashPassword('student123'), '演示学生', 'student', now, now);
     insertUser.run('u-admin', 'admin', hashPassword('admin123'), '管理员', 'admin', now, now);
-    db.prepare('INSERT INTO health_profiles (user_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run('u-demo-student', 'fatLoss', 18, 'lunch', '不限', 0, '[]', now);
+    db.prepare('INSERT INTO health_profiles (user_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('u-demo-student', 'fatLoss', 18, 'lunch', '不限', 0, '[]', 'balanced', 3, '[]', 0, '[]', now);
   }
 
   if (db.prepare('SELECT COUNT(*) AS count FROM canteens').get().count === 0) {
-    const insert = db.prepare('INSERT INTO canteens (id, name, location, hours, crowd_level, tags_json, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    for (const item of seedCanteens) insert.run(item.id, item.name, item.location, item.hours, item.crowdLevel, json(item.tags), item.description, now, now);
+    const insert = db.prepare('INSERT INTO canteens (id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const item of seedCanteens) insert.run(item.id, item.name, item.location, item.hours, item.crowdLevel, json(item.tags), item.description, item.parentId || null, item.canteenType || 'primary', item.imageUrl || item.image || '', now, now);
+  } else {
+    // Backfill hierarchy for existing canteens (migration scenario)
+    const existingMain = db.prepare("SELECT id FROM canteens WHERE id = 'campus-main' AND tenant_id = 'default'").get();
+    if (!existingMain) {
+      db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run('campus-main', 'default', '校园主食堂', '校园中心区', '06:00 - 22:00', 55, json(['校园总览', '综合服务']), '校园主食堂，包含北苑、学苑、南湖三大子食堂。', null, 'primary', '🏫', now, now);
+    }
+    for (const childId of ['north', 'central', 'south']) {
+      const existing = db.prepare('SELECT parent_id, canteen_type FROM canteens WHERE id = ? AND tenant_id = ?').get(childId, 'default');
+      if (existing && !existing.parent_id) {
+        db.prepare("UPDATE canteens SET parent_id = 'campus-main', canteen_type = 'sub', updated_at = ? WHERE id = ? AND tenant_id = ?").run(now, childId, 'default');
+      }
+    }
+    const updateSeedCanteenImage = db.prepare('UPDATE canteens SET image = ?, updated_at = ? WHERE id = ? AND (image IS NULL OR image = ? OR image IN (?, ?, ?, ?))');
+    for (const item of seedCanteens) {
+      if (item.imageUrl) updateSeedCanteenImage.run(item.imageUrl, now, item.id, '', '🏫', '🏢', '🏛️', '🏠');
+    }
   }
 
   if (db.prepare('SELECT COUNT(*) AS count FROM stalls').get().count === 0) {
     const insert = db.prepare('INSERT INTO stalls (id, canteen_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const item of seedStalls) insert.run(item.id, item.canteenId, item.floor, item.name, item.category, item.rating, item.avgPrice, item.open ? 1 : 0, item.description, now, now);
+  } else {
+    // Backfill new stalls for existing databases
+    for (const item of seedStalls) {
+      const exists = db.prepare('SELECT id FROM stalls WHERE id = ?').get(item.id);
+      if (!exists) {
+        db.prepare('INSERT INTO stalls (id, canteen_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(item.id, item.canteenId, item.floor, item.name, item.category, item.rating, item.avgPrice, item.open ? 1 : 0, item.description, now, now);
+      }
+    }
   }
 
   if (db.prepare('SELECT COUNT(*) AS count FROM dishes').get().count === 0) {
-    const insert = db.prepare(`INSERT INTO dishes (id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, rating, review_count, sales, image, image_url, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insert = db.prepare(`INSERT INTO dishes (id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const item of seedDishes) {
-      insert.run(item.id, item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+      const en = item.expandedNutrition || {};
+      insert.run(item.id, item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+    }
+  } else {
+    // Backfill new dishes and expanded nutrition for existing databases
+    for (const item of seedDishes) {
+      const exists = db.prepare('SELECT id FROM dishes WHERE id = ?').get(item.id);
+      if (!exists) {
+        const en = item.expandedNutrition || {};
+        db.prepare(`INSERT INTO dishes (id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(item.id, item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+      }
     }
   }
   const updateSeedImage = db.prepare('UPDATE dishes SET image_url = ? WHERE id = ? AND (image_url IS NULL OR image_url = ?)');
@@ -473,9 +560,36 @@ function seed(db) {
     if (item.imageUrl) updateSeedImage.run(item.imageUrl, item.id, '');
   }
 
+  // Backfill expanded nutrition columns on existing dishes
+  for (const item of seedDishes) {
+    const en = item.expandedNutrition;
+    if (en) {
+      const row = db.prepare('SELECT fiber FROM dishes WHERE id = ?').get(item.id);
+      if (row && row.fiber === 0 && en.fiber > 0) {
+        db.prepare('UPDATE dishes SET fiber = ?, sodium = ?, sugar = ?, calcium = ?, iron = ?, updated_at = ? WHERE id = ?')
+          .run(en.fiber, en.sodium, en.sugar, en.calcium, en.iron, now, item.id);
+      }
+    }
+  }
+
   if (db.prepare('SELECT COUNT(*) AS count FROM reviews').get().count === 0) {
     const insert = db.prepare('INSERT INTO reviews (id, user_id, target_type, target_id, rating, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
     for (const item of seedReviews) insert.run(item.id, 'u-demo-student', item.targetType, item.targetId, item.rating, item.content, item.createdAt);
+  }
+
+  // Seed campus environment
+  if (db.prepare('SELECT COUNT(*) AS count FROM campus_environment').get().count === 0) {
+    const env = seedCampusEnvironment;
+    db.prepare('INSERT INTO campus_environment (id, tenant_id, temperature, weather_label, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run(`env-${env.tenantId}`, env.tenantId, env.temperature, env.weatherLabel, now);
+  }
+
+  // Seed user dish preferences
+  if (db.prepare('SELECT COUNT(*) AS count FROM user_dish_preferences').get().count === 0) {
+    const insert = db.prepare('INSERT INTO user_dish_preferences (id, tenant_id, user_id, dish_id, favorite, eaten_count, drawn_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const pref of seedUserDishPreferences) {
+      insert.run(`udp-${pref.userId}-${pref.dishId}`, 'default', pref.userId, pref.dishId, pref.favorite, pref.eatenCount, pref.drawnCount, now, now);
+    }
   }
 }
 
@@ -489,7 +603,11 @@ export function rowToCanteen(row) {
     hours: row.hours,
     crowdLevel: row.crowd_level,
     tags: parseJson(row.tags_json, []),
-    description: row.description
+    description: row.description,
+    parentId: row.parent_id || null,
+    canteenType: row.canteen_type || 'primary',
+    image: row.image && !String(row.image).startsWith('http') ? row.image : '',
+    imageUrl: row.image && String(row.image).startsWith('http') ? row.image : ''
   };
 }
 
@@ -520,6 +638,11 @@ export function rowToDish(row) {
     halal: Boolean(row.halal),
     mealTypes: parseJson(row.meal_types_json, ['lunch', 'dinner']),
     nutrition: { calories: row.calories, protein: row.protein, fat: row.fat, carbs: row.carbs },
+    fiber: row.fiber || 0,
+    sodium: row.sodium || 0,
+    sugar: row.sugar || 0,
+    calcium: row.calcium || 0,
+    iron: row.iron || 0,
     allergens: parseJson(row.allergens_json, []),
     rating: row.rating,
     reviewCount: row.review_count,
@@ -537,6 +660,7 @@ export function rowToReview(row) {
     id: row.id,
     targetType: row.target_type,
     targetId: row.target_id,
+    userId: row.user_id,
     user: row.nickname || row.username || '匿名用户',
     rating: row.rating,
     content: row.content,
@@ -552,8 +676,13 @@ export function rowToProfile(row) {
     mealType: row.meal_type,
     taste: row.taste,
     halalOnly: Boolean(row.halal_only),
-    avoid: parseJson(row.avoid_json, [])
-  } : { goal: 'healthy', budgetMax: 20, mealType: 'lunch', taste: '不限', halalOnly: false, avoid: [] };
+    avoid: parseJson(row.avoid_json, []),
+    dietaryPattern: row.dietary_pattern || 'balanced',
+    spiceLevel: row.spice_level ?? 3,
+    nutritionFocus: parseJson(row.nutrition_focus_json, []),
+    preferLowCrowd: Boolean(row.prefer_low_crowd),
+    favoriteTags: parseJson(row.favorite_tags_json, [])
+  } : { goal: 'healthy', budgetMax: 20, mealType: 'lunch', taste: '不限', halalOnly: false, avoid: [], dietaryPattern: 'balanced', spiceLevel: 3, nutritionFocus: [], preferLowCrowd: false, favoriteTags: [] };
 }
 
 export function rowToUser(row) {
@@ -652,6 +781,33 @@ export function rowToAuditLog(row) {
     createdAt: row.created_at
   };
 }
+
+export function rowToPreference(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id || 'default',
+    userId: row.user_id,
+    dishId: row.dish_id,
+    favorite: Boolean(row.favorite),
+    eatenCount: row.eaten_count || 0,
+    drawnCount: row.drawn_count || 0,
+    lastEatenAt: row.last_eaten_at || null,
+    lastDrawnAt: row.last_drawn_at || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export function rowToEnvironment(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id || 'default',
+    temperature: row.temperature,
+    weatherLabel: row.weather_label,
+    updatedAt: row.updated_at
+  };
+}
+
 
 export function serializeJson(value) {
   return json(value);

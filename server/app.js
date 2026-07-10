@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildMealPlan, calculateRanking, normalizeProfile } from '../src/domain/recommendation.js';
-import { openDatabase, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToMenu, rowToMenuItem, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
+import { buildMealPlan, calculateRanking, contextualRankDishes, normalizeProfile } from '../src/domain/recommendation.js';
+import { openDatabase, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToEnvironment, rowToMenu, rowToMenuItem, rowToPreference, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
 import { assignableRoles, requirePermission } from './rbac.js';
 import { createToken, decryptSecret, encryptSecret, hashPassword, publicUser, verifyPassword, verifyToken } from './security.js';
 import { storeUpload } from './storage.js';
@@ -319,12 +319,14 @@ async function snapshot(db, user = null) {
   const stalls = await listStalls(db, tenantId);
   const dishes = await listDishes(db, new URLSearchParams(), tenantId);
   const reviews = (await db.prepare(`SELECT reviews.*, users.nickname, users.username FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND reviews.status = 'approved' ORDER BY reviews.created_at DESC`).all(tenantId)).map(rowToReview);
+  const dishPreferences = user ? (await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ?').all(tenantId, user.id)).map(rowToPreference) : [];
   return {
     session: { user: publicUser(user) },
     canteens,
     stalls,
     dishes,
     reviews,
+    dishPreferences,
     profile: user ? await getProfile(db, user.id, tenantId) : normalizeProfile({ goal: 'fatLoss', budgetMax: 18, mealType: 'lunch' })
   };
 }
@@ -352,10 +354,15 @@ async function computeRankings(db, tenantId = 'default') {
 async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tenantId = 'default') {
   requireFields(body, ['stallId', 'name', 'price', 'taste', 'cuisine', 'ingredients', 'tags', 'nutrition']);
   const nutrition = body.nutrition || {};
-  await db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, rating, review_count, sales, image, image_url, description, status, allergens_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, updated_at=excluded.updated_at`)
-    .run(id, tenantId, body.stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), Number(body.rating || 4.5), Number(body.reviewCount || 0), Number(body.sales || 0), body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', serializeJson(splitList(body.allergens || [])), now(), now());
+  const fiber = Number(body.fiber ?? nutrition.fiber ?? 0);
+  const sodium = Number(body.sodium ?? nutrition.sodium ?? 0);
+  const sugar = Number(body.sugar ?? nutrition.sugar ?? 0);
+  const calcium = Number(body.calcium ?? nutrition.calcium ?? 0);
+  const iron = Number(body.iron ?? nutrition.iron ?? 0);
+  await db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, status, allergens_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, updated_at=excluded.updated_at`)
+    .run(id, tenantId, body.stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, Number(body.rating || 4.5), Number(body.reviewCount || 0), Number(body.sales || 0), body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', serializeJson(splitList(body.allergens || [])), now(), now());
   return id;
 }
 
@@ -456,8 +463,17 @@ function parseCsvImport(csvText) {
 
 async function upsertCanteen(db, body, id = body.id || `canteen-${randomUUID()}`, tenantId = 'default') {
   requireFields(body, ['name', 'location', 'hours', 'description']);
-  await db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, location=excluded.location, hours=excluded.hours, crowd_level=excluded.crowd_level, tags_json=excluded.tags_json, description=excluded.description, updated_at=excluded.updated_at')
-    .run(id, tenantId, body.name, body.location, body.hours, Number(body.crowdLevel || 30), serializeJson(splitList(body.tags)), body.description, now(), now());
+  const parentId = body.parentId || null;
+  const canteenType = body.canteenType || 'primary';
+  const image = body.imageUrl || body.image || '';
+  // Validate parent exists if specified
+  if (parentId) {
+    if (parentId === id) throw Object.assign(new Error('不能将食堂设为自己的父级'), { status: 400 });
+    const parent = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, parentId);
+    if (!parent) throw Object.assign(new Error('父级食堂不存在'), { status: 400 });
+  }
+  await db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, location=excluded.location, hours=excluded.hours, crowd_level=excluded.crowd_level, tags_json=excluded.tags_json, description=excluded.description, parent_id=excluded.parent_id, canteen_type=excluded.canteen_type, image=excluded.image, updated_at=excluded.updated_at')
+    .run(id, tenantId, body.name, body.location, body.hours, Number(body.crowdLevel || 30), serializeJson(splitList(body.tags)), body.description, parentId, canteenType, image, now(), now());
   return id;
 }
 
@@ -1237,9 +1253,11 @@ async function runCanteenAgent(db, user, body) {
 async function recommendationDishPool(db, tenantId, profile) {
   const normalized = normalizeProfile(profile);
   const bundle = await todayMenuBundle(db, tenantId, normalized.mealType, now().slice(0, 10));
-  const availableDishes = bundle.dishes.filter((dish) => dish.supplyStatus !== 'sold_out');
-  if (availableDishes.length) return { ...bundle, dishes: availableDishes };
-  if (bundle.dishes.length) return bundle;
+  if (bundle.source === 'menu') {
+    const available = bundle.dishes.filter((dish) => dish.supplyStatus !== 'sold_out');
+    if (available.length) return { ...bundle, dishes: available };
+    return { ...bundle, dishes: await listDishes(db, new URLSearchParams(), tenantId), source: 'fallback' };
+  }
   return { ...bundle, dishes: await listDishes(db, new URLSearchParams(), tenantId), source: 'fallback' };
 }
 
@@ -1341,8 +1359,8 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const id = `u-${randomUUID()}`;
         await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
           .run(id, 'default', username, hashPassword(body.password), body.nickname || username, role, now(), now());
-        await db.prepare('INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, 'default', 'healthy', 20, 'lunch', '不限', 0, '[]', now());
+        await db.prepare('INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(id, 'default', 'healthy', 20, 'lunch', '不限', 0, '[]', 'balanced', 3, '[]', 0, '[]', now());
         const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
         return send(res, 201, { user: publicUser(created), token: createToken(created), state: await snapshot(db, created) });
       }
@@ -1390,8 +1408,27 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const tenantId = tenantIdFor(activeUser);
         const profile = activeUser ? await getProfile(db, activeUser.id, tenantId) : normalizeProfile({ mealType: url.searchParams.get('mealType') || 'lunch' });
         const pool = await recommendationDishPool(db, tenantId, profile);
+        // Determine server time of day
+        const hour = new Date().getHours();
+        const timeOfDay = hour < 10 ? 'breakfast' : hour < 14 ? 'lunch' : hour < 17 ? 'lunch' : 'dinner';
+        // Get environment from DB
+        const envRow = await db.prepare('SELECT * FROM campus_environment WHERE tenant_id = ?').get(tenantId);
+        const environment = envRow ? rowToEnvironment(envRow) : { temperature: 25, weatherLabel: '晴' };
+        // Get user preferences
+        const preferences = activeUser ? (await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ?').all(tenantId, activeUser.id)).map(rowToPreference) : [];
+        // Contextual ranking
+        const canteens = await listCanteens(db, tenantId);
+        const stalls = await listStalls(db, tenantId);
+        const context = { profile, environment, canteens, stalls, preferences, timeOfDay };
+        const ranked = contextualRankDishes(pool.dishes, context);
         const plan = buildMealPlan(pool.dishes, profile);
-        return send(res, 200, { ...plan, source: pool.source, menu: { date: pool.date, mealType: pool.mealType, menus: pool.menus } });
+        return send(res, 200, {
+          ranked,
+          plan,
+          context: { environment, timeOfDay, profile },
+          source: pool.source,
+          menu: { date: pool.date, mealType: pool.mealType, menus: pool.menus }
+        });
       }
 
       if (method === 'POST' && url.pathname === '/api/orders') {
@@ -1601,7 +1638,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (content.length < 2 || content.length > 240) throw Object.assign(new Error('评价内容长度需要在 2-240 个字符之间。'), { status: 400 });
         const id = `r-${randomUUID()}`;
         await db.prepare('INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, tenantIdFor(activeUser), activeUser.id, targetType, body.targetId, rating, content, body.status || 'approved', now().slice(0, 10));
+          .run(id, tenantIdFor(activeUser), activeUser.id, targetType, body.targetId, rating, content, 'pending', now().slice(0, 10));
         await audit(db, activeUser, 'CREATE', 'review', id);
         await invalidateRankings();
         if (targetType === 'dish') return send(res, 201, await dishDetail(db, body.targetId, tenantIdFor(activeUser)));
@@ -1611,9 +1648,9 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
       if ((method === 'POST' || method === 'PUT') && url.pathname === '/api/health/profile') {
         const activeUser = await requireUser(db, req);
         const profile = normalizeProfile(await readBody(req));
-        await db.prepare(`INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(user_id) DO UPDATE SET tenant_id=excluded.tenant_id, goal=excluded.goal, budget_max=excluded.budget_max, meal_type=excluded.meal_type, taste=excluded.taste, halal_only=excluded.halal_only, avoid_json=excluded.avoid_json, updated_at=excluded.updated_at`)
-          .run(activeUser.id, tenantIdFor(activeUser), profile.goal, profile.budgetMax, profile.mealType, profile.taste, profile.halalOnly ? 1 : 0, serializeJson(profile.avoid), now());
+        await db.prepare(`INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(user_id) DO UPDATE SET tenant_id=excluded.tenant_id, goal=excluded.goal, budget_max=excluded.budget_max, meal_type=excluded.meal_type, taste=excluded.taste, halal_only=excluded.halal_only, avoid_json=excluded.avoid_json, dietary_pattern=excluded.dietary_pattern, spice_level=excluded.spice_level, nutrition_focus_json=excluded.nutrition_focus_json, prefer_low_crowd=excluded.prefer_low_crowd, favorite_tags_json=excluded.favorite_tags_json, updated_at=excluded.updated_at`)
+          .run(activeUser.id, tenantIdFor(activeUser), profile.goal, profile.budgetMax, profile.mealType, profile.taste, profile.halalOnly ? 1 : 0, serializeJson(profile.avoid), profile.dietaryPattern, profile.spiceLevel, serializeJson(profile.nutritionFocus), profile.preferLowCrowd ? 1 : 0, serializeJson(profile.favoriteTags), now());
         await audit(db, activeUser, 'UPSERT', 'health_profile', activeUser.id);
         const pool = await recommendationDishPool(db, tenantIdFor(activeUser), profile);
         return send(res, 200, { profile, recommendation: { ...buildMealPlan(pool.dishes, profile), source: pool.source, menu: { date: pool.date, mealType: pool.mealType, menus: pool.menus } }, state: await snapshot(db, activeUser) });
@@ -2083,15 +2120,26 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           agent: { status: 'ok', summary: 'agent route handler loaded' },
           runtime: { status: 'ok', node: process.version, platform: process.platform },
           schema: { status: 'ok' },
+          driver: { status: 'ok', type: process.env.DB_DRIVER === 'postgres' || process.env.DATABASE_URL ? 'postgresql' : 'sqlite' },
         };
+        const requiredTables = ['users', 'dishes', 'agent_actions', 'agent_memories', 'agent_eval_cases', 'user_dish_preferences', 'campus_environment'];
         try {
-          const tableCheck = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users','dishes','agent_actions','agent_memories','agent_eval_cases')").all();
-          const tables = tableCheck.map((r) => r.name);
-          checks.schema = { status: 'ok', tables };
+          let tables = [];
+          try {
+            // SQLite path
+            const tableCheck = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN (${requiredTables.map(() => '?').join(',')})`).all(...requiredTables);
+            tables = tableCheck.map((r) => r.name);
+          } catch {
+            // PostgreSQL path
+            const tableCheck = await db.prepare("SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN (" + requiredTables.map(() => '?').join(',') + ")").all(...requiredTables);
+            tables = tableCheck.map((r) => r.name);
+          }
+          const missing = requiredTables.filter((t) => !tables.includes(t));
+          checks.schema = missing.length ? { status: 'warn', tables, missing } : { status: 'ok', tables };
         } catch (err) {
           checks.schema = { status: 'error', message: err.message };
         }
-        const allOk = Object.values(checks).every((c) => c.status === 'ok');
+        const allOk = Object.values(checks).every((c) => c.status === 'ok' || c.status === 'warn');
         return send(res, allOk ? 200 : 503, { ok: allOk, checks, aiKeysConfigured: false });
       }
 
@@ -2116,6 +2164,169 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         writeSse(res, 'agent.done', { sessionId });
         res.end();
         return;
+      }
+
+
+      // ── Admin stall CRUD ─────────────────────────────────────────
+      if (method === 'POST' && url.pathname === '/api/admin/stalls') {
+        const activeUser = await requireCapability(db, req, 'stall:write');
+        const body = await readBody(req);
+        if (!body.canteenId || !String(body.name || '').trim() || !String(body.floor || '').trim() || !String(body.category || '').trim()) throw Object.assign(new Error('缺少必填字段：canteenId, name, floor, category'), { status: 400 });
+        // Validate canteen exists and is leaf (sub or no children used as stall parent)
+        const canteen = await db.prepare('SELECT id, canteen_type FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), body.canteenId);
+        if (!canteen) throw Object.assign(new Error('所属食堂不存在'), { status: 400 });
+        const stallId = body.id || `stall-${randomUUID()}`;
+        await db.prepare('INSERT INTO stalls (id, tenant_id, canteen_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(stallId, tenantIdFor(activeUser), body.canteenId, body.floor, String(body.name).trim(), String(body.category).trim(), Number(body.rating || 4.5), Number(body.avgPrice || 0), body.open !== false ? 1 : 0, body.description || '', now(), now());
+        await audit(db, activeUser, 'CREATE', 'stall', stallId);
+        await invalidateRankings();
+        return send(res, 201, await snapshot(db, activeUser));
+      }
+
+      if ((method === 'PUT' || method === 'DELETE') && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'stalls' && pathParts[3]) {
+        const permission = method === 'DELETE' ? 'stall:delete' : 'stall:write';
+        const activeUser = await requireCapability(db, req, permission);
+        const stallId = decodeURIComponent(pathParts[3]);
+        const existing = await db.prepare('SELECT id FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), stallId);
+        if (!existing) throw Object.assign(new Error('档口不存在'), { status: 404 });
+        if (method === 'DELETE') {
+          await db.prepare('DELETE FROM stalls WHERE tenant_id = ? AND id = ?').run(tenantIdFor(activeUser), stallId);
+          await audit(db, activeUser, 'DELETE', 'stall', stallId);
+          await invalidateRankings();
+          return send(res, 200, await snapshot(db, activeUser));
+        }
+        const body = await readBody(req);
+        const sets = [];
+        const params = [];
+        if (body.canteenId !== undefined) {
+          const canteen = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), body.canteenId);
+          if (!canteen) throw Object.assign(new Error('所属食堂不存在'), { status: 400 });
+          sets.push('canteen_id = ?'); params.push(body.canteenId);
+        }
+        if (body.name !== undefined) { sets.push('name = ?'); params.push(String(body.name).trim()); }
+        if (body.floor !== undefined) { sets.push('floor = ?'); params.push(String(body.floor).trim()); }
+        if (body.category !== undefined) { sets.push('category = ?'); params.push(String(body.category).trim()); }
+        if (body.rating !== undefined) { sets.push('rating = ?'); params.push(Number(body.rating)); }
+        if (body.avgPrice !== undefined) { sets.push('avg_price = ?'); params.push(Number(body.avgPrice)); }
+        if (body.open !== undefined) { sets.push('open = ?'); params.push(body.open ? 1 : 0); }
+        if (body.description !== undefined) { sets.push('description = ?'); params.push(body.description); }
+        if (!sets.length) throw Object.assign(new Error('至少需要一个更新字段'), { status: 400 });
+        sets.push('updated_at = ?');
+        params.push(now(), tenantIdFor(activeUser), stallId);
+        await db.prepare(`UPDATE stalls SET ${sets.join(', ')} WHERE tenant_id = ? AND id = ?`).run(...params);
+        await audit(db, activeUser, 'UPDATE', 'stall', stallId);
+        await invalidateRankings();
+        return send(res, 200, await snapshot(db, activeUser));
+      }
+
+      // ── Campus environment (admin) ───────────────────────────────
+      if (method === 'GET' && url.pathname === '/api/admin/environment') {
+        const activeUser = await requireCapability(db, req, 'environment:write');
+        const envRow = await db.prepare('SELECT * FROM campus_environment WHERE tenant_id = ?').get(tenantIdFor(activeUser));
+        return send(res, 200, { environment: envRow ? rowToEnvironment(envRow) : { temperature: 25, weatherLabel: '晴' } });
+      }
+
+      if (method === 'PUT' && url.pathname === '/api/admin/environment') {
+        const activeUser = await requireCapability(db, req, 'environment:write');
+        const body = await readBody(req);
+        const temp = Number(body.temperature);
+        if (!Number.isFinite(temp) || temp < -40 || temp > 55) throw Object.assign(new Error('温度需要在 -40 到 55 之间'), { status: 400 });
+        const weatherLabel = String(body.weatherLabel || '晴').trim();
+        if (!weatherLabel) throw Object.assign(new Error('请输入天气标签'), { status: 400 });
+        const tenantId = tenantIdFor(activeUser);
+        const envId = `env-${tenantId}`;
+        await db.prepare('INSERT INTO campus_environment (id, tenant_id, temperature, weather_label, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET temperature=excluded.temperature, weather_label=excluded.weather_label, updated_at=excluded.updated_at')
+          .run(envId, tenantId, temp, weatherLabel, now());
+        await audit(db, activeUser, 'UPSERT', 'campus_environment', envId);
+        return send(res, 200, { environment: { tenantId, temperature: temp, weatherLabel, updatedAt: now() } });
+      }
+
+      // ── User dish preferences (authenticated) ───────────────────
+      if (method === 'GET' && url.pathname === '/api/preferences/dishes') {
+        const activeUser = await requireUser(db, req);
+        const tenantId = tenantIdFor(activeUser);
+        const rows = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ?').all(tenantId, activeUser.id);
+        return send(res, 200, { preferences: rows.map(rowToPreference) });
+      }
+
+      if (method === 'PUT' && url.pathname === '/api/preferences/dishes') {
+        const activeUser = await requireCapability(db, req, 'preference:write');
+        const body = await readBody(req);
+        if (!body.dishId) throw Object.assign(new Error('缺少 dishId'), { status: 400 });
+        const tenantId = tenantIdFor(activeUser);
+        const dish = await db.prepare("SELECT id FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, body.dishId);
+        if (!dish) throw Object.assign(new Error('菜品不存在'), { status: 404 });
+        const prefId = `udp-${activeUser.id}-${body.dishId}`;
+        const favorite = body.favorite !== undefined ? (body.favorite ? 1 : 0) : undefined;
+        const existing = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ? AND dish_id = ?').get(tenantId, activeUser.id, body.dishId);
+        if (existing) {
+          const sets = ['updated_at = ?'];
+          const params = [now()];
+          if (favorite !== undefined) { sets.unshift('favorite = ?'); params.unshift(favorite); }
+          params.push(tenantId, activeUser.id, body.dishId);
+          await db.prepare(`UPDATE user_dish_preferences SET ${sets.join(', ')} WHERE tenant_id = ? AND user_id = ? AND dish_id = ?`).run(...params);
+        } else {
+          await db.prepare('INSERT INTO user_dish_preferences (id, tenant_id, user_id, dish_id, favorite, eaten_count, drawn_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)')
+            .run(prefId, tenantId, activeUser.id, body.dishId, favorite ?? 0, now(), now());
+        }
+        await audit(db, activeUser, 'UPSERT', 'dish_preference', body.dishId);
+        const rows = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ?').all(tenantId, activeUser.id);
+        return send(res, 200, { preferences: rows.map(rowToPreference) });
+      }
+
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'preferences' && pathParts[2] === 'dishes' && pathParts[3] && pathParts[4] === 'drawn') {
+        const activeUser = await requireCapability(db, req, 'preference:write');
+        const dishId = decodeURIComponent(pathParts[3]);
+        const tenantId = tenantIdFor(activeUser);
+        const dish = await db.prepare("SELECT id FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, dishId);
+        if (!dish) throw Object.assign(new Error('菜品不存在'), { status: 404 });
+        const prefId = `udp-${activeUser.id}-${dishId}`;
+        const existing = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ? AND dish_id = ?').get(tenantId, activeUser.id, dishId);
+        if (existing) {
+          await db.prepare('UPDATE user_dish_preferences SET drawn_count = drawn_count + 1, last_drawn_at = ?, updated_at = ? WHERE tenant_id = ? AND user_id = ? AND dish_id = ?')
+            .run(now(), now(), tenantId, activeUser.id, dishId);
+        } else {
+          await db.prepare('INSERT INTO user_dish_preferences (id, tenant_id, user_id, dish_id, favorite, eaten_count, drawn_count, last_drawn_at, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0, 1, ?, ?, ?)')
+            .run(prefId, tenantId, activeUser.id, dishId, now(), now(), now());
+        }
+        await audit(db, activeUser, 'DRAW', 'dish_preference', dishId);
+        const updated = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ? AND dish_id = ?').get(tenantId, activeUser.id, dishId);
+        return send(res, 200, { preference: rowToPreference(updated) });
+      }
+
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'preferences' && pathParts[2] === 'dishes' && pathParts[3] && pathParts[4] === 'eaten') {
+        const activeUser = await requireCapability(db, req, 'preference:write');
+        const dishId = decodeURIComponent(pathParts[3]);
+        const tenantId = tenantIdFor(activeUser);
+        const dish = await db.prepare("SELECT id FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, dishId);
+        if (!dish) throw Object.assign(new Error('菜品不存在'), { status: 404 });
+        const prefId = `udp-${activeUser.id}-${dishId}`;
+        const existing = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ? AND dish_id = ?').get(tenantId, activeUser.id, dishId);
+        if (existing) {
+          await db.prepare('UPDATE user_dish_preferences SET eaten_count = eaten_count + 1, last_eaten_at = ?, updated_at = ? WHERE tenant_id = ? AND user_id = ? AND dish_id = ?')
+            .run(now(), now(), tenantId, activeUser.id, dishId);
+        } else {
+          await db.prepare('INSERT INTO user_dish_preferences (id, tenant_id, user_id, dish_id, favorite, eaten_count, drawn_count, last_eaten_at, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 1, 0, ?, ?, ?)')
+            .run(prefId, tenantId, activeUser.id, dishId, now(), now(), now());
+        }
+        await audit(db, activeUser, 'EATEN', 'dish_preference', dishId);
+        const updated = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ? AND dish_id = ?').get(tenantId, activeUser.id, dishId);
+        return send(res, 200, { preference: rowToPreference(updated) });
+      }
+
+      // ── Admin review status (PATCH) ──────────────────────────────
+      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'reviews' && pathParts[3] && pathParts[4] === 'status') {
+        const activeUser = await requireCapability(db, req, 'review:moderate');
+        const reviewId = decodeURIComponent(pathParts[3]);
+        const body = await readBody(req);
+        const newStatus = String(body.status || '');
+        if (!['approved', 'pending', 'rejected'].includes(newStatus)) throw Object.assign(new Error('status 必须是 approved、pending 或 rejected'), { status: 400 });
+        const existing = await db.prepare('SELECT id FROM reviews WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), reviewId);
+        if (!existing) throw Object.assign(new Error('评价不存在'), { status: 404 });
+        await db.prepare('UPDATE reviews SET status = ? WHERE tenant_id = ? AND id = ?').run(newStatus, tenantIdFor(activeUser), reviewId);
+        await audit(db, activeUser, 'MODERATE_REVIEW', 'review', reviewId);
+        await invalidateRankings();
+        return send(res, 200, { id: reviewId, status: newStatus });
       }
 
       throw Object.assign(new Error('接口不存在'), { status: 404 });

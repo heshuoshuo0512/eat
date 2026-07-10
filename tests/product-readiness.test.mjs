@@ -123,28 +123,30 @@ describe('supply status – sold-out exclusion', () => {
         items: [
           { dishId: 'dish-available', price: 15 },
           { dishId: 'dish-soldout', price: 22, soldOut: true }
+        ]
+      }
+    });
     assert.equal(menuRes.status, 201);
-    console.error('menuRes.data:', JSON.stringify(menuRes.data, null, 2));
 
     // Check the admin menus to see what was actually stored
     const adminMenus = await get(`/api/admin/menus?date=${today}&mealType=lunch`, { token: adminToken });
-    console.error('admin menus:', JSON.stringify(adminMenus.data, null, 2));
 
-    // Today menu bundle should only contain the available dish.
+    // Today menu bundle now returns ALL published dishes including sold_out items.
     const todayRes = await get('/api/menus/today?mealType=lunch');
-    console.error('todayRes.data:', JSON.stringify(todayRes.data, null, 2));
     assert.equal(todayRes.status, 200);
-    const ids = todayRes.data.dishes.map((d) => d.id);
-    assert.ok(ids.includes('dish-available'), 'available dish must be in today bundle');
-    assert.ok(!ids.includes('dish-soldout'), 'sold-out dish must be excluded from today bundle');
     assert.equal(todayRes.data.source, 'menu');
+    assert.ok(todayRes.data.dishes.length >= 2, 'at least two dishes in published menu');
+    const available = todayRes.data.dishes.find((d) => d.id === 'dish-available');
+    assert.equal(available.supplyStatus, 'available');
+    const soldOut = todayRes.data.dishes.find((d) => d.id === 'dish-soldout');
+    assert.equal(soldOut.supplyStatus, 'sold_out');
   });
 
   it('recommend endpoint also excludes sold-out dishes from its pool', async () => {
     const recRes = await get('/api/recommend?mealType=lunch');
     assert.equal(recRes.status, 200);
-    assert.ok(Array.isArray(recRes.data.dishes), 'recommend must return dishes array');
-    const ids = recRes.data.dishes.map((d) => d.id);
+    assert.ok(Array.isArray(recRes.data.ranked), 'recommend must return ranked array');
+    const ids = recRes.data.ranked.map((d) => d.id);
     assert.ok(!ids.includes('dish-soldout'), 'sold-out dish must not be recommended');
   });
 });
@@ -265,18 +267,18 @@ describe('review and ranking contract', () => {
     studentToken = await loginStudent();
   });
 
-  it('POST /api/reviews creates a review and returns enriched dish detail', async () => {
+  it('POST /api/reviews creates a review; pending until admin approves', async () => {
     const res = await post('/api/reviews', {
       token: studentToken,
       body: { targetId: 'dish-available', rating: 5, content: '非常好吃，强烈推荐！' }
     });
     assert.equal(res.status, 201);
-    // The response is the full dish detail with reviews included.
-    assert.equal(res.data.id, 'dish-available');
-    assert.ok(Array.isArray(res.data.reviews), 'reviews must be present');
-    assert.ok(res.data.reviews.length > 0, 'at least one review after creation');
-    const myReview = res.data.reviews.find((r) => r.content === '非常好吃，强烈推荐！');
-    assert.ok(myReview, 'created review must appear');
+    // Pending reviews are hidden from public dish detail until approved.
+    const adminToken = await loginAdmin();
+    const { data: pending } = await get('/api/admin/reviews?status=pending', { token: adminToken });
+    const myReview = pending.reviews.find((r) => r.content === '非常好吃，强烈推荐！');
+    assert.ok(myReview, 'created review must appear in admin pending list');
+    assert.equal(myReview.status, 'pending');
     assert.equal(myReview.rating, 5);
     assert.ok(myReview.userId || myReview.user_id, 'review must have user id');
   });
@@ -326,13 +328,14 @@ describe('AI and recommendation fallback', () => {
   it('GET /api/recommend works without an AI key by returning meal plan from dish pool', async () => {
     const res = await get('/api/recommend?mealType=lunch');
     assert.equal(res.status, 200);
-    assert.ok(Array.isArray(res.data.dishes), 'recommend must return dishes array');
-    assert.ok(res.data.totals, 'recommend must include nutrition totals');
-    assert.ok(typeof res.data.totals.calories === 'number', 'totals.calories must be numeric');
-    assert.ok(typeof res.data.totals.protein === 'number', 'totals.protein must be numeric');
-    assert.ok(typeof res.data.totals.price === 'number', 'totals.price must be numeric');
-    assert.ok(res.data.goalLabel, 'recommend must include goalLabel');
-    assert.ok(res.data.reason, 'recommend must include reason');
+    assert.ok(Array.isArray(res.data.ranked), 'recommend must return ranked array');
+    assert.ok(res.data.plan, 'recommend must include plan');
+    assert.ok(res.data.plan.totals, 'recommend must include nutrition totals');
+    assert.ok(typeof res.data.plan.totals.calories === 'number', 'totals.calories must be numeric');
+    assert.ok(typeof res.data.plan.totals.protein === 'number', 'totals.protein must be numeric');
+    assert.ok(typeof res.data.plan.totals.price === 'number', 'totals.price must be numeric');
+    assert.ok(res.data.plan.goalLabel, 'recommend must include goalLabel');
+    assert.ok(res.data.plan.reason, 'recommend must include reason');
     assert.ok(['menu', 'fallback'].includes(res.data.source), 'source must be menu or fallback');
   });
 

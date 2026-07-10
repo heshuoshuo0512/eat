@@ -42,6 +42,7 @@ describe('Canteen reviews (targetType=canteen)', () => {
 
   let studentToken;
   let canteenId;
+  let adminToken;
 
   before(async () => {
     // Register a fresh student (avoids collision with seeded user)
@@ -58,6 +59,13 @@ describe('Canteen reviews (targetType=canteen)', () => {
     // Pick a seeded canteen
     const boot = await req('/api/bootstrap');
     canteenId = boot.data.canteens[0].id;
+
+    // Authenticate as admin for moderation workflow
+    const adminLogin = await req('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'admin', password: 'admin123' },
+    });
+    adminToken = adminLogin.data.token;
   });
 
   it('posting a canteen review without auth returns 401', async () => {
@@ -69,7 +77,7 @@ describe('Canteen reviews (targetType=canteen)', () => {
     assert.ok(data.error, 'error message present');
   });
 
-  it('posting a canteen review with auth persists and appears in bootstrap', async () => {
+  it('posting a canteen review returns 201; pending hidden until admin approves', async () => {
     const { status, data } = await req('/api/reviews', {
       method: 'POST',
       token: studentToken,
@@ -83,11 +91,32 @@ describe('Canteen reviews (targetType=canteen)', () => {
     assert.ok(data.review.id, 'review has an id');
     assert.ok(data.review.user, 'review has user nickname');
 
-    // Verify persistence in bootstrap snapshot
-    const boot = await req('/api/bootstrap');
-    const mine = boot.data.reviews.find((r) => r.content === '环境很好菜品丰富');
-    assert.ok(mine, 'canteen review appears in bootstrap snapshot');
-    assert.equal(mine.rating, 4);
+    // Pending review must NOT appear in public bootstrap
+    const bootBefore = await req('/api/bootstrap');
+    const mineBefore = bootBefore.data.reviews.find((r) => r.content === '环境很好菜品丰富');
+    assert.equal(mineBefore, undefined, 'pending canteen review not in bootstrap');
+
+    // Admin locates it in pending list
+    const pending = await req('/api/admin/reviews?status=pending', { token: adminToken });
+    assert.equal(pending.status, 200);
+    const pendingReview = pending.data.reviews.find((r) => r.content === '环境很好菜品丰富');
+    assert.ok(pendingReview, 'canteen review appears in admin pending list');
+    assert.equal(pendingReview.status, 'pending');
+    assert.equal(pendingReview.rating, 4);
+
+    // Admin approves
+    const approveRes = await req(`/api/admin/reviews/${pendingReview.id}/status`, {
+      method: 'PATCH',
+      token: adminToken,
+      body: { status: 'approved' },
+    });
+    assert.equal(approveRes.status, 200);
+
+    // After approval, appears in bootstrap
+    const bootAfter = await req('/api/bootstrap');
+    const mineAfter = bootAfter.data.reviews.find((r) => r.content === '环境很好菜品丰富');
+    assert.ok(mineAfter, 'approved canteen review appears in bootstrap');
+    assert.equal(mineAfter.rating, 4);
   });
 
   it('posting a review for nonexistent canteen returns 404', async () => {
@@ -129,6 +158,7 @@ describe('Dish review response is enriched', () => {
 
   let studentToken;
   let dishId;
+  let adminToken;
 
   before(async () => {
     await req('/api/auth/register', {
@@ -143,32 +173,82 @@ describe('Dish review response is enriched', () => {
 
     const boot = await req('/api/bootstrap');
     dishId = boot.data.dishes[0].id;
+
+    // Authenticate as admin for moderation workflow
+    const adminLogin = await req('/api/auth/login', {
+      method: 'POST',
+      body: { username: 'admin', password: 'admin123' },
+    });
+    adminToken = adminLogin.data.token;
   });
 
-  it('dish review response includes dish detail with reviews array', async () => {
+  it('dish review goes through moderation before appearing in detail', async () => {
     const { status, data } = await req('/api/reviews', {
       method: 'POST',
       token: studentToken,
       body: { targetId: dishId, rating: 5, content: '这个菜品非常好吃' },
     });
     assert.equal(status, 201);
-    // Dish reviews return the full dish detail (enriched response)
     assert.ok(Array.isArray(data.reviews), 'response has reviews array');
+    // Pending review must NOT appear in public dish detail
     const mine = data.reviews.find((r) => r.content === '这个菜品非常好吃');
-    assert.ok(mine, 'new review appears in enriched response');
-    assert.equal(mine.rating, 5);
+    assert.equal(mine, undefined, 'pending review not visible in dish detail');
+
+    // Admin locates and approves
+    const pending = await req('/api/admin/reviews?status=pending', { token: adminToken });
+    const pendingReview = pending.data.reviews.find((r) => r.content === '这个菜品非常好吃');
+    assert.ok(pendingReview, 'review in admin pending list');
+    assert.equal(pendingReview.status, 'pending');
+    assert.equal(pendingReview.rating, 5);
+
+    const approveRes = await req(`/api/admin/reviews/${pendingReview.id}/status`, {
+      method: 'PATCH',
+      token: adminToken,
+      body: { status: 'approved' },
+    });
+    assert.equal(approveRes.status, 200);
+
+    // After approval, review appears in dish detail
+    const dishRes = await req(`/api/dishes/${dishId}`);
+    assert.equal(dishRes.status, 200);
+    const approved = dishRes.data.reviews.find((r) => r.content === '这个菜品非常好吃');
+    assert.ok(approved, 'approved review appears in dish detail');
+    assert.equal(approved.rating, 5);
   });
 
-  it('enriched dish review includes dish metadata (stall, canteen)', async () => {
+  it('enriched dish review includes dish metadata and requires moderation', async () => {
     const { status, data } = await req('/api/reviews', {
       method: 'POST',
       token: studentToken,
       body: { targetId: dishId, rating: 3, content: '还行吧不算特别好' },
     });
     assert.equal(status, 201);
-    // The dish detail response should include stall and canteen info
+    // Dish metadata always present in response regardless of review status
     assert.ok(data.name, 'response includes dish name');
     assert.ok(data.price != null, 'response includes dish price');
     assert.ok(data.stall || data.canteen !== undefined, 'response includes stall/canteen linkage');
+
+    // Pending review must NOT appear in public dish detail
+    const beforeApproval = data.reviews.find((r) => r.content === '还行吧不算特别好');
+    assert.equal(beforeApproval, undefined, 'pending review not visible in dish detail');
+
+    // Admin approves the review
+    const pending = await req('/api/admin/reviews?status=pending', { token: adminToken });
+    const pendingReview = pending.data.reviews.find((r) => r.content === '还行吧不算特别好');
+    assert.ok(pendingReview, 'review in admin pending list');
+
+    const approveRes = await req(`/api/admin/reviews/${pendingReview.id}/status`, {
+      method: 'PATCH',
+      token: adminToken,
+      body: { status: 'approved' },
+    });
+    assert.equal(approveRes.status, 200);
+
+    // After approval, verify public visibility
+    const dishRes = await req(`/api/dishes/${dishId}`);
+    assert.equal(dishRes.status, 200);
+    const approved = dishRes.data.reviews.find((r) => r.content === '还行吧不算特别好');
+    assert.ok(approved, 'approved review appears in public dish detail');
+    assert.equal(approved.rating, 3);
   });
 });

@@ -2,8 +2,6 @@ services:
   api:
     build: .
     container_name: smart-canteen-api
-    env_file:
-      - .env
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0

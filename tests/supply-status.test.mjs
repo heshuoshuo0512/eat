@@ -82,9 +82,9 @@ describe('Supply status model and review moderation', () => {
     const { status, data } = await req('/api/recommend', { token: studentToken });
     assert.equal(status, 200);
     assert.equal(data.source, 'menu');
-    // d-beef-noodle is sold_out, should not appear in recommendations
-    assert.ok(data.dishes.every((d) => d.id !== 'd-beef-noodle'), 'sold-out dish should be excluded from recommendations');
-    assert.ok(data.dishes.length > 0, 'should have at least one recommendation');
+    // d-beef-noodle is sold_out, should not appear in ranked recommendations
+    assert.ok(data.ranked.every((d) => d.id !== 'd-beef-noodle'), 'sold-out dish should be excluded from recommendations');
+    assert.ok(data.ranked.length > 0, 'should have at least one ranked recommendation');
   });
 
   /* ── Admin can update menu item supply ──────────────────────────── */

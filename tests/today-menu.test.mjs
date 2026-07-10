@@ -36,7 +36,7 @@ describe('Today menu recommendation loop', () => {
 
   after(() => server.close());
 
-  it('returns only published, not sold-out menu dishes for today', async () => {
+  it('today menu returns published items with supply status, excluding draft menus', async () => {
     const token = await login('admin', 'admin123');
     await req('/api/admin/menus', {
       method: 'POST',
@@ -69,8 +69,15 @@ describe('Today menu recommendation loop', () => {
     const { status, data } = await req('/api/menus/today?mealType=lunch');
     assert.equal(status, 200);
     assert.equal(data.source, 'menu');
-    assert.deepEqual(data.dishes.map((dish) => dish.id), ['d-chicken-bowl']);
-    assert.equal(data.dishes[0].price, 13);
+    const dishIds = data.dishes.map((dish) => dish.id);
+    assert.ok(dishIds.includes('d-chicken-bowl'), 'published available dish present');
+    assert.ok(dishIds.includes('d-beef-noodle'), 'published sold-out dish still exposed');
+    assert.ok(!dishIds.includes('d-egg-tomato'), 'draft menu dish excluded');
+    const chickenBowl = data.dishes.find((d) => d.id === 'd-chicken-bowl');
+    assert.equal(chickenBowl.supplyStatus, 'available');
+    assert.equal(chickenBowl.price, 13);
+    const beefNoodle = data.dishes.find((d) => d.id === 'd-beef-noodle');
+    assert.equal(beefNoodle.supplyStatus, 'sold_out');
   });
 
   it('recommendation prioritizes today menu and falls back when no published menu exists', async () => {
@@ -80,13 +87,13 @@ describe('Today menu recommendation loop', () => {
     const lunch = await req('/api/recommend', { token: studentToken });
     assert.equal(lunch.status, 200);
     assert.equal(lunch.data.source, 'menu');
-    assert.ok(lunch.data.dishes.length > 0);
-    assert.ok(lunch.data.dishes.every((dish) => dish.id === 'd-chicken-bowl'));
+    assert.ok(lunch.data.ranked.length > 0);
+    assert.ok(lunch.data.ranked.every((dish) => dish.id === 'd-chicken-bowl'));
 
     await req('/api/health/profile', { method: 'PUT', token: studentToken, body: { goal: 'healthy', budgetMax: 30, mealType: 'breakfast', taste: '不限', halalOnly: false, avoid: [] } });
     const breakfast = await req('/api/recommend', { token: studentToken });
     assert.equal(breakfast.status, 200);
     assert.equal(breakfast.data.source, 'fallback');
-    assert.ok(breakfast.data.dishes.length > 0);
+    assert.ok(breakfast.data.ranked.length > 0);
   });
 });

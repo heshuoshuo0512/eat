@@ -10,21 +10,34 @@ function tokenize(input) {
   return [...new Set([...words, ...chars].filter((item) => item.trim().length > 0))];
 }
 
+function hashFeature(value, dim) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  return Math.abs(hash) % dim;
+}
+
 /* ── document builder (unchanged) ────────────────────────────────── */
 
 export function buildDishDocuments(dishes, stalls = [], canteens = []) {
   return dishes.map((dish) => {
     const stall = stalls.find((item) => item.id === dish.stallId);
     const canteen = canteens.find((item) => item.id === stall?.canteenId);
+    const parentCanteen = canteen?.parentId ? canteens.find((item) => item.id === canteen.parentId) : null;
     const nutrition = dish.nutrition || {};
+    const fiber = dish.fiber || 0;
+    const sodium = dish.sodium || 0;
+    const sugar = dish.sugar || 0;
+    const calcium = dish.calcium || 0;
+    const iron = dish.iron || 0;
+    const locationParts = [parentCanteen?.name, canteen?.name, stall?.name].filter(Boolean).join(' > ');
     return {
       id: `dish:${dish.id}`,
       sourceType: 'dish',
       sourceId: dish.id,
       title: dish.name,
       name: dish.name,
-      content: `${dish.name}，${dish.cuisine}，${dish.taste}，${dish.description || ''}。食材：${dish.ingredients.join('、')}。标签：${dish.tags.join('、')}。营养：${nutrition.calories} kcal，蛋白 ${nutrition.protein}g，脂肪 ${nutrition.fat}g，碳水 ${nutrition.carbs}g。地点：${canteen?.name || ''} ${stall?.name || ''}。价格 ${dish.price} 元。`,
-      metadata: { dishId: dish.id, stallId: dish.stallId, canteenId: canteen?.id, price: dish.price, halal: dish.halal }
+      content: `${dish.name}，${dish.cuisine}，${dish.taste}，${dish.description || ''}。食材：${dish.ingredients.join('、')}。标签：${dish.tags.join('、')}。营养：${nutrition.calories} kcal，蛋白 ${nutrition.protein}g，脂肪 ${nutrition.fat}g，碳水 ${nutrition.carbs}g，膳食纤维 ${fiber}g，钠 ${sodium}mg，糖 ${sugar}g，钙 ${calcium}mg，铁 ${iron}mg。食堂层级：${locationParts || '未知'}。价格 ${dish.price} 元。`,
+      metadata: { dishId: dish.id, stallId: dish.stallId, canteenId: canteen?.id, parentCanteenId: canteen?.parentId || null, canteenType: canteen?.canteenType || 'primary', price: dish.price, halal: dish.halal, fiber, sodium, sugar, calcium, iron }
     };
   });
 }
@@ -59,17 +72,9 @@ const DEFAULT_EMBED_DIM = 128;
 export function embedText(text, dim = DEFAULT_EMBED_DIM) {
   const tokens = tokenize(text);
   const vec = new Float64Array(dim);
-  for (const token of tokens) {
-    let h = 0;
-    for (let i = 0; i < token.length; i++) h = ((h << 5) - h + token.charCodeAt(i)) | 0;
-    vec[Math.abs(h) % dim] += 1;
-  }
-  for (let i = 0; i < tokens.length - 1; i++) {
-    const bi = tokens[i] + tokens[i + 1];
-    let h = 0;
-    for (let j = 0; j < bi.length; j++) h = ((h << 5) - h + bi.charCodeAt(j)) | 0;
-    vec[Math.abs(h) % dim] += 0.5;
-  }
+  for (const token of tokens) vec[hashFeature(token, dim)] += token.length > 1 ? 2 : 1;
+  const chineseChars = [...String(text || '').toLowerCase()].filter((char) => /[\u4e00-\u9fa5]/.test(char));
+  for (let index = 0; index < chineseChars.length - 1; index += 1) vec[hashFeature(chineseChars[index] + chineseChars[index + 1], dim)] += 1.5;
   let norm = 0;
   for (let i = 0; i < dim; i++) norm += vec[i] * vec[i];
   norm = Math.sqrt(norm) || 1;
@@ -201,6 +206,10 @@ function inferProfile(query, profile = {}) {
   if (text.includes('晚餐')) inferred.mealType = 'dinner';
   if (text.includes('午餐')) inferred.mealType = 'lunch';
   if (text.includes('清真')) inferred.halalOnly = true;
+  const budgetMatch = text.match(/(?:预算|不超过|最多|以内|低于)\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元?/);
+  if (budgetMatch) inferred.budgetMax = Number(budgetMatch[1]);
+  const taste = ['清爽', '咸鲜', '麻辣', '酸辣', '黑椒', '清淡', '甜味', '酱香'].find((item) => text.includes(item));
+  if (taste) inferred.taste = taste;
   return inferred;
 }
 

@@ -203,6 +203,78 @@ components:
         - type: object
           properties:
             updated: { type: integer }
+    ContextualRecommendation:
+      type: object
+      properties:
+        ranked:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              contextualScore: { type: number }
+              scoreBreakdown:
+                type: object
+                properties:
+                  goal: { type: number }
+                  rating: { type: number }
+                  budget: { type: number }
+                  weather: { type: number }
+                  crowd: { type: number }
+                  preference: { type: number }
+                  nutritionFocus: { type: number }
+                  spice: { type: number }
+                  tags: { type: number }
+                  timeBonus: { type: number }
+              why:
+                type: array
+                items: { type: string }
+        plan: { type: object }
+        context:
+          type: object
+          properties:
+            environment: { type: object }
+            timeOfDay: { type: string }
+            profile: { type: object }
+        source: { type: string }
+        menu: { type: object }
+    DishPreference:
+      type: object
+      properties:
+        id: { type: string }
+        tenantId: { type: string }
+        userId: { type: string }
+        dishId: { type: string }
+        favorite: { type: boolean }
+        eatenCount: { type: integer }
+        drawnCount: { type: integer }
+        lastEatenAt: { type: string }
+        lastDrawnAt: { type: string }
+    CampusEnvironment:
+      type: object
+      properties:
+        temperature: { type: number, description: 'Temperature in Celsius, -40 to 55' }
+        weatherLabel: { type: string, description: 'Weather description, e.g. 晴, 阴, 雨' }
+        updatedAt: { type: string }
+    StallInput:
+      type: object
+      required: [canteenId, name, floor, category]
+      properties:
+        id: { type: string }
+        canteenId: { type: string }
+        name: { type: string }
+        floor: { type: string }
+        category: { type: string }
+        rating: { type: number }
+        avgPrice: { type: number }
+        open: { type: boolean }
+        description: { type: string }
+    ReviewStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [approved, pending, rejected] }
 paths:
   /health:
     get:
@@ -211,7 +283,13 @@ paths:
   /bootstrap:
     get:
       security: []
-      responses: { '200': { description: Full app state } }
+      responses: { '200': { description: Full app state including dishPreferences } }
+  /recommend:
+    get:
+      security: []
+      description: Contextual recommendation with server time, DB temperature/weather, budget, crowd, health preferences, interactions and expanded nutrition. Returns full ranked list with per-dish scoreBreakdown and why reasons.
+      responses:
+        '200': { description: Ranked dishes with context, content: { application/json: { schema: { $ref: '#/components/schemas/ContextualRecommendation' } } } }
   /auth/login:
     post:
       security: []
@@ -263,10 +341,6 @@ paths:
     get:
       security: []
       responses: { '200': { description: Cached rankings } }
-  /recommend:
-    get:
-      security: []
-      responses: { '200': { description: Rule-based meal plan with source and today's menu metadata when menu-prioritized } }
   /menus/today:
     get:
       security: []
@@ -474,3 +548,78 @@ paths:
         - { name: offset, in: query, schema: { type: integer } }
       responses:
         '200': { description: Usage logs, summary and quota, content: { application/json: { schema: { $ref: '#/components/schemas/AiUsageResponse' } } } }
+  /admin/stalls:
+    post:
+      description: Create stall. Requires stall:write. canteenId must belong to current tenant.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StallInput' }
+      responses:
+        '201': { description: Full state }
+        '400': { description: Invalid canteen or missing fields }
+  /admin/stalls/{id}:
+    put:
+      description: Update stall. Requires stall:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StallInput' }
+      responses:
+        '200': { description: Full state }
+        '404': { description: Stall not found }
+    delete:
+      description: Delete stall. Requires stall:delete.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Full state }
+        '404': { description: Stall not found }
+  /admin/environment:
+    get:
+      description: Get campus environment (temperature, weather). Requires environment:write.
+      responses: { '200': { description: Campus environment, content: { application/json: { schema: { type: object, properties: { environment: { $ref: '#/components/schemas/CampusEnvironment' } } } } } } }
+    put:
+      description: Update campus environment. Requires environment:write.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CampusEnvironment' }
+      responses:
+        '200': { description: Updated environment }
+        '400': { description: Invalid temperature or weather label }
+  /preferences/dishes:
+    get:
+      description: Get authenticated user's dish preferences. Requires authentication.
+      responses: { '200': { description: User dish preferences, content: { application/json: { schema: { type: object, properties: { preferences: { type: array, items: { $ref: '#/components/schemas/DishPreference' } } } } } } } }
+    put:
+      description: Update dish preference (toggle favorite). Requires preference:write.
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, required: [dishId], properties: { dishId: { type: string }, favorite: { type: boolean } } }
+      responses:
+        '200': { description: Updated preferences }
+        '404': { description: Dish not found }
+  /preferences/dishes/{id}/drawn:
+    post:
+      description: Record dish as drawn (seen in recommendation). Requires preference:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Updated preference } }
+  /preferences/dishes/{id}/eaten:
+    post:
+      description: Record dish as eaten. Requires preference:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Updated preference } }
+  /admin/reviews/{id}/status:
+    patch:
+      description: Update review moderation status (approve/reject). Requires review:moderate.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewStatusUpdate' }
+      responses:
+        '200': { description: Updated review status }
+        '400': { description: Invalid status }
+        '404': { description: Review not found }

@@ -1,7 +1,7 @@
-const studentPermissions = ['review:create', 'profile:write', 'upload:create', 'agent:use'];
-const operatorPermissions = [...studentPermissions, 'dish:write', 'dish:bulk_import'];
-const stallAdminPermissions = [...operatorPermissions, 'dish:delete'];
-const canteenAdminPermissions = [...stallAdminPermissions, 'canteen:write', 'audit:read', 'user:read', 'review:moderate'];
+const studentPermissions = ['review:create', 'profile:write', 'upload:create', 'agent:use', 'preference:write'];
+const operatorPermissions = [...studentPermissions, 'dish:write', 'dish:bulk_import', 'stall:write'];
+const stallAdminPermissions = [...operatorPermissions, 'dish:delete', 'stall:delete'];
+const canteenAdminPermissions = [...stallAdminPermissions, 'canteen:write', 'audit:read', 'user:read', 'review:moderate', 'environment:write'];
 const tenantAdminPermissions = [...canteenAdminPermissions, 'canteen:delete', 'user:write', 'ai:configure'];
 const superAdminPermissions = [...tenantAdminPermissions, 'tenant:manage'];
 

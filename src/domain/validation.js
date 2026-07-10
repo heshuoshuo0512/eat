@@ -54,3 +54,23 @@ export function validateImageFile(file) {
   if (file.size > 5 * 1024 * 1024) return '图片不能超过 5MB。';
   return '';
 }
+
+export function validateStall(body) {
+  if (!body.canteenId) return '请选择所属食堂。';
+  if (!String(body.name || '').trim()) return '请输入档口名称。';
+  if (!String(body.floor || '').trim()) return '请输入楼层。';
+  if (!String(body.category || '').trim()) return '请输入分类。';
+  return '';
+}
+
+export function validateEnvironment(body) {
+  const temp = Number(body.temperature);
+  if (!Number.isFinite(temp) || temp < -40 || temp > 55) return '温度需要在 -40 到 55 之间。';
+  if (!String(body.weatherLabel || '').trim()) return '请输入天气标签。';
+  return '';
+}
+
+export function validateDishPreferences(body) {
+  if (body.favorite !== undefined && ![0, 1, true, false].includes(body.favorite)) return 'favorite 必须是布尔或 0/1。';
+  return '';
+}

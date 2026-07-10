@@ -962,18 +962,30 @@ describe('E2E — Rankings invalidation on mutations', () => {
     const target = before.dishes[0];
     const beforeScore = target.rankScore;
 
-    // Post a perturbing review
+    // Post a review (created as pending)
     const perturbRating = beforeScore >= 3 ? 1 : 5;
-    await req('/api/reviews', {
+    const { status: reviewStatus, data: reviewData } = await req('/api/reviews', {
       method: 'POST',
       token: studentToken,
       body: { targetId: target.id, rating: perturbRating, content: '排名变化测试' },
     });
+    assert.equal(reviewStatus, 201, 'review posted');
 
+    // Retrieve the pending review via admin list and approve it
+    const { data: pendingList } = await req('/api/admin/reviews?status=pending', { token: adminToken });
+    const pending = pendingList.reviews.find((r) => r.targetId === target.id);
+    assert.ok(pending, 'pending review found in admin list');
+    await req(`/api/admin/reviews/${pending.id}/status`, {
+      method: 'PUT',
+      token: adminToken,
+      body: { status: 'approved' },
+    });
+
+    // Re-fetch rankings — score should now reflect the approved review
     const { data: after } = await req('/api/rankings');
     const afterDish = after.dishes.find((d) => d.id === target.id);
     assert.ok(afterDish, 'dish still in rankings');
-    assert.notEqual(afterDish.rankScore, beforeScore, 'score changes after review');
+    assert.notEqual(afterDish.rankScore, beforeScore, 'score changes after approved review');
   });
 
   it('adding a new dish via admin makes it appear in rankings', async () => {
@@ -1165,7 +1177,7 @@ describe('E2E — Full user journey: register → profile → recommend → revi
     // 3. Get personalized recommendation
     const { status: recStatus, data: recData } = await req('/api/recommend', { token });
     assert.equal(recStatus, 200, 'step 3: recommend');
-    assert.ok(recData.dishes, 'step 3: has dishes');
+    assert.ok(recData.ranked?.length > 0 || recData.plan?.dishes?.length > 0, 'step 3: has ranked dishes or plan');
 
     // 4. Search for a dish
     const { status: ragStatus, data: ragData } = await req('/api/rag/search?q=蛋白');
@@ -1328,6 +1340,7 @@ describe('E2E — Error handling edge cases', () => {
   it('GET /api/recommend works for anonymous user', async () => {
     const { status, data } = await req('/api/recommend');
     assert.equal(status, 200);
-    assert.ok(data.dishes, 'recommendation has dishes');
+    assert.ok(Array.isArray(data.ranked), 'recommendation has ranked array');
+    assert.ok(data.plan, 'recommendation has plan');
   });
 });

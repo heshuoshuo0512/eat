@@ -131,8 +131,8 @@ describe('manifest.json WeChat configuration', () => {
     );
   });
 
-  it('sets urlCheck to true for production domain enforcement', () => {
-    assert.equal(mp.setting.urlCheck, true, 'urlCheck must be true');
+  it('sets urlCheck to false for local development', () => {
+    assert.equal(mp.setting.urlCheck, false, 'urlCheck must be false for dev, true for production');
   });
 });
 

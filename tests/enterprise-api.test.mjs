@@ -642,7 +642,7 @@ describe('Rankings invalidation after review', () => {
     adminToken = aLogin.token;
   });
 
-  it('ranking scores change after a new review is posted', async () => {
+  it('ranking scores change after a new review is posted and approved', async () => {
     // Capture baseline rankings
     const { data: before } = await req('/api/rankings');
     assert.ok(Array.isArray(before.dishes), 'rankings has dishes');
@@ -652,7 +652,7 @@ describe('Rankings invalidation after review', () => {
     const beforeDish = before.dishes.find((d) => d.id === dishId);
     const beforeScore = beforeDish.rankScore;
 
-    // Post a review with a different rating to perturb the score
+    // Post a review with a different rating to perturb the score (created as pending)
     const lowRating = beforeDish.rating >= 3 ? 1 : 5;
     const { status: reviewStatus } = await req('/api/reviews', {
       method: 'POST',
@@ -665,14 +665,25 @@ describe('Rankings invalidation after review', () => {
     });
     assert.equal(reviewStatus, 201, 'review posted');
 
-    // Re-fetch rankings
+    // Retrieve the pending review via admin list and approve it
+    const { data: pendingList } = await req('/api/admin/reviews?status=pending', { token: adminToken });
+    const pending = pendingList.reviews.find((r) => r.targetId === dishId);
+    assert.ok(pending, 'pending review found in admin list');
+    const { status: approveStatus } = await req(`/api/admin/reviews/${pending.id}/status`, {
+      method: 'PUT',
+      token: adminToken,
+      body: { status: 'approved' },
+    });
+    assert.equal(approveStatus, 200, 'review approved');
+
+    // Re-fetch rankings — score should now reflect the approved review
     const { data: after } = await req('/api/rankings');
     const afterDish = after.dishes.find((d) => d.id === dishId);
     assert.ok(afterDish, 'dish still in rankings');
     assert.notEqual(
       afterDish.rankScore,
       beforeScore,
-      'rankScore should change after new review',
+      'rankScore should change after approved review',
     );
   });
 

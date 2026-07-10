@@ -373,4 +373,36 @@ describe('answerMealQuestion', () => {
     assert.ok(result.plan.goalLabel.includes('减脂') || result.plan.goal === 'fatLoss',
       'should infer fatLoss goal');
   });
+
+  it('extracts budgetMax from "预算15元" and caps all plan dish prices', async () => {
+    const result = await answerMealQuestion({
+      query: '预算15元午餐',
+      profile: {},
+      dishes,
+      stalls,
+      canteens,
+    });
+    assert.ok(result.plan.dishes.length > 0, 'should find dishes within budget');
+    for (const d of result.plan.dishes) {
+      assert.ok(d.price <= 15, `${d.name} (${d.price}元) exceeds inferred budget cap 15`);
+    }
+    assert.ok(result.plan.reason.includes('15'), 'plan reason should reflect inferred budget');
+  });
+
+  it('extracts explicit "清爽" taste and restricts plan to matching dishes', async () => {
+    const result = await answerMealQuestion({
+      query: '推荐清爽的午餐',
+      profile: {},
+      dishes,
+      stalls,
+      canteens,
+    });
+    assert.ok(result.plan.dishes.length > 0, 'should find 清爽 dishes');
+    for (const d of result.plan.dishes) {
+      assert.ok(
+        d.taste === '清爽' || d.tags.includes('清爽'),
+        `${d.name} (taste=${d.taste}) does not match 清爽 filter`,
+      );
+    }
+  });
 });

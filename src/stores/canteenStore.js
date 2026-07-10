@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { buildMealPlan, calculateRanking, normalizeProfile } from '../domain/recommendation.js';
+import { buildMealPlan, calculateRanking, contextualRankDishes, normalizeProfile } from '../domain/recommendation.js';
 import { apiClient } from '../services/apiClient.js';
 
 function emptyState() {
@@ -10,6 +10,7 @@ function emptyState() {
     stalls: [],
     dishes: [],
     reviews: [],
+    dishPreferences: [],
     profile: normalizeProfile({ goal: 'fatLoss', budgetMax: 18, mealType: 'lunch' })
   };
 }
@@ -42,8 +43,12 @@ export const useCanteenStore = defineStore('canteen', () => {
   const agentEvalCases = ref([]);
   const agentEvalRuns = ref([]);
   const deploymentReadiness = ref(null);
+  const contextualRecommendation = ref({ ranked: [], plan: null, context: null, source: null, menu: null });
+  const adminEnvironment = ref({ temperature: 25, weatherLabel: '晴' });
+
   function setState(nextState) {
     state.value = { ...emptyState(), ...nextState, profile: normalizeProfile(nextState?.profile) };
+    if (nextState?.dishPreferences) state.value.dishPreferences = nextState.dishPreferences;
   }
 
   async function load() {
@@ -64,6 +69,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const stalls = computed(() => state.value.stalls);
   const dishes = computed(() => state.value.dishes);
   const profile = computed(() => state.value.profile);
+  const dishPreferences = computed(() => state.value.dishPreferences);
   const searchedDishes = computed(() => filterDishes(state.value.dishes, searchFilters.value));
   const rankings = computed(() => {
     const reviewsByTarget = new Map();
@@ -84,6 +90,24 @@ export const useCanteenStore = defineStore('canteen', () => {
     return { dishes: rankedDishes, stalls: rankedStalls, canteens: rankedCanteens };
   });
   const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
+
+  async function loadRecommendation() {
+    try {
+      const result = await apiClient.loadRecommendation();
+      contextualRecommendation.value = {
+        ranked: result.dishes || result.ranked || result.picks || [],
+        plan: result.plan || { goalLabel: result.goalLabel, totals: result.totals, reason: result.reason },
+        context: result.context || result.reason || null,
+        source: result.source || null,
+        menu: result.menu || null,
+        goalLabel: result.goalLabel || result.plan?.goalLabel || null,
+        totals: result.totals || result.plan?.totals || null
+      };
+      return contextualRecommendation.value;
+    } catch {
+      return contextualRecommendation.value;
+    }
+  }
 
   async function login(payload) {
     const result = await apiClient.login(payload);
@@ -132,6 +156,14 @@ export const useCanteenStore = defineStore('canteen', () => {
 
   async function deleteDish(id) {
     setState(await apiClient.deleteDish(id));
+  }
+
+  async function upsertStall(payload) {
+    setState(await apiClient.upsertStall(payload));
+  }
+
+  async function deleteStall(id) {
+    setState(await apiClient.deleteStall(id));
   }
 
   async function importDishes(dishes) {
@@ -428,6 +460,59 @@ export const useCanteenStore = defineStore('canteen', () => {
     return result;
   }
 
+  async function approveReviewAdmin(id) {
+    const result = await apiClient.updateReviewStatus(id, 'approved');
+    adminReviews.value = adminReviews.value.map((r) => r.id === id ? { ...r, status: 'approved' } : r);
+    return result;
+  }
+
+  async function rejectReviewAdmin(id) {
+    const result = await apiClient.updateReviewStatus(id, 'rejected');
+    adminReviews.value = adminReviews.value.map((r) => r.id === id ? { ...r, status: 'rejected' } : r);
+    return result;
+  }
+
+  async function toggleFavorite(dishId) {
+    const existing = state.value.dishPreferences.find((p) => p.dishId === dishId);
+    const newFav = existing ? !existing.favorite : true;
+    const result = await apiClient.updateDishPreference({ dishId, favorite: newFav });
+    state.value.dishPreferences = result.preferences;
+    return result.preferences;
+  }
+
+  async function markDishEaten(dishId) {
+    const result = await apiClient.recordDishEaten(dishId);
+    const idx = state.value.dishPreferences.findIndex((p) => p.dishId === dishId);
+    if (idx === -1) state.value.dishPreferences = [...state.value.dishPreferences, result.preference];
+    else state.value.dishPreferences = state.value.dishPreferences.map((p) => p.dishId === dishId ? result.preference : p);
+    return result.preference;
+  }
+
+  async function recordDishDrawn(dishId) {
+    const result = await apiClient.recordDishDrawn(dishId);
+    const idx = state.value.dishPreferences.findIndex((p) => p.dishId === dishId);
+    if (idx === -1) state.value.dishPreferences = [...state.value.dishPreferences, result.preference];
+    else state.value.dishPreferences = state.value.dishPreferences.map((p) => p.dishId === dishId ? result.preference : p);
+    return result.preference;
+  }
+
+  async function loadEnvironment() {
+    const result = await apiClient.getEnvironment();
+    adminEnvironment.value = result.environment;
+    return result.environment;
+  }
+
+  async function saveEnvironment(payload) {
+    const result = await apiClient.saveEnvironment(payload);
+    adminEnvironment.value = result.environment;
+    return result.environment;
+  }
+
+  // Legacy alias for fetchRecommendation used by existing views
+  async function fetchRecommendation() {
+    return loadRecommendation();
+  }
+
   return {
     state,
     loading,
@@ -438,6 +523,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     stalls,
     dishes,
     profile,
+    dishPreferences,
     searchedDishes,
     rankings,
     recommendation,
@@ -448,6 +534,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     agentEvalCases,
     agentEvalRuns,
     deploymentReadiness,
+    contextualRecommendation,
+    adminEnvironment,
     load,
     login,
     logout,
@@ -458,6 +546,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     deleteCanteen,
     upsertDish,
     deleteDish,
+    upsertStall,
+    deleteStall,
     importDishes,
     previewDishImport,
     confirmDishImport,
@@ -483,6 +573,13 @@ export const useCanteenStore = defineStore('canteen', () => {
     deleteAgentEvalCase,
     runAgentEvalCase,
     loadDeploymentReadiness,
+    loadRecommendation,
+    fetchRecommendation,
+    toggleFavorite,
+    markDishEaten,
+    recordDishDrawn,
+    loadEnvironment,
+    saveEnvironment,
     createOrder,
     payOrder,
     cancelOrder,
@@ -520,6 +617,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     batchMenuAction,
     loadAnalytics,
     loadReviewsAdmin,
-    deleteReviewAdmin
+    deleteReviewAdmin,
+    approveReviewAdmin,
+    rejectReviewAdmin
   };
 });
