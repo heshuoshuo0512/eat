@@ -65,9 +65,15 @@
     <p>{{ result.guidance }}</p>
     <div class="cards-grid" v-if="result.matches?.length">
       <article v-for="dish in result.matches" :key="dish.id" class="mini-card match-card">
-        <strong>{{ dish.image }} {{ dish.name }}</strong>
+        <div class="match-card-header">
+          <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="match-card-img" />
+          <span v-else class="emoji large">{{ dish.image }}</span>
+        </div>
+        <strong>{{ dish.name }}</strong>
+        <span class="meta-row"><span class="pill">{{ dish.canteen?.name || '未知食堂' }}</span><span class="pill">{{ dish.stall?.name || '未知档口' }}</span></span>
         <span>¥{{ dish.price }} · {{ dish.taste }}</span>
-        <small v-if="dish.canteen || dish.stall">{{ dish.canteen?.name || '未知食堂' }} · {{ dish.stall?.name || '未知档口' }}</small>
+        <small v-if="getDishRating(dish.id)">⭐ {{ getDishRating(dish.id).toFixed(1) }} 分 · {{ getDishReviewCount(dish.id) }} 条评价</small>
+        <RouterLink class="text-link" :to="{ name: 'dishes' }">查看详情/评价 →</RouterLink>
         <small>{{ dish.tags.join(' / ') }}</small>
         <small>{{ dish.nutrition.calories }} kcal · 蛋白 {{ dish.nutrition.protein }}g</small>
         <span class="pill">匹配 {{ Math.round((dish.matchScore || 0) * 100) }}%</span>
@@ -76,9 +82,15 @@
     </div>
     <div class="cards-grid" v-else-if="result.plan?.picks?.length">
       <article v-for="dish in result.plan.picks" :key="dish.id" class="mini-card">
-        <strong>{{ dish.image }} {{ dish.name }}</strong>
+        <div class="match-card-header">
+          <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="match-card-img" />
+          <span v-else class="emoji large">{{ dish.image }}</span>
+        </div>
+        <strong>{{ dish.name }}</strong>
+        <span class="meta-row"><span class="pill">{{ dish.canteen?.name || '未知食堂' }}</span><span class="pill">{{ dish.stall?.name || '未知档口' }}</span></span>
         <span>¥{{ dish.price }} · {{ dish.taste }}</span>
-        <small v-if="dish.canteen || dish.stall">{{ dish.canteen?.name || '未知食堂' }} · {{ dish.stall?.name || '未知档口' }}</small>
+        <small v-if="getDishRating(dish.id)">⭐ {{ getDishRating(dish.id).toFixed(1) }} 分 · {{ getDishReviewCount(dish.id) }} 条评价</small>
+        <RouterLink class="text-link" :to="{ name: 'dishes' }">查看详情/评价 →</RouterLink>
         <small>{{ dish.tags.join(' / ') }}</small>
         <small>{{ dish.nutrition.calories }} kcal · 蛋白 {{ dish.nutrition.protein }}g</small>
       </article>
@@ -87,7 +99,8 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import { validateImageFile } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
@@ -99,6 +112,21 @@ const message = ref('');
 const messageType = ref('info');
 const loading = ref(false);
 let activeController = null;
+
+const dishRatingMap = computed(() => {
+  const map = new Map();
+  for (const dish of store.dishes) map.set(dish.id, dish.rating);
+  return map;
+});
+
+const dishReviewCountMap = computed(() => {
+  const map = new Map();
+  for (const dish of store.dishes) map.set(dish.id, dish.reviewCount || 0);
+  return map;
+});
+
+function getDishRating(id) { return dishRatingMap.value.get(id) || 0; }
+function getDishReviewCount(id) { return dishReviewCountMap.value.get(id) || 0; }
 
 function fileToBase64(input) {
   return new Promise((resolve, reject) => {

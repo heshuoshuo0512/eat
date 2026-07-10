@@ -110,8 +110,8 @@ function migrate(db) {
     CREATE TABLE IF NOT EXISTS reviews (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      target_type TEXT NOT NULL CHECK(target_type IN ('dish')),
-      target_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      target_type TEXT NOT NULL CHECK(target_type IN ('dish','canteen')),
+      target_id TEXT NOT NULL,
       rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
       content TEXT NOT NULL,
       created_at TEXT NOT NULL
@@ -378,6 +378,30 @@ function migrate(db) {
   try { db.exec("ALTER TABLE dishes ADD COLUMN allergens_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   // Review moderation status
   try { db.exec("ALTER TABLE reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
+  const reviewSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reviews'").get()?.sql || '';
+  if (!reviewSchema.includes("'canteen'")) {
+    db.exec(`
+      DROP INDEX IF EXISTS idx_reviews_target;
+      DROP INDEX IF EXISTS idx_reviews_tenant_target;
+      ALTER TABLE reviews RENAME TO reviews_dish_only;
+      CREATE TABLE reviews (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT 'default',
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        target_type TEXT NOT NULL CHECK(target_type IN ('dish','canteen')),
+        target_id TEXT NOT NULL,
+        rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+        content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'approved',
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at)
+      SELECT id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at FROM reviews_dish_only;
+      DROP TABLE reviews_dish_only;
+      CREATE INDEX idx_reviews_target ON reviews(target_type, target_id);
+      CREATE INDEX idx_reviews_tenant_target ON reviews(tenant_id, target_type, target_id);
+    `);
+  }
   // Order payment tracking
   try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'unpaid'"); } catch {}
   try { db.exec("ALTER TABLE orders ADD COLUMN paid_at TEXT"); } catch {}
@@ -444,6 +468,10 @@ function seed(db) {
       insert.run(item.id, item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
     }
   }
+  const updateSeedImage = db.prepare('UPDATE dishes SET image_url = ? WHERE id = ? AND (image_url IS NULL OR image_url = ?)');
+  for (const item of seedDishes) {
+    if (item.imageUrl) updateSeedImage.run(item.imageUrl, item.id, '');
+  }
 
   if (db.prepare('SELECT COUNT(*) AS count FROM reviews').get().count === 0) {
     const insert = db.prepare('INSERT INTO reviews (id, user_id, target_type, target_id, rating, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -488,7 +516,7 @@ export function rowToDish(row) {
     taste: row.taste,
     cuisine: row.cuisine,
     ingredients: parseJson(row.ingredients_json, []),
-    tags: parseJson(row.tags_json, []),
+    tags: parseJson(row.tags_json, []).filter((tag) => tag !== '不辣'),
     halal: Boolean(row.halal),
     mealTypes: parseJson(row.meal_types_json, ['lunch', 'dinner']),
     nutrition: { calories: row.calories, protein: row.protein, fat: row.fat, carbs: row.carbs },

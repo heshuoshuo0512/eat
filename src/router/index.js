@@ -9,26 +9,38 @@ import AgentView from '../views/AgentView.vue';
 import VisualMealView from '../views/VisualMealView.vue';
 import OrdersView from '../views/OrdersView.vue';
 import StallConsoleView from '../views/StallConsoleView.vue';
+import { useCanteenStore } from '../stores/canteenStore.js';
 import OrderAnalyticsView from '../views/OrderAnalyticsView.vue';
 
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: '/', name: 'home', component: HomeView },
-    { path: '/canteens', name: 'canteens', component: CanteensView },
-    { path: '/dishes', name: 'dishes', component: DishesView },
-    { path: '/rankings', name: 'rankings', component: RankingsView },
-    { path: '/recommend', name: 'recommend', component: RecommendView },
-    { path: '/visual-meal', name: 'visual-meal', component: VisualMealView },
-    { path: '/orders', name: 'orders', component: OrdersView },
-    { path: '/stall-console', name: 'stall-console', component: StallConsoleView },
-    { path: '/order-analytics', name: 'order-analytics', component: OrderAnalyticsView },
-    { path: '/admin', name: 'admin', component: AdminView },
-    { path: '/admin/input', name: 'admin-input', component: AdminView },
-    { path: '/admin/ai', name: 'admin-ai', component: AdminView },
-    { path: '/agent', name: 'agent', component: AgentView }
+    { path: '/canteens', name: 'canteens', component: CanteensView, meta: { audience: 'student' } },
+    { path: '/dishes', name: 'dishes', component: DishesView, meta: { audience: 'student' } },
+    { path: '/rankings', name: 'rankings', component: RankingsView, meta: { audience: 'student' } },
+    { path: '/recommend', name: 'recommend', component: RecommendView, meta: { audience: 'student' } },
+    { path: '/visual-meal', name: 'visual-meal', component: VisualMealView, meta: { audience: 'student' } },
+    { path: '/orders', name: 'orders', component: OrdersView, meta: { audience: 'student' } },
+    { path: '/stall-console', name: 'stall-console', component: StallConsoleView, meta: { audience: 'admin' } },
+    { path: '/order-analytics', name: 'order-analytics', component: OrderAnalyticsView, meta: { audience: 'admin' } },
+    { path: '/admin', name: 'admin', component: AdminView, meta: { audience: 'admin' } },
+    { path: '/admin/input', name: 'admin-input', component: AdminView, meta: { audience: 'admin' } },
+    { path: '/admin/ai', name: 'admin-ai', component: AdminView, meta: { audience: 'admin' } },
+    { path: '/agent', name: 'agent', component: AgentView, meta: { audience: 'admin' } }
   ],
   scrollBehavior() {
     return { top: 0 };
   }
+});
+
+const adminRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
+
+router.beforeEach((to) => {
+  const store = useCanteenStore();
+  if (!store.user || !to.meta.audience) return true;
+  const isAdmin = adminRoles.has(store.user.role);
+  if (to.meta.audience === 'admin' && !isAdmin) return { name: 'home' };
+  if (to.meta.audience === 'student' && isAdmin) return { name: 'home' };
+  return true;
 });

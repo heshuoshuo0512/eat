@@ -54,6 +54,7 @@ export const dishes = [
     reviewCount: 126,
     sales: 530,
     image: '🍱',
+    imageUrl: 'https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=900&q=80',
     description: '主食、蛋白和蔬菜比例均衡，适合减脂和维持体重。'
   },
   {
@@ -64,7 +65,7 @@ export const dishes = [
     taste: '酸甜',
     cuisine: '轻食',
     ingredients: ['龙利鱼', '番茄', '米饭', '生菜'],
-    tags: ['高蛋白', '低热量', '不辣'],
+    tags: ['高蛋白', '低热量', '清爽'],
     halal: false,
     mealTypes: ['lunch', 'dinner'],
     nutrition: { calories: 438, protein: 34, fat: 8, carbs: 54 },
@@ -72,6 +73,7 @@ export const dishes = [
     reviewCount: 88,
     sales: 390,
     image: '🐟',
+    imageUrl: 'https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?auto=format&fit=crop&w=900&q=80',
     description: '鱼肉蛋白优质，脂肪低，口味清爽。'
   },
   {
@@ -90,6 +92,7 @@ export const dishes = [
     reviewCount: 153,
     sales: 720,
     image: '🍜',
+    imageUrl: 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=900&q=80',
     description: '热汤面食，饱腹感强，适合常规午晚餐。'
   },
   {
@@ -100,7 +103,7 @@ export const dishes = [
     taste: '酸甜',
     cuisine: '家常',
     ingredients: ['鸡蛋', '番茄', '米饭'],
-    tags: ['高性价比', '不辣', '快餐'],
+    tags: ['高性价比', '家常', '快餐'],
     halal: false,
     mealTypes: ['lunch', 'dinner'],
     nutrition: { calories: 560, protein: 20, fat: 17, carbs: 80 },
@@ -108,6 +111,7 @@ export const dishes = [
     reviewCount: 210,
     sales: 980,
     image: '🍛',
+    imageUrl: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?auto=format&fit=crop&w=900&q=80',
     description: '价格低、出餐快，是高频基础餐。'
   },
   {
@@ -126,6 +130,7 @@ export const dishes = [
     reviewCount: 64,
     sales: 210,
     image: '🥗',
+    imageUrl: 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=900&q=80',
     description: '蛋白和健康脂肪充足，预算较高时适合维持体重。'
   },
   {
@@ -144,6 +149,7 @@ export const dishes = [
     reviewCount: 132,
     sales: 610,
     image: '🌶️',
+    imageUrl: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=900&q=80',
     description: '口味重、饱腹感强，适合预算有限且能吃辣的学生。'
   },
   {
@@ -162,6 +168,7 @@ export const dishes = [
     reviewCount: 77,
     sales: 280,
     image: '🥩',
+    imageUrl: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=900&q=80',
     description: '蛋白和碳水都高，适合力量训练日。'
   },
   {
@@ -180,6 +187,7 @@ export const dishes = [
     reviewCount: 45,
     sales: 190,
     image: '🥣',
+    imageUrl: 'https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&w=900&q=80',
     description: '轻负担早餐，适合赶早课。'
   }
 ];

@@ -15,11 +15,16 @@
         <button class="secondary" type="button" @click="refreshMenu">刷新菜单</button>
       </div>
       <div v-if="store.todayMenu.dishes.length" class="dish-list">
-        <div v-for="dish in store.todayMenu.dishes" :key="dish.id" class="dish-row">
-          <span class="emoji">{{ dish.image }}</span>
+        <div v-for="dish in store.todayMenu.dishes" :key="dish.id" class="dish-row rich">
+          <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb" />
+          <span v-else class="emoji">{{ dish.image }}</span>
           <span>
             <strong>{{ dish.name }}</strong>
-            <small>¥{{ dish.price }} · {{ dish.taste }} · {{ supplyText(dish) }}</small>
+            <small>
+              ¥{{ dish.price }} · {{ dish.taste }}
+              <template v-if="stallInfo(dish.stallId)"> · {{ stallInfo(dish.stallId) }}</template>
+            </small>
+            <small class="muted">{{ supplyText(dish) }}</small>
           </span>
           <button class="primary" type="button" :disabled="dish.supplyStatus === 'sold_out'" @click="addToCart(dish)">加入</button>
         </div>
@@ -34,27 +39,61 @@
       </div>
       <div v-if="cart.length" class="dish-list dense">
         <div v-for="item in cart" :key="item.dishId" class="dish-row">
+          <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.name" class="dish-thumb small" />
+          <span v-else class="emoji">{{ item.image }}</span>
           <span>
             <strong>{{ item.name }}</strong>
-            <small>¥{{ item.price }} × {{ item.quantity }}</small>
+            <small v-if="item.stallName">{{ item.stallName }} · ¥{{ item.price }} × {{ item.quantity }}</small>
+            <small v-else>¥{{ item.price }} × {{ item.quantity }}</small>
           </span>
-          <div class="table-actions">
-            <button class="secondary" type="button" @click="decrement(item.dishId)">-</button>
-            <button class="secondary" type="button" @click="increment(item.dishId)">+</button>
+          <div class="qty-controls">
+            <button class="ghost" type="button" @click="decrement(item.dishId)">−</button>
+            <span class="qty-badge">{{ item.quantity }}</span>
+            <button class="ghost" type="button" @click="increment(item.dishId)">+</button>
           </div>
         </div>
       </div>
       <p v-else class="muted">还没有选择菜品。</p>
+
+      <div class="delivery-section">
+        <label class="delivery-label">配送方式</label>
+        <div class="delivery-toggle">
+          <button
+            type="button"
+            :class="['toggle-btn', { active: deliveryMode === 'pickup' }]"
+            @click="deliveryMode = 'pickup'"
+          >到店自取</button>
+          <button
+            type="button"
+            :class="['toggle-btn', { active: deliveryMode === 'dorm' }]"
+            @click="deliveryMode = 'dorm'"
+          >宿舍配送</button>
+        </div>
+        <div v-if="deliveryMode === 'dorm'" class="dorm-fields">
+          <label>
+            宿舍楼栋
+            <input v-model="dormBuilding" type="text" placeholder="如：7号宿舍楼" />
+          </label>
+          <label>
+            房间号
+            <input v-model="dormRoom" type="text" placeholder="如：302" />
+          </label>
+          <p class="muted small">宿舍配送费 ¥{{ DELIVERY_FEE.toFixed(2) }}，将在订单总额中体现。</p>
+        </div>
+      </div>
+
       <label>
         备注
         <textarea v-model="note" placeholder="少辣、不要香菜等"></textarea>
       </label>
       <div class="metric-grid compact">
+        <article><strong>¥{{ subtotalAmount }}</strong><span>菜品小计</span></article>
+        <article v-if="deliveryMode === 'dorm'"><strong>¥{{ DELIVERY_FEE.toFixed(2) }}</strong><span>配送费</span></article>
         <article><strong>¥{{ totalAmount }}</strong><span>合计</span></article>
         <article><strong>{{ cartCount }}</strong><span>份数</span></article>
       </div>
-      <button class="primary" type="button" :disabled="!cart.length || loading" @click="submitOrder">提交订单</button>
-      <p v-if="message" class="form-message">{{ message }}</p>
+      <button class="primary" type="button" :disabled="!canSubmit || loading" @click="submitOrder">提交订单</button>
+      <p v-if="message" class="form-message" :class="{ error: isError }">{{ message }}</p>
     </article>
   </section>
 
@@ -66,26 +105,26 @@
       </div>
       <button class="secondary" type="button" @click="store.loadOrders()">刷新订单</button>
     </div>
-    <div v-if="store.orders.length" class="table-wrap">
-      <table>
-        <thead><tr><th>取餐码</th><th>状态</th><th>支付</th><th>金额</th><th>菜品</th><th>时间</th><th>操作</th></tr></thead>
-        <tbody>
-          <tr v-for="order in store.orders" :key="order.id">
-            <td><strong>{{ order.pickupCode }}</strong></td>
-            <td>{{ statusLabel(order.status) }}</td>
-            <td>{{ paymentLabel(order.paymentStatus) }}</td>
-            <td>¥{{ order.totalAmount }}</td>
-            <td>{{ order.items.map((item) => `${item.dishName}×${item.quantity}`).join('、') }}</td>
-            <td>{{ order.createdAt?.slice(0, 16).replace('T', ' ') }}</td>
-            <td>
-              <div class="table-actions">
-                <button v-if="order.paymentStatus === 'unpaid' && order.status !== 'cancelled'" class="primary" type="button" @click="pay(order)">模拟支付</button>
-                <button v-if="order.paymentStatus === 'unpaid' && ['pending','preparing'].includes(order.status)" class="secondary" type="button" @click="cancel(order)">取消</button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <div v-if="store.orders.length" class="order-cards">
+      <article v-for="order in store.orders" :key="order.id" class="order-card" :class="'status-' + order.status">
+        <div class="order-card-header">
+          <div class="pickup-code-badge">{{ order.pickupCode }}</div>
+          <span class="status-tag" :class="order.status">{{ statusLabel(order.status) }}</span>
+        </div>
+        <div class="order-card-body">
+          <p class="order-items">{{ order.items.map((item) => `${item.dishName}×${item.quantity}`).join('、') }}</p>
+          <p class="order-note" v-if="order.note">{{ order.note }}</p>
+          <div class="order-meta">
+            <span>¥{{ order.totalAmount }}</span>
+            <span>{{ paymentLabel(order.paymentStatus) }}</span>
+            <span>{{ order.createdAt?.slice(0, 16).replace('T', ' ') }}</span>
+          </div>
+        </div>
+        <div class="order-card-actions">
+          <button v-if="order.paymentStatus === 'unpaid' && order.status !== 'cancelled'" class="primary" type="button" @click="pay(order)">模拟支付</button>
+          <button v-if="order.paymentStatus === 'unpaid' && ['pending','preparing'].includes(order.status)" class="secondary" type="button" @click="cancel(order)">取消</button>
+        </div>
+      </article>
     </div>
     <p v-else class="muted">暂无订单。</p>
   </section>
@@ -99,15 +138,37 @@ const store = useCanteenStore();
 const cart = ref([]);
 const note = ref('');
 const message = ref('');
+const isError = ref(false);
 const loading = ref(false);
+const deliveryMode = ref('pickup');
+const dormBuilding = ref('');
+const dormRoom = ref('');
+const DELIVERY_FEE = 3;
 
-const totalAmount = computed(() => cart.value.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2));
+const subtotalAmount = computed(() => cart.value.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2));
+const totalAmount = computed(() => {
+  const sub = cart.value.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  return (sub + (deliveryMode.value === 'dorm' ? DELIVERY_FEE : 0)).toFixed(2);
+});
 const cartCount = computed(() => cart.value.reduce((sum, item) => sum + item.quantity, 0));
+
+const canSubmit = computed(() => {
+  if (!cart.value.length) return false;
+  if (deliveryMode.value === 'dorm' && (!dormBuilding.value.trim() || !dormRoom.value.trim())) return false;
+  return true;
+});
 
 onMounted(async () => {
   await store.loadTodayMenu();
   await store.loadOrders();
 });
+
+function stallInfo(stallId) {
+  const stall = store.stalls.find((s) => s.id === stallId);
+  if (!stall) return '';
+  const canteen = store.canteens.find((c) => c.id === stall.canteenId);
+  return canteen ? `${stall.name} · ${canteen.name}` : stall.name;
+}
 
 function supplyText(dish) {
   const item = dish.menuItem;
@@ -118,9 +179,22 @@ function supplyText(dish) {
 }
 
 function addToCart(dish) {
+  const stall = store.stalls.find((s) => s.id === dish.stallId);
   const existing = cart.value.find((item) => item.dishId === dish.id);
-  if (existing) existing.quantity += 1;
-  else cart.value.push({ dishId: dish.id, name: dish.name, price: Number(dish.price || 0), quantity: 1 });
+  if (existing) {
+    existing.quantity += 1;
+  } else {
+    cart.value.push({
+      dishId: dish.id,
+      name: dish.name,
+      price: Number(dish.price || 0),
+      quantity: 1,
+      imageUrl: dish.imageUrl || '',
+      image: dish.image || '🍽️',
+      stallId: dish.stallId || '',
+      stallName: stall?.name || ''
+    });
+  }
 }
 
 function increment(dishId) {
@@ -135,6 +209,15 @@ function decrement(dishId) {
   if (item.quantity <= 0) cart.value = cart.value.filter((entry) => entry.dishId !== dishId);
 }
 
+function buildNote() {
+  const parts = [];
+  if (note.value.trim()) parts.push(note.value.trim());
+  if (deliveryMode.value === 'dorm') {
+    parts.push(`[宿舍配送] ${dormBuilding.value.trim()} ${dormRoom.value.trim()}`);
+  }
+  return parts.join(' | ');
+}
+
 async function refreshMenu() {
   await store.loadTodayMenu();
 }
@@ -142,13 +225,22 @@ async function refreshMenu() {
 async function submitOrder() {
   loading.value = true;
   message.value = '';
+  isError.value = false;
   try {
-    const order = await store.createOrder({ items: cart.value.map(({ dishId, quantity }) => ({ dishId, quantity })), note: note.value });
+    const payload = {
+      items: cart.value.map(({ dishId, quantity }) => ({ dishId, quantity })),
+      note: buildNote()
+    };
+    const order = await store.createOrder(payload);
     cart.value = [];
     note.value = '';
+    deliveryMode.value = 'pickup';
+    dormBuilding.value = '';
+    dormRoom.value = '';
     message.value = `下单成功，取餐码 ${order.pickupCode}`;
   } catch (error) {
     message.value = error.message;
+    isError.value = true;
   } finally {
     loading.value = false;
   }
@@ -156,21 +248,25 @@ async function submitOrder() {
 
 async function pay(order) {
   message.value = '';
+  isError.value = false;
   try {
     const paid = await store.payOrder(order.id);
     message.value = `支付成功，取餐码 ${paid.pickupCode}`;
   } catch (error) {
     message.value = error.message;
+    isError.value = true;
   }
 }
 
 async function cancel(order) {
   message.value = '';
+  isError.value = false;
   try {
     await store.cancelOrder(order.id);
     message.value = '订单已取消，库存已回滚。';
   } catch (error) {
     message.value = error.message;
+    isError.value = true;
   }
 }
 
@@ -182,3 +278,185 @@ function statusLabel(status) {
   return { pending: '待接单', preparing: '备餐中', ready: '待取餐', completed: '已完成', cancelled: '已取消' }[status] || status;
 }
 </script>
+
+<style scoped>
+.dish-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.dish-thumb.small {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+}
+.dish-row.rich {
+  align-items: flex-start;
+}
+.qty-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.qty-controls .ghost {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: var(--text, #344054);
+  cursor: pointer;
+}
+.qty-controls .ghost:hover {
+  background: var(--hover-bg, #f2f4f7);
+}
+.qty-badge {
+  min-width: 24px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+}
+.delivery-section {
+  margin: 12px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #eaecf0);
+}
+.delivery-label {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  display: block;
+}
+.delivery-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.toggle-btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  background: var(--surface, #fff);
+  color: var(--text-secondary, #667085);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.toggle-btn.active {
+  background: var(--primary, #4f46e5);
+  color: #fff;
+}
+.toggle-btn:not(.active):hover {
+  background: var(--hover-bg, #f2f4f7);
+}
+.dorm-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+.dorm-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.dorm-fields input {
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 6px;
+  font-size: 14px;
+}
+.dorm-fields .muted.small {
+  font-size: 12px;
+  margin: 0;
+}
+.order-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.order-card {
+  border: 1px solid var(--border, #eaecf0);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--surface, #fff);
+}
+.order-card.status-ready {
+  border-color: #12b76a;
+  background: #f0fdf4;
+}
+.order-card.status-preparing {
+  border-color: #f79009;
+  background: #fffbeb;
+}
+.order-card.status-cancelled {
+  opacity: 0.6;
+}
+.order-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.pickup-code-badge {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-family: 'Courier New', monospace;
+  color: var(--primary, #4f46e5);
+}
+.status-tag {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: #f2f4f7;
+  color: #344054;
+}
+.status-tag.pending { background: #fef3c7; color: #92400e; }
+.status-tag.preparing { background: #fed7aa; color: #9a3412; }
+.status-tag.ready { background: #bbf7d0; color: #166534; }
+.status-tag.completed { background: #dbeafe; color: #1e40af; }
+.status-tag.cancelled { background: #fee2e2; color: #991b1b; }
+.order-card-body {
+  margin-bottom: 10px;
+}
+.order-items {
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+.order-note {
+  font-size: 12px;
+  color: var(--text-secondary, #667085);
+  margin: 0 0 4px;
+  font-style: italic;
+}
+.order-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary, #667085);
+}
+.order-card-actions {
+  display: flex;
+  gap: 8px;
+}
+.form-message.error {
+  color: #b42318;
+}
+</style>

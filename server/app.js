@@ -1591,12 +1591,21 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const activeUser = await requireUser(db, req);
         const body = await readBody(req);
         requireFields(body, ['targetId', 'rating', 'content']);
+        const targetType = body.targetType === 'canteen' ? 'canteen' : 'dish';
+        const targetTable = targetType === 'canteen' ? 'canteens' : 'dishes';
+        const target = await db.prepare(`SELECT id FROM ${targetTable} WHERE id = ? AND tenant_id = ?`).get(body.targetId, tenantIdFor(activeUser));
+        if (!target) throw Object.assign(new Error(targetType === 'canteen' ? '食堂不存在。' : '菜品不存在。'), { status: 404 });
+        const rating = Number(body.rating);
+        const content = String(body.content).trim();
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw Object.assign(new Error('评分需要在 1-5 分之间。'), { status: 400 });
+        if (content.length < 2 || content.length > 240) throw Object.assign(new Error('评价内容长度需要在 2-240 个字符之间。'), { status: 400 });
         const id = `r-${randomUUID()}`;
         await db.prepare('INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, tenantIdFor(activeUser), activeUser.id, 'dish', body.targetId, Number(body.rating), String(body.content).trim(), body.status || 'approved', now().slice(0, 10));
+          .run(id, tenantIdFor(activeUser), activeUser.id, targetType, body.targetId, rating, content, body.status || 'approved', now().slice(0, 10));
         await audit(db, activeUser, 'CREATE', 'review', id);
         await invalidateRankings();
-        return send(res, 201, await dishDetail(db, body.targetId, tenantIdFor(activeUser)));
+        if (targetType === 'dish') return send(res, 201, await dishDetail(db, body.targetId, tenantIdFor(activeUser)));
+        return send(res, 201, { review: { id, targetType, targetId: body.targetId, user: activeUser.nickname, rating, content, createdAt: now().slice(0, 10) } });
       }
 
       if ((method === 'POST' || method === 'PUT') && url.pathname === '/api/health/profile') {

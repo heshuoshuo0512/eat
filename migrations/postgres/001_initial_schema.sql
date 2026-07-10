@@ -84,8 +84,8 @@ CREATE TABLE IF NOT EXISTS dishes (
 CREATE TABLE IF NOT EXISTS reviews (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  target_type TEXT NOT NULL CHECK(target_type IN ('dish')),
-  target_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK(target_type IN ('dish','canteen')),
+  target_id TEXT NOT NULL,
   rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
   content TEXT NOT NULL,
   created_at TEXT NOT NULL

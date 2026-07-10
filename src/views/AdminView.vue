@@ -10,191 +10,70 @@
     <p>请在左侧身份卡选择"管理员"并登录。</p>
   </section>
 
-  <section v-if="store.user?.role === 'admin' && isEntryPage" class="card admin-form">
+  <section v-if="store.user?.role === 'admin' && isManagePage" class="card admin-form">
     <div class="section-title horizontal">
       <div>
-        <p class="eyebrow">Vision Import</p>
-        <h2>视觉拍照导入</h2>
+        <p class="eyebrow">Today</p>
+        <h2>今日菜单发布</h2>
       </div>
-      <span class="pill">AI 预填 · 人工确认</span>
-    </div>
-    <div class="grid two-columns align-start">
-      <label>拍照/上传菜品图<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" capture="environment" @change="handleVisionFile" /></label>
-      <div v-if="visionPreview" class="vision-preview"><img :src="visionPreview" alt="待识别菜品图" /></div>
-    </div>
-    <div class="table-actions">
-      <button class="primary" type="button" :disabled="visionLoading || !visionFile" @click="identifyVisionDish">{{ visionLoading ? '识别中...' : 'AI 识别并填入表单' }}</button>
-      <button class="ghost" type="button" @click="resetVisionImport">清空图片</button>
-    </div>
-    <article v-if="visionSuggestion" class="mini-card">
-      <strong>{{ visionSuggestion.name || '未识别菜名' }}</strong>
-      <p>{{ visionSuggestion.notes }}</p>
-      <div class="nutrition-grid">
-        <span>{{ visionSuggestion.nutrition.calories }} kcal</span>
-        <span>蛋白 {{ visionSuggestion.nutrition.protein }}g</span>
-        <span>脂肪 {{ visionSuggestion.nutrition.fat }}g</span>
-        <span>碳水 {{ visionSuggestion.nutrition.carbs }}g</span>
+      <div class="table-actions">
+        <button class="ghost" type="button" @click="refreshMenus">刷新</button>
+        <button class="primary" type="button" @click="publishTodayMenu">一键发布今日菜单</button>
       </div>
-      <p class="muted">食材：{{ visionSuggestion.ingredients.join(' / ') }}；标签：{{ visionSuggestion.tags.join(' / ') }}；置信度 {{ Math.round(visionSuggestion.confidence * 100) }}%</p>
-    </article>
-    <p class="muted">识别结果只用于预填，不会自动入库；请确认价格、档口、营养值后再点击“保存菜品”。</p>
-    <p v-if="visionMessage" class="form-message">{{ visionMessage }}</p>
-  </section>
-
-  <section v-if="store.user?.role === 'admin' && isEntryPage" class="grid two-columns align-start">
-    <form class="card admin-form" @submit.prevent="saveCanteen">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">Canteen</p>
-          <h2>{{ canteenForm.id ? '编辑食堂' : '新增食堂' }}</h2>
-        </div>
-        <button v-if="canteenForm.id" class="ghost" type="button" @click="resetCanteenForm">取消编辑</button>
-      </div>
-      <label>名称<input v-model="canteenForm.name" required /></label>
-      <label>位置<input v-model="canteenForm.location" required /></label>
-      <label>营业时间<input v-model="canteenForm.hours" placeholder="07:00 - 21:00" required /></label>
-      <label>标签<input v-model="canteenForm.tags" placeholder="低脂, 夜宵" /></label>
-      <label>简介<textarea v-model="canteenForm.description" required /></label>
-      <button class="primary" type="submit">{{ canteenForm.id ? '更新食堂' : '保存食堂' }}</button>
-    </form>
-
-    <form class="card admin-form" @submit.prevent="saveDish">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">Dish + Nutrition</p>
-          <h2>{{ dishForm.id ? '编辑菜品' : '新增菜品' }}</h2>
-        </div>
-        <button v-if="dishForm.id" class="ghost" type="button" @click="resetDishForm">取消编辑</button>
-      </div>
-      <label>所属档口
-        <select v-model="dishForm.stallId">
-          <option v-for="stall in store.stalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option>
-        </select>
-      </label>
-      <label>菜名<input v-model="dishForm.name" required /></label>
-      <label>价格<input v-model.number="dishForm.price" type="number" min="1" required /></label>
-      <label>口味<input v-model="dishForm.taste" required /></label>
-      <label>菜系<input v-model="dishForm.cuisine" required /></label>
-      <label>食材<input v-model="dishForm.ingredients" placeholder="鸡胸肉, 西兰花" required /></label>
-      <label>标签<input v-model="dishForm.tags" placeholder="高蛋白, 减脂推荐" required /></label>
-      <label>图片地址<input v-model="dishForm.imageUrl" placeholder="上传后自动填充" /></label>
-      <label>上传图片<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" @change="handleImageFile" /></label>
-      <div class="form-grid">
-        <label>热量<input v-model.number="dishForm.calories" type="number" required /></label>
-        <label>蛋白<input v-model.number="dishForm.protein" type="number" required /></label>
-        <label>脂肪<input v-model.number="dishForm.fat" type="number" required /></label>
-        <label>碳水<input v-model.number="dishForm.carbs" type="number" required /></label>
-      </div>
-      <label class="check-label"><input v-model="dishForm.halal" type="checkbox" /> 清真</label>
-      <label>过敏原提示<input v-model="dishForm.allergens" placeholder="花生, 乳制品, 麸质" /></label>
-      <div v-if="dishForm.imageUrl" class="vision-preview" style="max-width:240px;margin-bottom:8px;">
-        <img :src="dishForm.imageUrl" :alt="dishForm.name || '菜品图片'" />
-      </div>
-      <button class="primary" type="submit">{{ dishForm.id ? '更新菜品' : '保存菜品' }}</button>
-      <p v-if="message" class="form-message">{{ message }}</p>
-    </form>
-  </section>
-
-  <section v-if="store.user?.role === 'admin' && isEntryPage" class="card admin-form">
-    <div class="section-title horizontal">
-      <div>
-        <p class="eyebrow">Bulk Import</p>
-        <h2>批量导入菜品</h2>
-      </div>
-      <span class="pill">JSON 数组</span>
-    </div>
-    <textarea v-model="bulkInput" placeholder='[{"stallId":"stall-1","name":"低脂鸡胸饭","price":16,"taste":"清爽","cuisine":"轻食","ingredients":["鸡胸肉"],"tags":["高蛋白"],"nutrition":{"calories":520,"protein":38,"fat":9,"carbs":68}}]'></textarea>
-    <button class="secondary" type="button" @click="importBulkDishes">导入菜品</button>
-  </section>
-
-  <section v-if="store.user?.role === 'admin' && isEntryPage" class="card admin-form">
-    <div class="section-title horizontal">
-      <div>
-        <p class="eyebrow">CSV Import</p>
-        <h2>CSV 批量导入菜品</h2>
-      </div>
-      <span class="pill">先预览 · 后确认</span>
-    </div>
-    <p class="muted">表头支持：档口ID、菜名、价格、口味、菜系、食材、标签、热量、蛋白、脂肪、碳水、清真、餐别、图片地址、描述。上传 UTF-8 CSV，食材/标签/餐别用逗号分隔，含逗号字段请用双引号包裹。</p>
-    <input type="file" accept=".csv,text/csv" @change="previewCsvImport" />
-    <p v-if="excelMessage" class="form-message">{{ excelMessage }}</p>
-    <div v-if="excelRows.length" class="table-wrap">
-      <table>
-        <thead><tr><th>行</th><th>菜名</th><th>档口</th><th>价格</th><th>状态</th></tr></thead>
-        <tbody>
-          <tr v-for="row in excelRows.slice(0, 20)" :key="row.row">
-            <td>{{ row.row }}</td>
-            <td>{{ row.dish.name || '-' }}</td>
-            <td>{{ row.dish.stallId || '-' }}</td>
-            <td>¥{{ row.dish.price || 0 }}</td>
-            <td :class="row.valid ? 'positive' : 'danger'">{{ row.valid ? '可导入' : row.errors.join('；') }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <button class="primary" type="button" :disabled="!excelFile || excelSummary.errorCount || excelLoading" @click="confirmExcelImport">确认导入 {{ excelSummary.validCount }} 行</button>
-  </section>
-
-  <section v-if="store.user?.role === 'admin' && isAiPage" ref="aiSection" class="card admin-form">
-    <div class="section-title horizontal">
-      <div>
-        <p class="eyebrow">AI Agent</p>
-        <h2>智能顾问 API 配置</h2>
-      </div>
-      <span class="pill">{{ store.aiStatus?.enabled ? `已启用 · ${store.aiStatus.source}` : '未启用' }}</span>
-    </div>
-    <div class="form-grid">
-      <label>API Base URL<input v-model="aiForm.baseUrl" placeholder="https://api.openai.com/v1" /></label>
-      <label>Chat 模型<input v-model="aiForm.chatModel" placeholder="gpt-4o-mini" /></label>
-      <label>Embedding 模型<input v-model="aiForm.embeddingModel" placeholder="text-embedding-3-small" /></label>
-      <label>Vision 模型<input v-model="aiForm.visionModel" placeholder="gpt-4o-mini" /></label>
-      <label>超时 ms<input v-model.number="aiForm.timeoutMs" type="number" min="1000" max="60000" /></label>
-    </div>
-    <label>API Key<input v-model="aiForm.apiKey" autocomplete="off" type="password" placeholder="sk-...；留空保存会清空管理员配置的 key" /></label>
-    <div class="table-actions">
-      <button class="primary" type="button" @click="saveAiProvider">保存并启用</button>
-      <button class="secondary" type="button" @click="testAiProvider">测试连接</button>
-      <button class="ghost danger" type="button" @click="clearAiProvider">清空配置</button>
-    </div>
-    <p class="muted">保存后 Agent 回答会优先走真实 LLM；检索和推荐仍只基于真实菜品库，AI 失败会自动回退本地模板。</p>
-    <p v-if="aiMessage" class="form-message">{{ aiMessage }}</p>
-  </section>
-
-  <section v-if="store.user?.role === 'admin' && isAiPage" class="card admin-form">
-    <div class="section-title horizontal">
-      <div>
-        <p class="eyebrow">AI Governance</p>
-        <h2>AI 使用量与成本</h2>
-      </div>
-      <button class="ghost" type="button" @click="refreshAiUsage">刷新</button>
-    </div>
-    <article class="mini-card">
-      <strong>{{ store.aiQuotaStatus.period }} 月额度</strong>
-      <p>{{ store.aiQuotaStatus.used }} / {{ store.aiQuotaStatus.quota }} 次已用</p>
-      <p class="muted">剩余 {{ store.aiQuotaStatus.remaining }} 次；额度为 0 表示不限量。</p>
-    </article>
-    <div class="stats-grid">
-      <article v-for="item in store.aiUsageSummary" :key="`${item.feature}-${item.status}`" class="mini-card">
-        <strong>{{ item.feature }} · {{ item.status === 'success' ? '成功' : '失败' }}</strong>
-        <p>{{ item.count }} 次 · 图像 {{ item.imageCount }} · Token {{ item.inputTokens + item.outputTokens }}</p>
-        <p class="muted">均耗时 {{ item.avgLatencyMs }}ms · 估算成本 ¥{{ item.estimatedCost.toFixed(4) }}</p>
-      </article>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>时间</th><th>功能</th><th>模型</th><th>状态</th><th>Token/图像</th><th>耗时</th></tr></thead>
+        <thead><tr><th>日期</th><th>餐段</th><th>食堂</th><th>菜品</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>
-          <tr v-for="log in store.aiUsageLogs" :key="log.id">
-            <td>{{ log.createdAt?.slice(0, 19).replace('T', ' ') }}</td>
-            <td>{{ log.feature }}<br /><span class="muted">{{ log.provider }}</span></td>
-            <td>{{ log.model || 'fallback' }}</td>
-            <td><span class="pill">{{ log.status }}</span></td>
-            <td>{{ log.inputTokens + log.outputTokens }} / {{ log.imageCount }}</td>
-            <td>{{ log.latencyMs }}ms</td>
+          <tr v-for="menu in todayMenus" :key="menu.id">
+            <td>{{ menu.date }}</td>
+            <td>{{ menu.mealType === 'lunch' ? '午餐' : menu.mealType === 'dinner' ? '晚餐' : menu.mealType === 'breakfast' ? '早餐' : menu.mealType }}</td>
+            <td>{{ menu.canteenName || menu.canteenId }}</td>
+            <td>{{ menu.items.map((item) => item.dishName || item.dishId).join(' / ') || '未配置' }}</td>
+            <td><span class="pill">{{ menu.status === 'published' ? '已发布' : menu.status === 'draft' ? '草稿' : '已下架' }}</span></td>
+            <td class="table-actions">
+              <button v-if="menu.status !== 'published'" class="primary" type="button" @click="publishSingleMenu(menu.id)">发布</button>
+              <button v-if="menu.status === 'published'" class="ghost" type="button" @click="archiveMenu(menu.id)">下架</button>
+            </td>
           </tr>
         </tbody>
       </table>
     </div>
+    <p v-if="!todayMenus.length" class="muted">今日暂无菜单，请在下方菜单运营区新增。</p>
+  </section>
+
+  <section v-if="store.user?.role === 'admin' && isManagePage" class="card admin-form">
+    <div class="section-title horizontal">
+      <div>
+        <p class="eyebrow">Review Moderation</p>
+        <h2>评价审核</h2>
+      </div>
+      <div class="table-actions">
+        <span class="pill">共 {{ store.adminReviewTotal }} 条</span>
+        <button class="ghost" type="button" @click="refreshReviews">刷新</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>时间</th><th>用户</th><th>菜品</th><th>评分</th><th>内容</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr v-for="review in store.adminReviews" :key="review.id">
+            <td>{{ review.createdAt?.slice(0, 10) }}</td>
+            <td>{{ review.user }}</td>
+            <td>{{ dishNameById(review.targetId) }}</td>
+            <td><span class="pill">{{ review.rating }} ★</span></td>
+            <td>{{ review.content }}</td>
+            <td><button class="ghost danger" type="button" @click="removeReview(review.id)">删除</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" v-if="store.adminReviewTotal > reviewPageSize">
+      <button class="ghost" type="button" :disabled="reviewPage === 0" @click="reviewPage--; refreshReviews()">上一页</button>
+      <span>{{ reviewPage + 1 }} / {{ Math.ceil(store.adminReviewTotal / reviewPageSize) }}</span>
+      <button class="ghost" type="button" :disabled="(reviewPage + 1) * reviewPageSize >= store.adminReviewTotal" @click="reviewPage++; refreshReviews()">下一页</button>
+    </div>
+    <p v-if="reviewMessage" class="form-message">{{ reviewMessage }}</p>
   </section>
 
   <section v-if="store.user?.role === 'admin' && isManagePage" class="card admin-form">
@@ -442,38 +321,192 @@
       </div>
     </article>
   </section>
-  <section v-if="store.user?.role === 'admin' && isManagePage" class="card admin-form">
+
+  <section v-if="store.user?.role === 'admin' && isEntryPage" class="card admin-form">
     <div class="section-title horizontal">
       <div>
-        <p class="eyebrow">Review Moderation</p>
-        <h2>评价管理</h2>
+        <p class="eyebrow">Vision Import</p>
+        <h2>视觉拍照导入</h2>
       </div>
-      <div class="table-actions">
-        <span class="pill">共 {{ store.adminReviewTotal }} 条</span>
-        <button class="ghost" type="button" @click="refreshReviews">刷新</button>
-      </div>
+      <span class="pill">AI 预填 · 人工确认</span>
     </div>
-    <div class="table-wrap">
+    <div class="grid two-columns align-start">
+      <label>拍照/上传菜品图<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" capture="environment" @change="handleVisionFile" /></label>
+      <div v-if="visionPreview" class="vision-preview"><img :src="visionPreview" alt="待识别菜品图" /></div>
+    </div>
+    <div class="table-actions">
+      <button class="primary" type="button" :disabled="visionLoading || !visionFile" @click="identifyVisionDish">{{ visionLoading ? '识别中...' : 'AI 识别并填入表单' }}</button>
+      <button class="ghost" type="button" @click="resetVisionImport">清空图片</button>
+    </div>
+    <article v-if="visionSuggestion" class="mini-card">
+      <strong>{{ visionSuggestion.name || '未识别菜名' }}</strong>
+      <p>{{ visionSuggestion.notes }}</p>
+      <div class="nutrition-grid">
+        <span>{{ visionSuggestion.nutrition.calories }} kcal</span>
+        <span>蛋白 {{ visionSuggestion.nutrition.protein }}g</span>
+        <span>脂肪 {{ visionSuggestion.nutrition.fat }}g</span>
+        <span>碳水 {{ visionSuggestion.nutrition.carbs }}g</span>
+      </div>
+      <p class="muted">食材：{{ visionSuggestion.ingredients.join(' / ') }}；标签：{{ visionSuggestion.tags.join(' / ') }}；置信度 {{ Math.round(visionSuggestion.confidence * 100) }}%</p>
+    </article>
+    <p class="muted">识别结果只用于预填，不会自动入库；请确认价格、档口、营养值后再点击"保存菜品"。</p>
+    <p v-if="visionMessage" class="form-message">{{ visionMessage }}</p>
+  </section>
+
+  <section v-if="store.user?.role === 'admin' && isEntryPage" class="grid two-columns align-start">
+    <form class="card admin-form" @submit.prevent="saveCanteen">
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">Canteen</p>
+          <h2>{{ canteenForm.id ? '编辑食堂' : '新增食堂' }}</h2>
+        </div>
+        <button v-if="canteenForm.id" class="ghost" type="button" @click="resetCanteenForm">取消编辑</button>
+      </div>
+      <label>名称<input v-model="canteenForm.name" required /></label>
+      <label>位置<input v-model="canteenForm.location" required /></label>
+      <label>营业时间<input v-model="canteenForm.hours" placeholder="07:00 - 21:00" required /></label>
+      <label>标签<input v-model="canteenForm.tags" placeholder="低脂, 夜宵" /></label>
+      <label>简介<textarea v-model="canteenForm.description" required /></label>
+      <button class="primary" type="submit">{{ canteenForm.id ? '更新食堂' : '保存食堂' }}</button>
+    </form>
+
+    <form class="card admin-form" @submit.prevent="saveDish">
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">Dish + Nutrition</p>
+          <h2>{{ dishForm.id ? '编辑菜品' : '新增菜品' }}</h2>
+        </div>
+        <button v-if="dishForm.id" class="ghost" type="button" @click="resetDishForm">取消编辑</button>
+      </div>
+      <label>所属档口
+        <select v-model="dishForm.stallId">
+          <option v-for="stall in store.stalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option>
+        </select>
+      </label>
+      <label>菜名<input v-model="dishForm.name" required /></label>
+      <label>价格<input v-model.number="dishForm.price" type="number" min="1" required /></label>
+      <label>口味<input v-model="dishForm.taste" required /></label>
+      <label>菜系<input v-model="dishForm.cuisine" required /></label>
+      <label>食材<input v-model="dishForm.ingredients" placeholder="鸡胸肉, 西兰花" required /></label>
+      <label>标签<input v-model="dishForm.tags" placeholder="高蛋白, 减脂推荐" required /></label>
+      <label>图片地址<input v-model="dishForm.imageUrl" placeholder="上传后自动填充" /></label>
+      <label>上传图片<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" @change="handleImageFile" /></label>
+      <div class="form-grid">
+        <label>热量<input v-model.number="dishForm.calories" type="number" required /></label>
+        <label>蛋白<input v-model.number="dishForm.protein" type="number" required /></label>
+        <label>脂肪<input v-model.number="dishForm.fat" type="number" required /></label>
+        <label>碳水<input v-model.number="dishForm.carbs" type="number" required /></label>
+      </div>
+      <label class="check-label"><input v-model="dishForm.halal" type="checkbox" /> 清真</label>
+      <label>过敏原提示<input v-model="dishForm.allergens" placeholder="花生, 乳制品, 麸质" /></label>
+      <div v-if="dishForm.imageUrl" class="vision-preview" style="max-width:240px;margin-bottom:8px;">
+        <img :src="dishForm.imageUrl" :alt="dishForm.name || '菜品图片'" />
+      </div>
+      <button class="primary" type="submit">{{ dishForm.id ? '更新菜品' : '保存菜品' }}</button>
+      <p v-if="message" class="form-message">{{ message }}</p>
+    </form>
+  </section>
+
+  <section v-if="store.user?.role === 'admin' && isEntryPage" class="card admin-form">
+    <div class="section-title horizontal">
+      <div>
+        <p class="eyebrow">Bulk Import</p>
+        <h2>批量导入菜品</h2>
+      </div>
+      <span class="pill">JSON 数组</span>
+    </div>
+    <textarea v-model="bulkInput" placeholder='[{"stallId":"stall-1","name":"低脂鸡胸饭","price":16,"taste":"清爽","cuisine":"轻食","ingredients":["鸡胸肉"],"tags":["高蛋白"],"nutrition":{"calories":520,"protein":38,"fat":9,"carbs":68}}]'></textarea>
+    <button class="secondary" type="button" @click="importBulkDishes">导入菜品</button>
+  </section>
+
+  <section v-if="store.user?.role === 'admin' && isEntryPage" class="card admin-form">
+    <div class="section-title horizontal">
+      <div>
+        <p class="eyebrow">CSV Import</p>
+        <h2>CSV 批量导入菜品</h2>
+      </div>
+      <span class="pill">先预览 · 后确认</span>
+    </div>
+    <p class="muted">表头支持：档口ID、菜名、价格、口味、菜系、食材、标签、热量、蛋白、脂肪、碳水、清真、餐别、图片地址、描述。上传 UTF-8 CSV，食材/标签/餐别用逗号分隔，含逗号字段请用双引号包裹。</p>
+    <input type="file" accept=".csv,text/csv" @change="previewCsvImport" />
+    <p v-if="excelMessage" class="form-message">{{ excelMessage }}</p>
+    <div v-if="excelRows.length" class="table-wrap">
       <table>
-        <thead><tr><th>时间</th><th>用户</th><th>菜品</th><th>评分</th><th>内容</th><th>操作</th></tr></thead>
+        <thead><tr><th>行</th><th>菜名</th><th>档口</th><th>价格</th><th>状态</th></tr></thead>
         <tbody>
-          <tr v-for="review in store.adminReviews" :key="review.id">
-            <td>{{ review.createdAt?.slice(0, 10) }}</td>
-            <td>{{ review.user }}</td>
-            <td>{{ dishNameById(review.targetId) }}</td>
-            <td><span class="pill">{{ review.rating }} ★</span></td>
-            <td>{{ review.content }}</td>
-            <td><button class="ghost danger" type="button" @click="removeReview(review.id)">删除</button></td>
+          <tr v-for="row in excelRows.slice(0, 20)" :key="row.row">
+            <td>{{ row.row }}</td>
+            <td>{{ row.dish.name || '-' }}</td>
+            <td>{{ row.dish.stallId || '-' }}</td>
+            <td>¥{{ row.dish.price || 0 }}</td>
+            <td :class="row.valid ? 'positive' : 'danger'">{{ row.valid ? '可导入' : row.errors.join('；') }}</td>
           </tr>
         </tbody>
       </table>
     </div>
-    <div class="pagination" v-if="store.adminReviewTotal > reviewPageSize">
-      <button class="ghost" type="button" :disabled="reviewPage === 0" @click="reviewPage--; refreshReviews()">上一页</button>
-      <span>{{ reviewPage + 1 }} / {{ Math.ceil(store.adminReviewTotal / reviewPageSize) }}</span>
-      <button class="ghost" type="button" :disabled="(reviewPage + 1) * reviewPageSize >= store.adminReviewTotal" @click="reviewPage++; refreshReviews()">下一页</button>
+    <button class="primary" type="button" :disabled="!excelFile || excelSummary.errorCount || excelLoading" @click="confirmExcelImport">确认导入 {{ excelSummary.validCount }} 行</button>
+  </section>
+
+  <section v-if="store.user?.role === 'admin' && isAiPage" ref="aiSection" class="card admin-form">
+    <div class="section-title horizontal">
+      <div>
+        <p class="eyebrow">AI Agent</p>
+        <h2>智能顾问 API 配置</h2>
+      </div>
+      <span class="pill">{{ store.aiStatus?.enabled ? `已启用 · ${store.aiStatus.source}` : '未启用' }}</span>
     </div>
-    <p v-if="reviewMessage" class="form-message">{{ reviewMessage }}</p>
+    <div class="form-grid">
+      <label>API Base URL<input v-model="aiForm.baseUrl" placeholder="https://api.openai.com/v1" /></label>
+      <label>Chat 模型<input v-model="aiForm.chatModel" placeholder="gpt-4o-mini" /></label>
+      <label>Embedding 模型<input v-model="aiForm.embeddingModel" placeholder="text-embedding-3-small" /></label>
+      <label>Vision 模型<input v-model="aiForm.visionModel" placeholder="gpt-4o-mini" /></label>
+      <label>超时 ms<input v-model.number="aiForm.timeoutMs" type="number" min="1000" max="60000" /></label>
+    </div>
+    <label>API Key<input v-model="aiForm.apiKey" autocomplete="off" type="password" placeholder="sk-...；留空保存会清空管理员配置的 key" /></label>
+    <div class="table-actions">
+      <button class="primary" type="button" @click="saveAiProvider">保存并启用</button>
+      <button class="secondary" type="button" @click="testAiProvider">测试连接</button>
+      <button class="ghost danger" type="button" @click="clearAiProvider">清空配置</button>
+    </div>
+    <p class="muted">保存后 Agent 回答会优先走真实 LLM；检索和推荐仍只基于真实菜品库，AI 失败会自动回退本地模板。</p>
+    <p v-if="aiMessage" class="form-message">{{ aiMessage }}</p>
+  </section>
+
+  <section v-if="store.user?.role === 'admin' && isAiPage" class="card admin-form">
+    <div class="section-title horizontal">
+      <div>
+        <p class="eyebrow">AI Governance</p>
+        <h2>AI 使用量与成本</h2>
+      </div>
+      <button class="ghost" type="button" @click="refreshAiUsage">刷新</button>
+    </div>
+    <article class="mini-card">
+      <strong>{{ store.aiQuotaStatus.period }} 月额度</strong>
+      <p>{{ store.aiQuotaStatus.used }} / {{ store.aiQuotaStatus.quota }} 次已用</p>
+      <p class="muted">剩余 {{ store.aiQuotaStatus.remaining }} 次；额度为 0 表示不限量。</p>
+    </article>
+    <div class="stats-grid">
+      <article v-for="item in store.aiUsageSummary" :key="`${item.feature}-${item.status}`" class="mini-card">
+        <strong>{{ item.feature }} · {{ item.status === 'success' ? '成功' : '失败' }}</strong>
+        <p>{{ item.count }} 次 · 图像 {{ item.imageCount }} · Token {{ item.inputTokens + item.outputTokens }}</p>
+        <p class="muted">均耗时 {{ item.avgLatencyMs }}ms · 估算成本 ¥{{ item.estimatedCost.toFixed(4) }}</p>
+      </article>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>时间</th><th>功能</th><th>模型</th><th>状态</th><th>Token/图像</th><th>耗时</th></tr></thead>
+        <tbody>
+          <tr v-for="log in store.aiUsageLogs" :key="log.id">
+            <td>{{ log.createdAt?.slice(0, 19).replace('T', ' ') }}</td>
+            <td>{{ log.feature }}<br /><span class="muted">{{ log.provider }}</span></td>
+            <td>{{ log.model || 'fallback' }}</td>
+            <td><span class="pill">{{ log.status }}</span></td>
+            <td>{{ log.inputTokens + log.outputTokens }} / {{ log.imageCount }}</td>
+            <td>{{ log.latencyMs }}ms</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
 </template>
@@ -492,7 +525,7 @@ const isManagePage = computed(() => route.path === '/admin');
 const pageMeta = computed(() => {
   if (isAiPage.value) return { eyebrow: 'AI Agent', title: '智能顾问 API 配置', description: '配置 OpenAI-compatible API，让智能顾问优先使用真实 LLM；失败时自动回退本地模板。' };
   if (isEntryPage.value) return { eyebrow: 'Data Input', title: '数据录入', description: '录入食堂、菜品、图片和批量导入数据；保存后进入真实数据库。' };
-  return { eyebrow: 'Data Management', title: '数据管理', description: '查看当前数据资产、用户角色和审计日志；编辑或删除已有数据。' };
+  return { eyebrow: 'Operations', title: '运营管控', description: '今日菜单发布、评价审核、数据资产与用户管理。' };
 });
 const message = ref('');
 const bulkInput = ref('');
@@ -521,12 +554,20 @@ const reviewPage = ref(0);
 const reviewPageSize = 20;
 const reviewMessage = ref('');
 
-
-
 const auditPage = ref(0);
 const auditPageSize = 20;
 const aiUsagePage = ref(0);
 const aiUsagePageSize = 50;
+
+const allMenusSelected = computed(() => {
+  const menus = store.adminMenus;
+  return menus.length > 0 && menus.every((menu) => selectedMenuIds.value.has(menu.id));
+});
+
+const todayMenus = computed(() => {
+  const today = new Date().toISOString().slice(0, 10);
+  return store.adminMenus.filter((menu) => menu.date === today);
+});
 
 function defaultCanteenForm() {
   return { id: '', name: '', location: '', hours: '', tags: '', description: '', crowdLevel: 30 };
@@ -556,9 +597,13 @@ function applyAiSettings(settings = {}) {
   Object.assign(aiForm, { ...defaultAiForm(), ...settings, apiKey: '' });
 }
 
-
 function stallName(id) {
   return store.stalls.find((stall) => stall.id === id)?.name || '未绑定';
+}
+
+function dishNameById(id) {
+  const dish = store.dishes.find((d) => d.id === id);
+  return dish ? dish.name : id || '—';
 }
 
 function resetCanteenForm() {
@@ -595,6 +640,22 @@ function dishPayload() {
       carbs: assertNumber(dishForm.carbs, '碳水', 0, 500)
     }
   };
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        resolve(result.split(',')[1] || result);
+      } else {
+        reject(new Error('读取文件失败'));
+      }
+    };
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function saveCanteen() {
@@ -782,6 +843,94 @@ async function handleImageFile(event) {
   }
 }
 
+async function refreshAnalytics() {
+  try {
+    await store.loadAnalytics();
+  } catch (error) {
+    message.value = error.message;
+  }
+}
+
+async function refreshReviews() {
+  try {
+    await store.loadReviewsAdmin(reviewPageSize, reviewPage.value * reviewPageSize);
+    reviewMessage.value = '';
+  } catch (error) {
+    reviewMessage.value = error.message;
+  }
+}
+
+async function removeReview(id) {
+  try {
+    await store.deleteReviewAdmin(id);
+    reviewMessage.value = '评价已删除。';
+  } catch (error) {
+    reviewMessage.value = error.message;
+  }
+}
+
+function toggleMenuSelection(id) {
+  const next = new Set(selectedMenuIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  selectedMenuIds.value = next;
+}
+
+function toggleAllMenus() {
+  if (allMenusSelected.value) {
+    selectedMenuIds.value = new Set();
+  } else {
+    selectedMenuIds.value = new Set(store.adminMenus.map((m) => m.id));
+  }
+}
+
+async function batchPublishMenus() {
+  try {
+    const ids = [...selectedMenuIds.value];
+    if (!ids.length) return;
+    await store.batchMenuAction(ids, 'publish');
+    selectedMenuIds.value = new Set();
+    message.value = `已批量发布 ${ids.length} 个菜单。`;
+  } catch (error) {
+    message.value = error.message;
+  }
+}
+
+async function batchArchiveMenus() {
+  try {
+    const ids = [...selectedMenuIds.value];
+    if (!ids.length) return;
+    await store.batchMenuAction(ids, 'archive');
+    selectedMenuIds.value = new Set();
+    message.value = `已批量下架 ${ids.length} 个菜单。`;
+  } catch (error) {
+    message.value = error.message;
+  }
+}
+
+async function publishSingleMenu(id) {
+  try {
+    await store.batchMenuAction([id], 'publish');
+    message.value = '菜单已发布。';
+  } catch (error) {
+    message.value = error.message;
+  }
+}
+
+async function publishTodayMenu() {
+  try {
+    const drafts = todayMenus.value.filter((m) => m.status !== 'published');
+    if (!drafts.length) {
+      message.value = '今日菜单均已发布。';
+      return;
+    }
+    await store.batchMenuAction(drafts.map((m) => m.id), 'publish');
+    message.value = `已发布 ${drafts.length} 个今日菜单。`;
+  } catch (error) {
+    message.value = error.message;
+  }
+}
+
 async function refreshUsers() {
   try {
     await store.loadUsers();
@@ -925,7 +1074,6 @@ async function scrollToRequestedPanel() {
   aiSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-
 async function initializeAdminPage() {
   if (store.user?.role !== 'admin') return;
   if (isAiPage.value) {
@@ -938,6 +1086,8 @@ async function initializeAdminPage() {
   refreshMenus();
   refreshUsers();
   refreshAuditLogs();
+  refreshAnalytics();
+  refreshReviews();
 }
 
 onBeforeUnmount(resetVisionImport);
