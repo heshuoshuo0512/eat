@@ -166,6 +166,10 @@
         <span v-for="tag in detail.tags" :key="tag" class="pill">{{ tag }}</span>
       </div>
 
+      <RouterLink class="primary button-link order-dish-btn" :to="{ path: '/orders', query: { dish: detail.id } }">
+        🛒 去点这道菜
+      </RouterLink>
+
       <form class="review-form" @submit.prevent="submitReview">
         <h3>发布评价</h3>
         <select v-model.number="review.rating" aria-label="评分">
@@ -202,7 +206,7 @@
 
 <script setup>
 import { computed, nextTick, reactive, ref, watch, watchEffect } from 'vue';
-import { useRoute } from 'vue-router';
+import { RouterLink, useRoute } from 'vue-router';
 import { validateReviewForm } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
@@ -470,6 +474,8 @@ function detailLocationFull(detail) {
 
 .review-photo { overflow: hidden; border-radius: 16px; border: 1px solid rgba(255,255,255,.62); flex-shrink: 0; }
 .review-photo img { display: block; width: 72px; height: 72px; object-fit: cover; }
+
+.order-dish-btn { display: inline-flex; align-items: center; gap: 6px; margin: 12px 0; padding: 10px 20px; font-size: 14px; text-decoration: none; border-radius: 15px; }
 
 /* Mobile */
 @media (max-width: 640px) {

@@ -197,6 +197,11 @@
               >
                 ✓
               </button>
+              <RouterLink
+                class="icon-btn order-link"
+                :to="{ path: '/orders', query: { dish: rankedDishes[0].id } }"
+                aria-label="去点这道菜"
+              >🛒</RouterLink>
             </div>
           </div>
           <!-- Extended Nutrition for Top Pick -->
@@ -227,7 +232,11 @@
         </div>
 
         <div v-if="!rankedDishes.length && !pageLoading" class="empty-state">
-          <p>当前条件没有匹配菜品，请调整档案后重新生成。</p>
+          <p>当前条件没有匹配菜品，你可以：</p>
+          <div class="empty-actions">
+            <RouterLink class="primary button-link" to="/orders">查看今日供应</RouterLink>
+            <button class="secondary" type="button" @click="saveProfile">调整档案后重新生成</button>
+          </div>
         </div>
       </article>
     </section>
@@ -305,6 +314,7 @@
                 <button class="icon-btn" aria-label="标记已吃" @click="onMarkEaten(dish.id)">
                   ✓
                 </button>
+                <RouterLink class="icon-btn order-link" :to="{ path: '/orders', query: { dish: dish.id } }" aria-label="去点这道菜">🛒</RouterLink>
               </div>
             </div>
           </div>
@@ -401,6 +411,7 @@
 
 <script setup>
 import { computed, reactive, ref, watch, onMounted } from 'vue';
+import { RouterLink } from 'vue-router';
 import { normalizeProfileInput } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
@@ -1186,6 +1197,9 @@ input[type="range"]::-webkit-slider-thumb {
     transition: none !important;
   }
 }
+
+.order-link { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; }
+.empty-actions { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
 
 /* ── Responsive ──────────────────────────────────────────── */
 @media (max-width: 900px) {

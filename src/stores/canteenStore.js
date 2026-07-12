@@ -115,6 +115,12 @@ export const useCanteenStore = defineStore('canteen', () => {
     return result.user;
   }
 
+  async function register(payload) {
+    const result = await apiClient.register(payload);
+    setState(result.state);
+    return result.user;
+  }
+
   function logout() {
     apiClient.logout();
     state.value.session.user = null;
@@ -538,6 +544,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     adminEnvironment,
     load,
     login,
+    register,
     logout,
     getDishDetail,
     addReview,

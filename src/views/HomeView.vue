@@ -5,9 +5,9 @@
       <div>
         <p class="eyebrow">校园智慧食堂</p>
         <h1>数据驱动选餐，吃得明白又健康</h1>
-        <p class="hero-copy">查看热门排行榜、获取个性化推荐，再也不用靠运气找饭。</p>
+        <p class="hero-copy">今日点餐、热门排行、个性化推荐，一站搞定你的每一餐。</p>
         <div class="hero-actions">
-          <RouterLink class="primary button-link" to="/rankings">查看排行榜</RouterLink>
+          <RouterLink class="primary button-link" to="/orders">今日点餐</RouterLink>
           <RouterLink class="secondary button-link" to="/dishes">检索菜品</RouterLink>
         </div>
       </div>
@@ -78,7 +78,7 @@
           <span v-if="dish.recommendationScore" class="pill">推荐分 {{ dish.recommendationScore.toFixed(1) }}</span>
         </RouterLink>
       </div>
-      <p v-else class="muted">{{ recLoading ? '正在加载推荐...' : '暂无推荐数据，请先在管理端录入菜品和菜单。' }}</p>
+      <p v-else class="muted">{{ recLoading ? '正在加载推荐...' : '暂无推荐，去今日点餐看看今天有什么好吃的吧！' }} <RouterLink v-if="!recLoading" class="text-link" to="/orders">查看今日供应</RouterLink></p>
       <div v-if="recContext.totals" class="metric-grid compact" style="margin-top:12px;">
         <article><strong>{{ recContext.totals.calories || 0 }}</strong><span>kcal 合计</span></article>
         <article><strong>{{ recContext.totals.protein || 0 }}g</strong><span>蛋白</span></article>
@@ -104,7 +104,7 @@
             </span>
           </RouterLink>
         </div>
-        <p v-if="!store.todayMenu.dishes.length" class="muted">今日暂未发布菜单，已自动回退到完整菜品库推荐。</p>
+        <p v-if="!store.todayMenu.dishes.length" class="muted">今日菜单尚未更新，以下为根据历史数据为您推荐的菜品。</p>
       </article>
 
       <article class="card">
@@ -113,6 +113,14 @@
           <h2>常用功能</h2>
         </div>
         <div class="quick-links">
+          <RouterLink class="quick-link-item" to="/orders">
+            <span class="emoji">🛒</span>
+            <span>今日点餐</span>
+          </RouterLink>
+          <RouterLink class="quick-link-item" to="/orders">
+            <span class="emoji">📋</span>
+            <span>查看取餐码</span>
+          </RouterLink>
           <RouterLink class="quick-link-item" to="/recommend">
             <span class="emoji">🍽️</span>
             <span>生成今日餐单</span>

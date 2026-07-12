@@ -21,7 +21,7 @@ export const router = createRouter({
     { path: '/rankings', name: 'rankings', component: RankingsView, meta: { audience: 'student' } },
     { path: '/recommend', name: 'recommend', component: RecommendView, meta: { audience: 'student' } },
     { path: '/visual-meal', name: 'visual-meal', component: VisualMealView, meta: { audience: 'student', hidden: true } },
-    { path: '/orders', name: 'orders', component: OrdersView, meta: { audience: 'student', hidden: true } },
+    { path: '/orders', name: 'orders', component: OrdersView, meta: { audience: 'student' } },
     { path: '/stall-console', name: 'stall-console', component: StallConsoleView, meta: { audience: 'admin', hidden: true } },
     { path: '/order-analytics', name: 'order-analytics', component: OrderAnalyticsView, meta: { audience: 'admin', hidden: true } },
     { path: '/admin', name: 'admin', component: AdminView, meta: { audience: 'admin' } },

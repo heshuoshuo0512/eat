@@ -5,6 +5,9 @@
     <p>从已发布今日菜单下单，系统实时扣减供应量，售罄后自动阻止继续购买。</p>
   </section>
 
+  <p v-if="dishNotice" class="form-message dish-notice" :class="dishNoticeType">{{ dishNotice }}</p>
+  <p v-if="menuError" class="form-message error">{{ menuError }}</p>
+
   <section class="grid two-columns align-start">
     <article class="card">
       <div class="section-title horizontal">
@@ -12,9 +15,10 @@
           <p class="eyebrow">Today Menu</p>
           <h2>{{ store.todayMenu.date || '今日' }} 可点菜品</h2>
         </div>
-        <button class="secondary" type="button" @click="refreshMenu">刷新菜单</button>
+        <button class="secondary" type="button" :disabled="menuLoading" @click="refreshMenu">{{ menuLoading ? '刷新中…' : '刷新菜单' }}</button>
       </div>
-      <div v-if="store.todayMenu.dishes.length" class="dish-list">
+      <p v-if="menuLoading" class="muted">正在加载今日菜单…</p>
+      <div v-else-if="store.todayMenu.dishes.length" class="dish-list">
         <div v-for="dish in store.todayMenu.dishes" :key="dish.id" class="dish-row rich">
           <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb" />
           <span v-else class="emoji">{{ dish.image }}</span>
@@ -29,7 +33,11 @@
           <button class="primary" type="button" :disabled="dish.supplyStatus === 'sold_out'" @click="addToCart(dish)">加入</button>
         </div>
       </div>
-      <p v-else class="muted">今日暂未发布菜单，请先在管理端发布菜单。</p>
+      <p v-else class="muted">当前餐次暂无可点菜品，可
+        <button class="text-link-btn" type="button" @click="refreshMenu">刷新菜单</button>或查看
+        <RouterLink class="text-link" to="/dishes">菜品库</RouterLink> /
+        <RouterLink class="text-link" to="/recommend">推荐</RouterLink>
+      </p>
     </article>
 
     <article class="card detail-panel">
@@ -53,7 +61,7 @@
           </div>
         </div>
       </div>
-      <p v-else class="muted">还没有选择菜品。</p>
+      <p v-else class="muted">购物车为空 — 从左侧今日菜单点击「加入」即可开始点餐。</p>
 
       <div class="delivery-section">
         <label class="delivery-label">配送方式</label>
@@ -92,7 +100,7 @@
         <article><strong>¥{{ totalAmount }}</strong><span>合计</span></article>
         <article><strong>{{ cartCount }}</strong><span>份数</span></article>
       </div>
-      <button class="primary" type="button" :disabled="!canSubmit || loading" @click="submitOrder">提交订单</button>
+      <button class="primary" type="button" :disabled="!canSubmit || submitting" @click="submitOrder">{{ submitting ? '提交中…' : '提交订单' }}</button>
       <p v-if="message" class="form-message" :class="{ error: isError }">{{ message }}</p>
     </article>
   </section>
@@ -103,9 +111,11 @@
         <p class="eyebrow">Pickup</p>
         <h2>我的订单</h2>
       </div>
-      <button class="secondary" type="button" @click="store.loadOrders()">刷新订单</button>
+      <button class="secondary" type="button" :disabled="ordersLoading" @click="refreshOrders">{{ ordersLoading ? '刷新中…' : '刷新订单' }}</button>
     </div>
-    <div v-if="store.orders.length" class="order-cards">
+    <p v-if="ordersError" class="form-message error">{{ ordersError }}</p>
+    <p v-if="ordersLoading && !store.orders.length" class="muted">正在加载订单…</p>
+    <div v-else-if="store.orders.length" class="order-cards">
       <article v-for="order in store.orders" :key="order.id" class="order-card" :class="'status-' + order.status">
         <div class="order-card-header">
           <div class="pickup-code-badge">{{ order.pickupCode }}</div>
@@ -121,25 +131,35 @@
           </div>
         </div>
         <div class="order-card-actions">
-          <button v-if="order.paymentStatus === 'unpaid' && order.status !== 'cancelled'" class="primary" type="button" @click="pay(order)">模拟支付</button>
-          <button v-if="order.paymentStatus === 'unpaid' && ['pending','preparing'].includes(order.status)" class="secondary" type="button" @click="cancel(order)">取消</button>
+          <button v-if="order.paymentStatus === 'unpaid' && order.status !== 'cancelled'" class="primary" type="button" :disabled="payingOrderId === order.id" @click="pay(order)">{{ payingOrderId === order.id ? '支付中…' : '模拟支付' }}</button>
+          <button v-if="order.paymentStatus === 'unpaid' && ['pending','preparing'].includes(order.status)" class="secondary" type="button" :disabled="cancellingOrderId === order.id" @click="cancel(order)">{{ cancellingOrderId === order.id ? '取消中…' : '取消' }}</button>
         </div>
       </article>
     </div>
-    <p v-else class="muted">暂无订单。</p>
+    <p v-else class="muted">暂无订单。从左侧菜单选菜下单后，订单和取餐码将显示在此处。</p>
   </section>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue';
+import { RouterLink, useRoute } from 'vue-router';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
+const route = useRoute();
 const cart = ref([]);
 const note = ref('');
 const message = ref('');
 const isError = ref(false);
-const loading = ref(false);
+const submitting = ref(false);
+const menuLoading = ref(false);
+const menuError = ref('');
+const ordersLoading = ref(false);
+const ordersError = ref('');
+const dishNotice = ref('');
+const dishNoticeType = ref('');
+const payingOrderId = ref(null);
+const cancellingOrderId = ref(null);
 const deliveryMode = ref('pickup');
 const dormBuilding = ref('');
 const dormRoom = ref('');
@@ -159,9 +179,48 @@ const canSubmit = computed(() => {
 });
 
 onMounted(async () => {
-  await store.loadTodayMenu();
-  await store.loadOrders();
+  menuLoading.value = true;
+  menuError.value = '';
+  try {
+    await store.loadTodayMenu();
+  } catch (err) {
+    menuError.value = `菜单加载失败：${err.message}`;
+  } finally {
+    menuLoading.value = false;
+  }
+
+  ordersLoading.value = true;
+  ordersError.value = '';
+  try {
+    await store.loadOrders();
+  } catch (err) {
+    ordersError.value = `订单加载失败：${err.message}`;
+  } finally {
+    ordersLoading.value = false;
+  }
+
+  handleDishParam();
 });
+
+function handleDishParam() {
+  const dishId = route.query.dish;
+  if (!dishId) return;
+
+  const dish = store.todayMenu.dishes.find((d) => String(d.id) === String(dishId));
+  if (!dish) {
+    dishNotice.value = `菜品 ${dishId} 不在今日菜单中，请从左侧菜单选择其他菜品，或查看菜品库和推荐。`;
+    dishNoticeType.value = 'error';
+    return;
+  }
+  if (dish.supplyStatus === 'sold_out') {
+    dishNotice.value = `「${dish.name}」今日已售罄，请选择其他菜品。`;
+    dishNoticeType.value = 'error';
+    return;
+  }
+  addToCart(dish);
+  dishNotice.value = `已将「${dish.name}」加入购物车，可继续选菜或提交订单。`;
+  dishNoticeType.value = 'success';
+}
 
 function stallInfo(stallId) {
   const stall = store.stalls.find((s) => s.id === stallId);
@@ -219,11 +278,31 @@ function buildNote() {
 }
 
 async function refreshMenu() {
-  await store.loadTodayMenu();
+  menuLoading.value = true;
+  menuError.value = '';
+  try {
+    await store.loadTodayMenu();
+  } catch (err) {
+    menuError.value = `菜单刷新失败：${err.message}`;
+  } finally {
+    menuLoading.value = false;
+  }
+}
+
+async function refreshOrders() {
+  ordersLoading.value = true;
+  ordersError.value = '';
+  try {
+    await store.loadOrders();
+  } catch (err) {
+    ordersError.value = `订单刷新失败：${err.message}`;
+  } finally {
+    ordersLoading.value = false;
+  }
 }
 
 async function submitOrder() {
-  loading.value = true;
+  submitting.value = true;
   message.value = '';
   isError.value = false;
   try {
@@ -242,11 +321,12 @@ async function submitOrder() {
     message.value = error.message;
     isError.value = true;
   } finally {
-    loading.value = false;
+    submitting.value = false;
   }
 }
 
 async function pay(order) {
+  payingOrderId.value = order.id;
   message.value = '';
   isError.value = false;
   try {
@@ -255,10 +335,13 @@ async function pay(order) {
   } catch (error) {
     message.value = error.message;
     isError.value = true;
+  } finally {
+    payingOrderId.value = null;
   }
 }
 
 async function cancel(order) {
+  cancellingOrderId.value = order.id;
   message.value = '';
   isError.value = false;
   try {
@@ -267,6 +350,8 @@ async function cancel(order) {
   } catch (error) {
     message.value = error.message;
     isError.value = true;
+  } finally {
+    cancellingOrderId.value = null;
   }
 }
 
@@ -458,5 +543,20 @@ function statusLabel(status) {
 }
 .form-message.error {
   color: #b42318;
+}
+.dish-notice.success {
+  color: #065f46;
+}
+.text-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--primary, #4f46e5);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.text-link-btn:hover {
+  opacity: 0.8;
 }
 </style>

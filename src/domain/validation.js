@@ -25,6 +25,15 @@ export function validateLoginForm({ username, password }) {
   return '';
 }
 
+export function validateRegisterForm({ username, nickname, password, confirmPassword }) {
+  if (!usernamePattern.test(username || '')) return '用户名只能包含中文、字母、数字、下划线或短横线，长度 2-32。';
+  const nick = String(nickname || '').trim();
+  if (nick && (nick.length < 2 || nick.length > 32)) return '昵称长度需要在 2-32 个字符之间。';
+  if (!password || password.length < 6 || password.length > 72) return '密码长度需要在 6-72 个字符之间。';
+  if (password !== confirmPassword) return '两次输入的密码不一致。';
+  return '';
+}
+
 export function validateReviewForm({ targetId, rating, content }) {
   if (!targetId) return '请选择要评价的菜品。';
   const numericRating = Number(rating);

@@ -62,8 +62,9 @@ button:hover:not(:disabled), .button-link:hover, .dish-card:hover { transform: t
 .login-hero .brand { margin-bottom: 22px; }
 .login-hero h1 { max-width: 820px; margin: 0; font-family: var(--font-display); font-size: clamp(42px, 7vw, 84px); font-weight: 760; line-height: 1.02; letter-spacing: -.055em; background: linear-gradient(105deg, #102016 0%, #17633d 54%, #d78b16 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .login-panel { align-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: 18px; }
-.role-tabs, .demo-accounts, .table-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.role-tabs .active { background: linear-gradient(135deg, var(--primary), #36a367); color: white; box-shadow: 0 14px 30px rgba(31, 122, 77, .26); }
+.role-tabs, .auth-mode-tabs, .demo-accounts, .table-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.role-tabs .active, .auth-mode-tabs .active { background: linear-gradient(135deg, var(--primary), #36a367); color: white; box-shadow: 0 14px 30px rgba(31, 122, 77, .26); }
+.field-hint { font-weight: 400; color: var(--muted, #888); font-size: .82em; }
 .login-metrics { margin-top: 18px; max-width: 760px; }
 .session-card.compact { display: grid; gap: 10px; }
 

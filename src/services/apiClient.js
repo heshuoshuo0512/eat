@@ -36,6 +36,11 @@ export const apiClient = {
     tokenStore().setItem(TOKEN_KEY, result.token);
     return result;
   },
+  async register(payload) {
+    const result = await request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) });
+    tokenStore().setItem(TOKEN_KEY, result.token);
+    return result;
+  },
   logout() {
     tokenStore().removeItem(TOKEN_KEY);
   },

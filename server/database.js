@@ -591,6 +591,33 @@ function seed(db) {
       insert.run(`udp-${pref.userId}-${pref.dishId}`, 'default', pref.userId, pref.dishId, pref.favorite, pref.eatenCount, pref.drawnCount, now, now);
     }
   }
+
+  // ── Seed today's default lunch menu (idempotent) ───────────────
+  const today = now.slice(0, 10);
+  const defaultMenuId = `menu-default-${today}-lunch`;
+  const existingMenu = db.prepare('SELECT id FROM menus WHERE id = ?').get(defaultMenuId);
+  if (!existingMenu) {
+    db.prepare('INSERT INTO menus (id, tenant_id, canteen_id, date, meal_type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(defaultMenuId, 'default', 'north', today, 'lunch', 'published', now, now);
+    const lunchDishes = seedDishes.filter((d) => (d.mealTypes || []).includes('lunch'));
+    const insertItem = db.prepare('INSERT INTO menu_items (id, tenant_id, menu_id, dish_id, price, supply_limit, supply_count, sold_out, serving_start, serving_end, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const dish of lunchDishes) {
+      insertItem.run(
+        `menu-item-${defaultMenuId}-${dish.id}`,
+        'default',
+        defaultMenuId,
+        dish.id,
+        dish.price,
+        50,
+        0,
+        0,
+        '11:00',
+        '13:30',
+        now,
+        now
+      );
+    }
+  }
 }
 
 /* ── row mappers ─────────────────────────────────────────────────── */

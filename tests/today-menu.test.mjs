@@ -62,7 +62,7 @@ describe('Today menu recommendation loop', () => {
         date: today(),
         mealType: 'lunch',
         status: 'draft',
-        items: [{ dishId: 'd-egg-tomato', price: 11, supplyLimit: 30 }]
+        items: [{ dishId: 'd-oat', price: 9, supplyLimit: 30 }]
       }
     });
 
@@ -72,7 +72,7 @@ describe('Today menu recommendation loop', () => {
     const dishIds = data.dishes.map((dish) => dish.id);
     assert.ok(dishIds.includes('d-chicken-bowl'), 'published available dish present');
     assert.ok(dishIds.includes('d-beef-noodle'), 'published sold-out dish still exposed');
-    assert.ok(!dishIds.includes('d-egg-tomato'), 'draft menu dish excluded');
+    assert.ok(!dishIds.includes('d-oat'), 'draft menu dish excluded');
     const chickenBowl = data.dishes.find((d) => d.id === 'd-chicken-bowl');
     assert.equal(chickenBowl.supplyStatus, 'available');
     assert.equal(chickenBowl.price, 13);
@@ -88,7 +88,7 @@ describe('Today menu recommendation loop', () => {
     assert.equal(lunch.status, 200);
     assert.equal(lunch.data.source, 'menu');
     assert.ok(lunch.data.ranked.length > 0);
-    assert.ok(lunch.data.ranked.every((dish) => dish.id === 'd-chicken-bowl'));
+    assert.ok(lunch.data.ranked.some((dish) => dish.id === 'd-chicken-bowl'), 'manually added dish present in ranked');
 
     await req('/api/health/profile', { method: 'PUT', token: studentToken, body: { goal: 'healthy', budgetMax: 30, mealType: 'breakfast', taste: '不限', halalOnly: false, avoid: [] } });
     const breakfast = await req('/api/recommend', { token: studentToken });
