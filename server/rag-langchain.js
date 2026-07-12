@@ -98,7 +98,7 @@ export async function createVectorStore(documents = []) {
  */
 export async function loadVectorStoreFromDB(db) {
   const rows = await db.prepare(
-    'SELECT id, title, content, metadata_json FROM rag_documents WHERE content IS NOT NULL LIMIT 1000'
+    "SELECT id, title, content, metadata_json FROM rag_documents WHERE content IS NOT NULL AND tenant_id = 'default' LIMIT 1000"
   ).all();
 
   const documents = rows.map(row => 

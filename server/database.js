@@ -500,20 +500,16 @@ function seed(db) {
       .run('u-demo-student', 'fatLoss', 18, 'lunch', '不限', 0, '[]', 'balanced', 3, '[]', 0, '[]', now);
   }
 
-  if (db.prepare('SELECT COUNT(*) AS count FROM canteens').get().count === 0) {
-    const insert = db.prepare('INSERT INTO canteens (id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    for (const item of seedCanteens) insert.run(item.id, item.name, item.location, item.hours, item.crowdLevel, json(item.tags), item.description, item.parentId || null, item.canteenType || 'primary', item.imageUrl || item.image || '', now, now);
+  if (db.prepare("SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = 'default'").get().count === 0) {
+    const insert = db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const item of seedCanteens) insert.run(item.id, 'default', item.name, item.location, item.hours, item.crowdLevel, json(item.tags), item.description, item.parentId || null, item.canteenType || 'primary', item.imageUrl || item.image || '', now, now);
   } else {
-    // Backfill hierarchy for existing canteens (migration scenario)
-    const existingMain = db.prepare("SELECT id FROM canteens WHERE id = 'campus-main' AND tenant_id = 'default'").get();
-    if (!existingMain) {
-      db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run('campus-main', 'default', '校园主食堂', '校园中心区', '06:00 - 22:00', 55, json(['校园总览', '综合服务']), '校园主食堂，包含北苑、学苑、南湖三大子食堂。', null, 'primary', '🏫', now, now);
-    }
-    for (const childId of ['north', 'central', 'south']) {
-      const existing = db.prepare('SELECT parent_id, canteen_type FROM canteens WHERE id = ? AND tenant_id = ?').get(childId, 'default');
-      if (existing && !existing.parent_id) {
-        db.prepare("UPDATE canteens SET parent_id = 'campus-main', canteen_type = 'sub', updated_at = ? WHERE id = ? AND tenant_id = ?").run(now, childId, 'default');
+    // Backfill hierarchy and newly introduced seed canteens for existing databases.
+    const insertMissingCanteen = db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const item of seedCanteens) {
+      const existing = db.prepare('SELECT id FROM canteens WHERE id = ? AND tenant_id = ?').get(item.id, 'default');
+      if (!existing) {
+        insertMissingCanteen.run(item.id, 'default', item.name, item.location, item.hours, item.crowdLevel, json(item.tags), item.description, item.parentId || null, item.canteenType || 'primary', item.imageUrl || item.image || '', now, now);
       }
     }
     const updateSeedCanteenImage = db.prepare('UPDATE canteens SET image = ?, updated_at = ? WHERE id = ? AND (image IS NULL OR image = ? OR image IN (?, ?, ?, ?))');
@@ -522,26 +518,26 @@ function seed(db) {
     }
   }
 
-  if (db.prepare('SELECT COUNT(*) AS count FROM stalls').get().count === 0) {
-    const insert = db.prepare('INSERT INTO stalls (id, canteen_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    for (const item of seedStalls) insert.run(item.id, item.canteenId, item.floor, item.name, item.category, item.rating, item.avgPrice, item.open ? 1 : 0, item.description, now, now);
+  if (db.prepare("SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = 'default'").get().count === 0) {
+    const insert = db.prepare('INSERT INTO stalls (id, tenant_id, canteen_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const item of seedStalls) insert.run(item.id, 'default', item.canteenId, item.floor, item.name, item.category, item.rating, item.avgPrice, item.open ? 1 : 0, item.description, now, now);
   } else {
     // Backfill new stalls for existing databases
     for (const item of seedStalls) {
       const exists = db.prepare('SELECT id FROM stalls WHERE id = ?').get(item.id);
       if (!exists) {
-        db.prepare('INSERT INTO stalls (id, canteen_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(item.id, item.canteenId, item.floor, item.name, item.category, item.rating, item.avgPrice, item.open ? 1 : 0, item.description, now, now);
+        db.prepare('INSERT INTO stalls (id, tenant_id, canteen_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(item.id, 'default', item.canteenId, item.floor, item.name, item.category, item.rating, item.avgPrice, item.open ? 1 : 0, item.description, now, now);
       }
     }
   }
 
-  if (db.prepare('SELECT COUNT(*) AS count FROM dishes').get().count === 0) {
-    const insert = db.prepare(`INSERT INTO dishes (id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  if (db.prepare("SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = 'default'").get().count === 0) {
+    const insert = db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const item of seedDishes) {
       const en = item.expandedNutrition || {};
-      insert.run(item.id, item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+      insert.run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
     }
   } else {
     // Backfill new dishes and expanded nutrition for existing databases
@@ -549,9 +545,9 @@ function seed(db) {
       const exists = db.prepare('SELECT id FROM dishes WHERE id = ?').get(item.id);
       if (!exists) {
         const en = item.expandedNutrition || {};
-        db.prepare(`INSERT INTO dishes (id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(item.id, item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+        db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
       }
     }
   }
@@ -572,20 +568,20 @@ function seed(db) {
     }
   }
 
-  if (db.prepare('SELECT COUNT(*) AS count FROM reviews').get().count === 0) {
-    const insert = db.prepare('INSERT INTO reviews (id, user_id, target_type, target_id, rating, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    for (const item of seedReviews) insert.run(item.id, 'u-demo-student', item.targetType, item.targetId, item.rating, item.content, item.createdAt);
+  if (db.prepare("SELECT COUNT(*) AS count FROM reviews WHERE tenant_id = 'default'").get().count === 0) {
+    const insert = db.prepare('INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const item of seedReviews) insert.run(item.id, 'default', 'u-demo-student', item.targetType, item.targetId, item.rating, item.content, item.createdAt);
   }
 
   // Seed campus environment
-  if (db.prepare('SELECT COUNT(*) AS count FROM campus_environment').get().count === 0) {
+  if (db.prepare("SELECT COUNT(*) AS count FROM campus_environment WHERE tenant_id = 'default'").get().count === 0) {
     const env = seedCampusEnvironment;
     db.prepare('INSERT INTO campus_environment (id, tenant_id, temperature, weather_label, updated_at) VALUES (?, ?, ?, ?, ?)')
       .run(`env-${env.tenantId}`, env.tenantId, env.temperature, env.weatherLabel, now);
   }
 
   // Seed user dish preferences
-  if (db.prepare('SELECT COUNT(*) AS count FROM user_dish_preferences').get().count === 0) {
+  if (db.prepare("SELECT COUNT(*) AS count FROM user_dish_preferences WHERE tenant_id = 'default'").get().count === 0) {
     const insert = db.prepare('INSERT INTO user_dish_preferences (id, tenant_id, user_id, dish_id, favorite, eaten_count, drawn_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const pref of seedUserDishPreferences) {
       insert.run(`udp-${pref.userId}-${pref.dishId}`, 'default', pref.userId, pref.dishId, pref.favorite, pref.eatenCount, pref.drawnCount, now, now);

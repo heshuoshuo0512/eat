@@ -246,7 +246,7 @@ describe('Canteen hierarchy — primary and sub types', () => {
     const north = data.find((c) => c.id === 'north');
     assert.ok(north, 'north exists');
     assert.equal(north.canteenType, 'sub');
-    assert.equal(north.parentId, 'campus-main');
+    assert.equal(north.parentId, 'north-zone');
 
     const central = data.find((c) => c.id === 'central');
     assert.ok(central, 'central exists');
@@ -254,7 +254,7 @@ describe('Canteen hierarchy — primary and sub types', () => {
 
     const south = data.find((c) => c.id === 'south');
     assert.ok(south, 'south exists');
-    assert.equal(south.parentId, 'campus-main');
+    assert.equal(south.parentId, 'south-zone');
   });
 
   it('admin can create a sub-canteen with valid parentId', async () => {

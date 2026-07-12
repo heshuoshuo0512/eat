@@ -143,10 +143,10 @@ export async function searchDocumentsHybrid(query, db, limit = 8) {
       const pgSql = `SELECT id, source_type, source_id, title, content, metadata_json,
                              1 - (embedding <=> $1::vector) AS score
                       FROM rag_documents
-                      WHERE embedding IS NOT NULL
+                      WHERE embedding IS NOT NULL AND tenant_id = $3
                       ORDER BY embedding <=> $1::vector
                       LIMIT $2`;
-      const res = await db.pool.query(pgSql, [JSON.stringify(queryVec), limit]);
+      const res = await db.pool.query(pgSql, [JSON.stringify(queryVec), limit, 'default']);
       if (res.rows.length > 0) {
         return res.rows.map((r) => ({
           id: r.source_id,
@@ -167,7 +167,7 @@ export async function searchDocumentsHybrid(query, db, limit = 8) {
 
   // 2. In-memory embedding search from embedding_json column
   try {
-    const rows = await db.prepare('SELECT * FROM rag_documents WHERE embedding_json IS NOT NULL').all();
+    const rows = await db.prepare("SELECT * FROM rag_documents WHERE embedding_json IS NOT NULL AND tenant_id = 'default'").all();
     if (rows.length > 0) {
       const docs = rows.map((r) => ({
         id: r.id,

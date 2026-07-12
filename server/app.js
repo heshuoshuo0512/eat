@@ -1,8 +1,8 @@
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildMealPlan, calculateRanking, contextualRankDishes, normalizeProfile } from '../src/domain/recommendation.js';
+import { buildHealthPlan, buildMealPlan, calculateRanking, contextualRankDishes, normalizeProfile } from '../src/domain/recommendation.js';
 import { openDatabase, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToEnvironment, rowToMenu, rowToMenuItem, rowToPreference, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
-import { assignableRoles, requirePermission } from './rbac.js';
+import { assignableRoles, hasPermission, requirePermission } from './rbac.js';
 import { createToken, decryptSecret, encryptSecret, hashPassword, publicUser, verifyPassword, verifyToken } from './security.js';
 import { storeUpload } from './storage.js';
 import { generateAgentToolCalls, getAiProviderStatus, identifyDishFromImage, setAiRuntimeConfig, testAiProviderConnection } from './aiProvider.js';
@@ -52,6 +52,32 @@ function clearLoginFailures(username, req) {
 
 function tenantIdFor(user) {
   return user?.tenant_id || user?.tenantId || 'default';
+}
+
+const DATABASE_ENTITIES = {
+  users: { label: '用户', table: 'users', capability: 'user:read', writeCapability: 'user:write', key: 'id', columns: ['id', 'username', 'nickname', 'role', 'created_at', 'updated_at'], writable: ['nickname', 'role'], search: ['username', 'nickname', 'role'] },
+  canteens: { label: '食堂', table: 'canteens', capability: 'canteen:write', writeCapability: 'canteen:write', deleteCapability: 'canteen:delete', key: 'id', columns: ['id', 'name', 'location', 'hours', 'crowd_level', 'tags_json', 'description', 'created_at', 'updated_at'], writable: ['name', 'location', 'hours', 'crowd_level', 'tags_json', 'description'], search: ['name', 'location'] },
+  stalls: { label: '档口', table: 'stalls', capability: 'stall:write', writeCapability: 'stall:write', deleteCapability: 'stall:delete', key: 'id', columns: ['id', 'canteen_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description', 'created_at', 'updated_at'], writable: ['canteen_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description'], search: ['name', 'category'] },
+  dishes: { label: '菜品与营养', table: 'dishes', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:delete', key: 'id', columns: ['id', 'stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'created_at', 'updated_at'], writable: ['stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status'], search: ['name', 'taste', 'cuisine'] },
+  menus: { label: '菜单运营', table: 'menus', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:write', key: 'id', columns: ['id', 'tenant_id', 'canteen_id', 'date', 'meal_type', 'status', 'created_at', 'updated_at'], writable: ['canteen_id', 'date', 'meal_type', 'status'], search: ['date', 'meal_type', 'status'] },
+  menu_items: { label: '菜单明细', table: 'menu_items', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:write', key: 'id', columns: ['id', 'tenant_id', 'menu_id', 'dish_id', 'price', 'supply_limit', 'supply_count', 'sold_out', 'serving_start', 'serving_end', 'created_at', 'updated_at'], writable: ['menu_id', 'dish_id', 'price', 'supply_limit', 'supply_count', 'sold_out', 'serving_start', 'serving_end'], search: ['menu_id', 'dish_id', 'sold_out'] },
+  reviews: { label: '评价', table: 'reviews', capability: 'review:moderate', writeCapability: 'review:moderate', key: 'id', columns: ['id', 'tenant_id', 'user_id', 'target_type', 'target_id', 'rating', 'content', 'status', 'created_at'], writable: ['status'], search: ['content', 'status', 'target_id'] },
+  audit_logs: { label: '审计日志', table: 'audit_logs', capability: 'audit:read', key: 'id', columns: ['id', 'tenant_id', 'user_id', 'action', 'entity', 'entity_id', 'created_at'], writable: [], search: ['action', 'entity', 'entity_id'] }
+};
+
+function databaseEntity(name) {
+  const entity = DATABASE_ENTITIES[String(name || '').trim()];
+  if (!entity) throw Object.assign(new Error('不支持的数据库实体'), { status: 404 });
+  return entity;
+}
+
+function databasePayload(entity, body, { partial = false } = {}) {
+  const payload = {};
+  for (const field of entity.writable) {
+    if (!partial || Object.prototype.hasOwnProperty.call(body, field)) payload[field] = body[field];
+  }
+  if (!Object.keys(payload).length) throw Object.assign(new Error('没有可修改的字段'), { status: 400 });
+  return payload;
 }
 
 function isValidTenantId(id) {
@@ -353,6 +379,8 @@ async function computeRankings(db, tenantId = 'default') {
 
 async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tenantId = 'default') {
   requireFields(body, ['stallId', 'name', 'price', 'taste', 'cuisine', 'ingredients', 'tags', 'nutrition']);
+  const stall = await db.prepare('SELECT id FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantId, body.stallId);
+  if (!stall) throw Object.assign(new Error('所属档口不存在或不属于当前租户'), { status: 400 });
   const nutrition = body.nutrition || {};
   const fiber = Number(body.fiber ?? nutrition.fiber ?? 0);
   const sodium = Number(body.sodium ?? nutrition.sodium ?? 0);
@@ -1294,8 +1322,7 @@ function safeAiSettings(settings = {}) {
 }
 
 async function getAiSettings(db, user = null) {
-  const row = await db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get(scopedSettingKey(user, 'ai_provider'))
-    || await db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get('ai_provider');
+  const row = await db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get(scopedSettingKey(user, 'ai_provider'));
   const stored = row ? JSON.parse(row.value_json) : {};
   const settings = { ...stored, apiKey: decryptSecret(stored.apiKey) };
   setAiRuntimeConfig(settings);
@@ -1429,6 +1456,16 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           source: pool.source,
           menu: { date: pool.date, mealType: pool.mealType, menus: pool.menus }
         });
+      }
+      if (method === 'POST' && url.pathname === '/api/recommend/plan') {
+        const activeUser = await requireUser(db, req);
+        const tenantId = tenantIdFor(activeUser);
+        const body = await readBody(req);
+        const days = Number(body.days || 1);
+        if (![1, 3, 7].includes(days)) throw Object.assign(new Error('规划天数仅支持 1、3 或 7 天'), { status: 400 });
+        const profile = await getProfile(db, activeUser.id, tenantId);
+        const dishes = await listDishes(db, new URLSearchParams(), tenantId);
+        return send(res, 200, buildHealthPlan(dishes.filter((dish) => dish.status !== 'archived'), profile, days));
       }
 
       if (method === 'POST' && url.pathname === '/api/orders') {
@@ -1949,6 +1986,87 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const logs = rows.map((row) => ({ ...rowToAuditLog(row), user: row.nickname || row.username || null }));
         return send(res, 200, { logs, total });
       }
+
+      if (method === 'GET' && url.pathname === '/api/admin/database/overview') {
+        const activeUser = await requireCapability(db, req, 'audit:read');
+        const tenantId = tenantIdFor(activeUser);
+        const tableNames = ['users', 'health_profiles', 'canteens', 'stalls', 'dishes', 'menus', 'menu_items', 'reviews', 'orders', 'order_items', 'payments', 'audit_logs'];
+        const tables = [];
+        for (const table of tableNames) {
+          let row = null;
+          try { row = await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id = ?`).get(tenantId); } catch { row = null; }
+          tables.push({ name: table, count: Number(row?.count || 0) });
+        }
+        const quality = {
+          dishesWithoutStall: Number((await db.prepare('SELECT COUNT(*) AS count FROM dishes d LEFT JOIN stalls s ON s.id = d.stall_id WHERE d.tenant_id = ? AND s.id IS NULL').get(tenantId)).count || 0),
+          stallsWithoutCanteen: Number((await db.prepare('SELECT COUNT(*) AS count FROM stalls s LEFT JOIN canteens c ON c.id = s.canteen_id WHERE s.tenant_id = ? AND c.id IS NULL').get(tenantId)).count || 0),
+          publishedMenusWithoutItems: Number((await db.prepare("SELECT COUNT(*) AS count FROM menus m LEFT JOIN menu_items mi ON mi.menu_id = m.id WHERE m.tenant_id = ? AND m.status = 'published' GROUP BY m.id HAVING COUNT(mi.id) = 0").all(tenantId)).length || 0),
+          dishesWithoutNutrition: Number((await db.prepare('SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = ? AND (calories IS NULL OR protein IS NULL)').get(tenantId)).count || 0)
+        };
+        await audit(db, activeUser, 'VIEW', 'database_overview', null);
+        return send(res, 200, { driver: process.env.DB_DRIVER === 'postgres' || process.env.DATABASE_URL ? 'postgresql' : 'sqlite', tables, quality, workflow: ['食堂', '档口', '菜品', '菜单', '菜单明细', '发布'] });
+
+      }
+      if (method === 'GET' && url.pathname === '/api/admin/database/entities') {
+        const activeUser = await requireCapability(db, req, 'audit:read');
+        const entities = Object.entries(DATABASE_ENTITIES)
+          .filter(([, entity]) => hasPermission(activeUser, entity.capability))
+          .map(([name, entity]) => ({ name, label: entity.label, columns: entity.columns, writable: hasPermission(activeUser, entity.writeCapability) ? entity.writable : [], capability: entity.capability, writeCapability: entity.writeCapability, deleteCapability: entity.deleteCapability || null, canWrite: hasPermission(activeUser, entity.writeCapability), canDelete: Boolean(entity.deleteCapability && hasPermission(activeUser, entity.deleteCapability)) }));
+        return send(res, 200, { entities });
+      }
+      if (pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'database' && pathParts[3] === 'entities' && pathParts[4]) {
+        const activeUser = await requireCapability(db, req, 'audit:read');
+        const entityName = decodeURIComponent(pathParts[4]);
+        const entity = databaseEntity(entityName);
+        await requireCapability(db, req, entity.capability);
+        const tenantId = tenantIdFor(activeUser);
+        if (method === 'GET' && !pathParts[5]) {
+          const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 25, 1), 100);
+          const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+          const search = String(url.searchParams.get('search') || '').trim().slice(0, 100);
+          const where = [`tenant_id = ?`];
+          const params = [tenantId];
+          if (search && entity.search.length) { where.push(`(${entity.search.map((field) => `CAST(${field} AS TEXT) LIKE ?`).join(' OR ')})`); params.push(...entity.search.map(() => `%${search}%`)); }
+          const whereSql = where.join(' AND ');
+          const rows = await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE ${whereSql} ORDER BY rowid DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+          const total = (await db.prepare(`SELECT COUNT(*) AS count FROM ${entity.table} WHERE ${whereSql}`).get(...params)).count;
+          await audit(db, activeUser, 'LIST', `database:${entityName}`, null);
+          return send(res, 200, { entity: { name: entityName, label: entity.label, columns: entity.columns, writable: entity.writable }, rows, total, limit, offset });
+        }
+        if (pathParts[5]) {
+          const id = decodeURIComponent(pathParts[5]);
+          if (method === 'DELETE') {
+            const deleter = await requireCapability(db, req, entity.deleteCapability || entity.writeCapability || 'audit:read');
+            if (!entity.deleteCapability) throw Object.assign(new Error('该实体不允许删除'), { status: 403 });
+            const result = await db.prepare(`DELETE FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).run(tenantId, id);
+            if (!result.changes) throw Object.assign(new Error('记录不存在'), { status: 404 });
+            await audit(db, deleter, 'DELETE', `database:${entityName}`, id);
+            return send(res, 200, { id, deleted: true });
+          }
+          if (method === 'PUT' || method === 'PATCH') {
+            const writer = await requireCapability(db, req, entity.writeCapability || 'audit:read');
+            const payload = databasePayload(entity, await readBody(req), { partial: method === 'PATCH' });
+            const fields = Object.keys(payload);
+            const values = fields.map((field) => payload[field]);
+            const result = await db.prepare(`UPDATE ${entity.table} SET ${fields.map((field) => `${field} = ?`).join(', ')}, updated_at = ? WHERE tenant_id = ? AND ${entity.key} = ?`).run(...values, now(), tenantId, id);
+            if (!result.changes) throw Object.assign(new Error('记录不存在'), { status: 404 });
+            await audit(db, writer, 'UPDATE', `database:${entityName}`, id);
+            return send(res, 200, { row: await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).get(tenantId, id) });
+          }
+        }
+        if (method === 'POST') {
+          const writer = await requireCapability(db, req, entity.writeCapability || 'audit:read');
+          const body = await readBody(req);
+          const payload = databasePayload(entity, body);
+          const id = String(body.id || randomUUID());
+          const fields = ['id', 'tenant_id', ...Object.keys(payload), 'created_at', 'updated_at'];
+          const values = [id, tenantId, ...Object.keys(payload).map((field) => payload[field]), now(), now()];
+          await db.prepare(`INSERT INTO ${entity.table} (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`).run(...values);
+          await audit(db, writer, 'CREATE', `database:${entityName}`, id);
+          return send(res, 201, { row: await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).get(tenantId, id) });
+        }
+      }
+
 
       if (method === 'GET' && url.pathname === '/api/admin/analytics') {
         const activeUser = await requireCapability(db, req, 'audit:read');

@@ -132,8 +132,14 @@ const globalToolRegistry = new ToolRegistry();
  * These replace the hardcoded 9 tools with dynamic registration.
  */
 export function registerCanteenTools(db, user) {
-  // Session memory tool
-  globalToolRegistry.register({
+  const registry = new ToolRegistry();
+  const tenantId = user?.tenant_id || user?.tenantId || 'default';
+  const requireUser = () => {
+    if (!user?.id) throw new Error('需要登录用户');
+    return user.id;
+  };
+
+  registry.register({
     name: 'session.load',
     description: '加载会话记忆，获取之前的对话上下文',
     category: 'memory',
@@ -141,16 +147,22 @@ export function registerCanteenTools(db, user) {
     requiresConfirmation: false,
     schema: { type: 'object', properties: { sessionId: { type: 'string' } } },
     func: async ({ sessionId }) => {
+      const userId = requireUser();
       if (!sessionId) return { error: '需要 sessionId' };
+      const session = await db.prepare(
+        'SELECT id FROM agent_sessions WHERE tenant_id = ? AND user_id = ? AND id = ?'
+      ).get(tenantId, userId, sessionId);
+      if (!session) return { error: '会话不存在或无权访问' };
       const messages = await db.prepare(
-        'SELECT role, content, created_at FROM agent_messages WHERE session_id = ? ORDER BY created_at DESC LIMIT 10'
-      ).all(sessionId);
+        `SELECT role, content, created_at FROM agent_messages
+         WHERE tenant_id = ? AND user_id = ? AND session_id = ?
+         ORDER BY created_at DESC LIMIT 10`
+      ).all(tenantId, userId, sessionId);
       return { messages };
     },
   });
 
-  // Long-term memory tool
-  globalToolRegistry.register({
+  registry.register({
     name: 'memory.long_term',
     description: '读取用户长期偏好记忆，如口味偏好、饮食禁忌等',
     category: 'memory',
@@ -158,15 +170,20 @@ export function registerCanteenTools(db, user) {
     requiresConfirmation: false,
     schema: { type: 'object', properties: {} },
     func: async () => {
+      const userId = requireUser();
       const memory = await db.prepare(
-        'SELECT summary, preferences_json FROM agent_memories WHERE user_id = ?'
-      ).get(user.id);
-      return { memory: memory || { summary: '', preferences: {} } };
+        'SELECT summary, preferences_json FROM agent_memories WHERE tenant_id = ? AND user_id = ?'
+      ).get(tenantId, userId);
+      return {
+        memory: memory ? {
+          summary: memory.summary || '',
+          preferences: JSON.parse(memory.preferences_json || '{}'),
+        } : { summary: '', preferences: {} },
+      };
     },
   });
 
-  // User profile tool
-  globalToolRegistry.register({
+  registry.register({
     name: 'profile.load',
     description: '读取用户营养档案，包括身高、体重、健康目标等',
     category: 'context',
@@ -174,15 +191,15 @@ export function registerCanteenTools(db, user) {
     requiresConfirmation: false,
     schema: { type: 'object', properties: {} },
     func: async () => {
+      const userId = requireUser();
       const profile = await db.prepare(
-        'SELECT * FROM health_profiles WHERE user_id = ?'
-      ).get(user.id);
+        'SELECT * FROM health_profiles WHERE tenant_id = ? AND user_id = ?'
+      ).get(tenantId, userId);
       return { profile: profile || {} };
     },
   });
 
-  // Today's menu tool
-  globalToolRegistry.register({
+  registry.register({
     name: 'menu.today',
     description: '读取今日已发布的菜单，包括所有食堂和档口的菜品',
     category: 'canteen',
@@ -192,14 +209,21 @@ export function registerCanteenTools(db, user) {
     func: async ({ mealType = 'lunch', date } = {}) => {
       const today = date || new Date().toISOString().slice(0, 10);
       const menus = await db.prepare(
-        'SELECT m.*, mi.* FROM menus m JOIN menu_items mi ON m.id = mi.menu_id WHERE m.date = ? AND m.meal_type = ? AND m.status = ?'
-      ).all(today, mealType, 'published');
+        `SELECT m.*, mi.*, d.name AS dish_name, d.price AS dish_price,
+                s.name AS stall_name, c.name AS canteen_name
+         FROM menus m
+         JOIN menu_items mi ON mi.menu_id = m.id AND mi.tenant_id = m.tenant_id
+         JOIN dishes d ON d.id = mi.dish_id AND d.tenant_id = m.tenant_id
+         LEFT JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = m.tenant_id
+         LEFT JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = m.tenant_id
+         WHERE m.tenant_id = ? AND m.date = ? AND m.meal_type = ? AND m.status = ?
+         ORDER BY m.canteen_id, mi.created_at`
+      ).all(tenantId, today, mealType, 'published');
       return { menus, date: today, mealType };
     },
   });
 
-  // RAG meal advisor tool
-  globalToolRegistry.register({
+  registry.register({
     name: 'rag.meal_advisor',
     description: '检索菜品知识库并生成个性化饮食建议，基于RAG检索和营养分析',
     category: 'knowledge',
@@ -207,17 +231,28 @@ export function registerCanteenTools(db, user) {
     requiresConfirmation: false,
     schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
     func: async ({ query }) => {
+      const userId = requireUser();
       const { generateGroundedAnswer } = await import('./rag-langchain.js');
       const { listDishes, listStalls, listCanteens } = await import('./app.js');
-      const dishes = await listDishes(db);
-      const stalls = await listStalls(db);
-      const canteens = await listCanteens(db);
-      return await generateGroundedAnswer({ query, profile: {}, db, dishes, stalls, canteens });
+      const dishes = await listDishes(db, new URLSearchParams(), tenantId);
+      const stalls = await listStalls(db, tenantId);
+      const canteens = await listCanteens(db, tenantId);
+      const profile = await db.prepare(
+        'SELECT * FROM health_profiles WHERE tenant_id = ? AND user_id = ?'
+      ).get(tenantId, userId);
+      return await generateGroundedAnswer({
+        query,
+        profile: profile || {},
+        db,
+        dishes,
+        stalls,
+        canteens,
+        tenantId,
+      });
     },
   });
 
-  // Order history tool
-  globalToolRegistry.register({
+  registry.register({
     name: 'orders.mine',
     description: '查询用户自己的订单历史',
     category: 'order',
@@ -225,15 +260,16 @@ export function registerCanteenTools(db, user) {
     requiresConfirmation: false,
     schema: { type: 'object', properties: { limit: { type: 'number' } } },
     func: async ({ limit = 10 } = {}) => {
+      const userId = requireUser();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 100));
       const orders = await db.prepare(
-        'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
-      ).all(user.id, limit);
+        'SELECT * FROM orders WHERE tenant_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?'
+      ).all(tenantId, userId, safeLimit);
       return { orders };
     },
   });
 
-  // Order analytics tool (role-gated)
-  globalToolRegistry.register({
+  registry.register({
     name: 'orders.analytics',
     description: '查看营业数据分析，包括销售额、热销菜品等（需要管理员权限）',
     category: 'analytics',
@@ -244,31 +280,28 @@ export function registerCanteenTools(db, user) {
     func: async ({ date } = {}) => {
       const today = date || new Date().toISOString().slice(0, 10);
       const analytics = await db.prepare(
-        'SELECT COUNT(*) as total_orders, SUM(total_amount) as total_revenue FROM orders WHERE DATE(created_at) = ?'
-      ).get(today);
+        `SELECT COUNT(*) AS total_orders, COALESCE(SUM(total_amount), 0) AS total_revenue
+         FROM orders WHERE tenant_id = ? AND DATE(created_at) = ?`
+      ).get(tenantId, today);
       return { analytics, date: today };
     },
   });
 
-  // Order creation tool (high risk, requires confirmation)
-  globalToolRegistry.register({
+  registry.register({
     name: 'order.create.propose',
     description: '提议创建订单（需要用户确认后才会执行）',
     category: 'order',
     riskLevel: 'high',
     requiresConfirmation: true,
     schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object' } } }, required: ['items'] },
-    func: async ({ items }) => {
-      return { 
-        proposal: true, 
-        message: '订单提议已创建，等待用户确认',
-        items 
-      };
-    },
+    func: async ({ items }) => ({
+      proposal: true,
+      message: '订单提议已创建，等待用户确认',
+      items,
+    }),
   });
 
-  // Session save tool
-  globalToolRegistry.register({
+  registry.register({
     name: 'session.save',
     description: '保存会话摘要到长期记忆',
     category: 'memory',
@@ -276,14 +309,25 @@ export function registerCanteenTools(db, user) {
     requiresConfirmation: false,
     schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] },
     func: async ({ summary }) => {
+      const userId = requireUser();
+      const timestamp = new Date().toISOString();
+      const id = `agent-memory-${userId}`;
       await db.prepare(
-        'INSERT OR REPLACE INTO agent_memories (user_id, summary, updated_at) VALUES (?, ?, ?)'
-      ).run(user.id, summary, new Date().toISOString());
+        `INSERT INTO agent_memories (id, tenant_id, user_id, summary, preferences_json, updated_at)
+         VALUES (?, ?, ?, ?, '{}', ?)
+         ON CONFLICT(tenant_id, user_id) DO UPDATE SET summary = excluded.summary, updated_at = excluded.updated_at`
+      ).run(id, tenantId, userId, summary, timestamp);
       return { saved: true, summary };
     },
   });
 
-  console.log(`[Agent-LangChain] Registered ${globalToolRegistry.tools.size} tools`);
+  // Runtime tools are definitions, not request-bound built-ins. Copy them into
+  // this request registry so the global registry never captures a user's DB/context.
+  for (const [name, { options }] of globalToolRegistry.tools) {
+    if (!registry.tools.has(name)) registry.register(options);
+  }
+  console.log(`[Agent-LangChain] Registered ${registry.tools.size} tools for tenant ${tenantId}`);
+  return registry;
 }
 
 /* ── Agent Creation ────────────────────────────────────────────────────── */
@@ -321,10 +365,8 @@ export async function createCanteenAgent(db, user, options = {}) {
     throw new Error('AI provider not configured');
   }
 
-  // Register tools if not already done
-  if (globalToolRegistry.tools.size === 0) {
-    registerCanteenTools(db, user);
-  }
+  // Build per-request tool registry with tenant-scoped closures
+  const registry = registerCanteenTools(db, user);
 
   const model = new ChatOpenAI({
     openAIApiKey: config.apiKey,
@@ -333,7 +375,7 @@ export async function createCanteenAgent(db, user, options = {}) {
     maxTokens: MAX_TOKENS,
   });
 
-  const tools = globalToolRegistry.getToolsForUser(user);
+  const tools = registry.getToolsForUser(user);
 
   const prompt = PromptTemplate.fromTemplate(REACT_PROMPT_TEMPLATE);
 

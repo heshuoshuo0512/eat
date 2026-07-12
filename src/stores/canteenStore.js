@@ -43,8 +43,9 @@ export const useCanteenStore = defineStore('canteen', () => {
   const agentEvalCases = ref([]);
   const agentEvalRuns = ref([]);
   const deploymentReadiness = ref(null);
-  const contextualRecommendation = ref({ ranked: [], plan: null, context: null, source: null, menu: null });
-  const adminEnvironment = ref({ temperature: 25, weatherLabel: '晴' });
+  const contextualRecommendation = ref({ ranked: [], plan: null, context: null, source: null, menu: null, error: null });
+  const healthPlan = ref(null);
+  const adminEnvironment = ref(null);
 
   function setState(nextState) {
     state.value = { ...emptyState(), ...nextState, profile: normalizeProfile(nextState?.profile) };
@@ -101,12 +102,27 @@ export const useCanteenStore = defineStore('canteen', () => {
         source: result.source || null,
         menu: result.menu || null,
         goalLabel: result.goalLabel || result.plan?.goalLabel || null,
-        totals: result.totals || result.plan?.totals || null
+        totals: result.totals || result.plan?.totals || null,
+        error: null
       };
       return contextualRecommendation.value;
-    } catch {
+    } catch (error) {
+      contextualRecommendation.value = {
+        ranked: [],
+        plan: null,
+        context: null,
+        source: null,
+        menu: null,
+        goalLabel: null,
+        totals: null,
+        error: error?.message || '推荐请求失败，请稍后重试。'
+      };
       return contextualRecommendation.value;
     }
+  }
+  async function loadHealthPlan(days = 1) {
+    healthPlan.value = await apiClient.healthPlan(days);
+    return healthPlan.value;
   }
 
   async function login(payload) {
@@ -353,6 +369,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const adminAnalytics = ref({ dishes: 0, reviews: 0, users: 0, menus: 0, todayPublished: 0, avgRating: 0, recentDishes: [] });
   const adminReviews = ref([]);
   const adminReviewTotal = ref(0);
+  const adminReviewAnalytics = ref({ total: 0, averageRating: 0, statusDistribution: { approved: 0, pending: 0, rejected: 0 }, ratingDistribution: {} });
 
 
 
@@ -446,16 +463,46 @@ export const useCanteenStore = defineStore('canteen', () => {
     return result;
   }
 
-  async function loadAnalytics() {
-    const result = await apiClient.getAnalytics();
-    adminAnalytics.value = result;
+  async function loadAnalytics() { const result = await apiClient.getAnalytics();
+  adminAnalytics.value = result;
+  return result; }
+  
+    async function loadDatabaseOverview() {
+      return apiClient.getDatabaseOverview();
+    }
+  const databaseEntities = ref([]);
+  const databaseRows = ref([]);
+  const databaseEntityMeta = ref(null);
+  const databaseTotal = ref(0);
+
+  async function loadDatabaseEntities() {
+    const result = await apiClient.listDatabaseEntities();
+    databaseEntities.value = result.entities;
+    return result.entities;
+  }
+
+  async function loadDatabaseRows(entity, params = {}) {
+    const result = await apiClient.listDatabaseRows(entity, params);
+    databaseRows.value = result.rows;
+    databaseEntityMeta.value = result.entity;
+    databaseTotal.value = result.total;
     return result;
   }
 
-  async function loadReviewsAdmin(limit = 50, offset = 0) {
-    const result = await apiClient.listReviewsAdmin(limit, offset);
+  async function createDatabaseRow(entity, payload) { return apiClient.createDatabaseRow(entity, payload); }
+  async function updateDatabaseRow(entity, id, payload) { return apiClient.updateDatabaseRow(entity, id, payload); }
+  async function deleteDatabaseRow(entity, id) { return apiClient.deleteDatabaseRow(entity, id); }
+
+  async function loadReviewsAdmin(limit = 50, offset = 0, status = '') {
+    const result = await apiClient.listReviewsAdmin(limit, offset, status);
     adminReviews.value = result.reviews;
     adminReviewTotal.value = result.total;
+    return result;
+  }
+
+  async function loadReviewAnalytics() {
+    const result = await apiClient.listReviewAnalytics();
+    adminReviewAnalytics.value = result;
     return result;
   }
 
@@ -581,6 +628,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     runAgentEvalCase,
     loadDeploymentReadiness,
     loadRecommendation,
+    healthPlan,
+    loadHealthPlan,
     fetchRecommendation,
     toggleFavorite,
     markDishEaten,
@@ -608,6 +657,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     adminAnalytics,
     adminReviews,
     adminReviewTotal,
+    adminReviewAnalytics,
     loadUsers,
     updateUserRole,
     loadAuditLogs,
@@ -623,9 +673,20 @@ export const useCanteenStore = defineStore('canteen', () => {
     archiveMenu,
     batchMenuAction,
     loadAnalytics,
+    databaseEntities,
+    databaseRows,
+    databaseEntityMeta,
+    databaseTotal,
+    loadDatabaseEntities,
+    loadDatabaseRows,
+    createDatabaseRow,
+    updateDatabaseRow,
+    deleteDatabaseRow,
+    loadDatabaseOverview,
     loadReviewsAdmin,
     deleteReviewAdmin,
     approveReviewAdmin,
-    rejectReviewAdmin
+    rejectReviewAdmin,
+    loadReviewAnalytics
   };
 });

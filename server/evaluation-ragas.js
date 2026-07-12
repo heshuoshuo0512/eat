@@ -348,10 +348,11 @@ export function createEvaluationPipeline(db) {
       const { generateGroundedAnswer } = await import('./rag-langchain.js');
       const { buildDishDocuments } = await import('./rag.js');
       
+      const tenantId = options.tenantId || 'default';
       // Get documents
-      const dishes = await db.prepare('SELECT * FROM dishes').all();
-      const stalls = await db.prepare('SELECT * FROM stalls').all();
-      const canteens = await db.prepare('SELECT * FROM canteens').all();
+      const dishes = await db.prepare("SELECT * FROM dishes WHERE tenant_id = ?").all(tenantId);
+      const stalls = await db.prepare("SELECT * FROM stalls WHERE tenant_id = ?").all(tenantId);
+      const canteens = await db.prepare("SELECT * FROM canteens WHERE tenant_id = ?").all(tenantId);
       
       // Generate answer
       const result = await generateGroundedAnswer({
@@ -361,6 +362,7 @@ export function createEvaluationPipeline(db) {
         dishes,
         stalls,
         canteens,
+        tenantId,
       });
       
       // Evaluate

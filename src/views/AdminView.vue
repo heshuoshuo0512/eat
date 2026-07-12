@@ -10,261 +10,101 @@
     <p>请在左侧身份卡选择"管理员"并登录。</p>
   </section>
 
-  <!-- ═══════════════════════════════════════════════════════════════
-       MANAGE PAGE (/admin) — 评价管理 + 数据资产 + 运营概览
+  <!--
+       MANAGE PAGE (/admin) — 评价管理 + 数据中心
        ═══════════════════════════════════════════════════════════════ -->
 
-  <template v-if="isAdmin && isManagePage">
-    <!-- 今日菜单概览 -->
+  <template v-if="isAdmin && activePanel === 'reviews'"><section class="card admin-form"><h2>评价审核</h2><div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>菜品</th><th>评分</th><th>内容</th><th>操作</th></tr></thead><tbody><tr v-for="review in store.adminReviews" :key="review.id"><td>{{ review.createdAt?.slice(0, 10) }}</td><td>{{ review.user }}</td><td>{{ dishNameById(review.targetId) }}</td><td><span class="pill">{{ review.rating }} ★</span></td><td>{{ review.content }}</td><td><span v-if="review.status === 'pending'" class="table-actions"><button class="ghost" type="button" @click="approveReview(review.id)">批准</button><button class="ghost danger" type="button" @click="rejectReview(review.id)">拒绝</button></span><span v-else class="pill">{{ review.status === 'approved' ? '已批准' : review.status === 'rejected' ? '已拒绝' : review.status }}</span><button class="ghost danger" type="button" @click="removeReview(review.id)">删除</button></td></tr></tbody></table></div><div class="pagination" v-if="store.adminReviewTotal > reviewPageSize"><button class="ghost" type="button" :disabled="reviewPage === 0" @click="reviewPage--; refreshReviews()">上一页</button><span>{{ reviewPage + 1 }} / {{ Math.ceil(store.adminReviewTotal / reviewPageSize) }}</span><button class="ghost" type="button" :disabled="(reviewPage + 1) * reviewPageSize >= store.adminReviewTotal" @click="reviewPage++; refreshReviews()">下一页</button></div><p v-if="reviewMessage" class="form-message">{{ reviewMessage }}</p></section></template>
+  <template v-if="isAdmin && activePanel === 'data'">
     <section class="card admin-form">
       <div class="section-title horizontal">
         <div>
-          <p class="eyebrow">Today</p>
-          <h2>今日菜单概览</h2>
+          <p class="eyebrow">Data Overview</p>
+          <h2>数据集总览</h2>
         </div>
         <div class="table-actions">
-          <button class="ghost" type="button" @click="refreshMenus">刷新</button>
-          <button class="primary" type="button" @click="publishTodayMenu">一键发布今日菜单</button>
+          <button class="ghost" type="button" @click="refreshDatabaseOverview" :disabled="dbLoading">刷新</button>
         </div>
       </div>
-      <div class="table-wrap">
+      <div v-if="databaseOverview" class="metric-grid">
+        <article><strong>{{ databaseOverview.driver }}</strong><span>数据库引擎</span></article>
+        <article v-for="table in databaseOverview.tables.slice(0, 5)" :key="table.name">
+          <strong>{{ table.count }}</strong><span>{{ COLUMN_LABELS[table.name] || table.name }}</span>
+        </article>
+      </div>
+      <h3>数据完整度</h3>
+      <div v-if="databaseOverview" class="metric-grid">
+        <article><strong>{{ databaseOverview.quality.dishesWithoutStall }}</strong><span>无档口菜品</span></article>
+        <article><strong>{{ databaseOverview.quality.stallsWithoutCanteen }}</strong><span>无食堂档口</span></article>
+        <article><strong>{{ databaseOverview.quality.publishedMenusWithoutItems }}</strong><span>空发布菜单</span></article>
+        <article><strong>{{ databaseOverview.quality.dishesWithoutNutrition }}</strong><span>缺营养菜品</span></article>
+      </div>
+      <p v-if="databaseOverview" class="muted">流程：{{ (databaseOverview.workflow || []).join(' → ') }}</p>
+    </section>
+
+    <!-- Entity Browser -->
+    <section class="card admin-form">
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">Entity Browser</p>
+          <h2>实体浏览器</h2>
+        </div>
+        <div class="table-actions">
+          <button v-if="dbActiveEntity" class="ghost" type="button" @click="selectEntity(dbActiveEntity)" :disabled="dbLoading">刷新数据</button>
+        </div>
+      </div>
+
+      <!-- Entity tabs -->
+      <div class="tab-bar">
+        <button v-for="e in store.databaseEntities" :key="e.name"
+          :class="['tab', { active: dbActiveEntity === e.name }]"
+          @click="selectEntity(e.name)">{{ e.label }}</button>
+      </div>
+
+      <div v-if="dbLoading" class="loading dataset">加载中...</div>
+      <div v-if="dbError" class="form-message error">{{ dbError }}</div>
+
+      <!-- Entity table -->
+      <div v-if="store.databaseRows.length" class="table-wrap dataset-table">
         <table>
-          <thead><tr><th>日期</th><th>餐段</th><th>食堂</th><th>菜品</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr>
+            <th v-for="col in store.databaseEntityMeta?.columns" :key="col">{{ COLUMN_LABELS[col] || col }}</th>
+            <th v-if="store.databaseEntityMeta?.canWrite || store.databaseEntityMeta?.canDelete" class="action-cell">操作</th>
+          </tr></thead>
           <tbody>
-            <tr v-for="menu in todayMenus" :key="menu.id">
-              <td>{{ menu.date }}</td>
-              <td>{{ menu.mealType === 'lunch' ? '午餐' : menu.mealType === 'dinner' ? '晚餐' : menu.mealType === 'breakfast' ? '早餐' : menu.mealType }}</td>
-              <td>{{ menu.canteenName || menu.canteenId }}</td>
-              <td>{{ menu.items.map((item) => item.dishName || item.dishId).join(' / ') || '未配置' }}</td>
-              <td><span class="pill">{{ menu.status === 'published' ? '已发布' : menu.status === 'draft' ? '草稿' : '已下架' }}</span></td>
-              <td class="table-actions">
-                <button v-if="menu.status !== 'published'" class="primary" type="button" @click="publishSingleMenu(menu.id)">发布</button>
-                <button v-if="menu.status === 'published'" class="ghost" type="button" @click="archiveMenu(menu.id)">下架</button>
+            <tr v-for="(row, idx) in store.databaseRows" :key="row.id || idx">
+              <td v-for="col in store.databaseEntityMeta?.columns" :key="col">
+                <template v-if="editingRow === row.id && store.databaseEntityMeta?.writable?.includes(col)">
+                  <input v-model="editBuffer[col]" class="inline-input" :placeholder="col" />
+                </template>
+                <template v-else>{{ formatCell(row[col]) }}</template>
+              </td>
+              <td v-if="store.databaseEntityMeta?.canWrite || store.databaseEntityMeta?.canDelete" class="action-cell">
+                <template v-if="editingRow === row.id">
+                  <button v-if="store.databaseEntityMeta?.canWrite" class="ghost" type="button" @click="saveRow(row.id)" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button>
+                  <button v-if="store.databaseEntityMeta?.canWrite" class="ghost" type="button" @click="cancelEdit">取消</button>
+                </template>
+                <template v-else>
+                  <button v-if="store.databaseEntityMeta?.canWrite" class="ghost" type="button" @click="startEdit(row)">编辑</button>
+                  <button v-if="store.databaseEntityMeta?.canDelete" class="ghost danger" type="button" @click="deleteRowConfirm(row.id)">删除</button>
+                </template>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p v-if="!todayMenus.length" class="muted">今日暂无菜单，请在数据录入页面新增。</p>
-    </section>
-
-    <!-- 评价审核 -->
-    <section class="card admin-form">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">Review Moderation</p>
-          <h2>评价审核</h2>
-        </div>
-        <div class="table-actions">
-          <span class="pill">共 {{ store.adminReviewTotal }} 条</span>
-          <button class="ghost" type="button" @click="refreshReviews">刷新</button>
-        </div>
+      <div v-if="store.databaseRows.length && store.databaseTotal > dbPageSize && !dbLoading" class="pagination">
+        <button class="ghost" type="button" :disabled="dbPage === 0" @click="prevPage">上一页</button>
+        <span>{{ dbPage + 1 }} / {{ totalPages }}</span>
+        <button class="ghost" type="button" :disabled="(dbPage + 1) * dbPageSize >= store.databaseTotal" @click="nextPage">下一页</button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>时间</th><th>用户</th><th>菜品</th><th>评分</th><th>内容</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="review in store.adminReviews" :key="review.id">
-              <td>{{ review.createdAt?.slice(0, 10) }}</td>
-              <td>{{ review.user }}</td>
-              <td>{{ dishNameById(review.targetId) }}</td>
-              <td><span class="pill">{{ review.rating }} ★</span></td>
-              <td>{{ review.content }}</td>
-              <td>
-                <span v-if="review.status === 'pending'" class="table-actions">
-                  <button class="ghost" type="button" @click="approveReview(review.id)">批准</button>
-                  <button class="ghost danger" type="button" @click="rejectReview(review.id)">拒绝</button>
-                </span>
-                <span v-else class="pill">{{ review.status === 'approved' ? '已批准' : review.status === 'rejected' ? '已拒绝' : review.status }}</span>
-                <button class="ghost danger" type="button" @click="removeReview(review.id)">删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="pagination" v-if="store.adminReviewTotal > reviewPageSize">
-        <button class="ghost" type="button" :disabled="reviewPage === 0" @click="reviewPage--; refreshReviews()">上一页</button>
-        <span>{{ reviewPage + 1 }} / {{ Math.ceil(store.adminReviewTotal / reviewPageSize) }}</span>
-        <button class="ghost" type="button" :disabled="(reviewPage + 1) * reviewPageSize >= store.adminReviewTotal" @click="reviewPage++; refreshReviews()">下一页</button>
-      </div>
-      <p v-if="reviewMessage" class="form-message">{{ reviewMessage }}</p>
-    </section>
 
-    <!-- 运营数据概览 -->
-    <section class="card admin-form">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">Operations Dashboard</p>
-          <h2>运营数据概览</h2>
-        </div>
-        <button class="ghost" type="button" @click="refreshAnalytics">刷新</button>
-      </div>
-      <div class="metric-grid">
-        <article>
-          <strong>{{ store.adminAnalytics.dishes }}</strong>
-          <span>活跃菜品</span>
-        </article>
-        <article>
-          <strong>{{ store.adminAnalytics.menus }}</strong>
-          <span>菜单总数</span>
-        </article>
-        <article>
-          <strong>{{ store.adminAnalytics.todayPublished }}</strong>
-          <span>今日已发布</span>
-        </article>
-        <article>
-          <strong>{{ store.adminAnalytics.reviews }}</strong>
-          <span>评价总数</span>
-        </article>
-        <article>
-          <strong>{{ store.adminAnalytics.users }}</strong>
-          <span>注册用户</span>
-        </article>
-        <article>
-          <strong>{{ store.adminAnalytics.avgRating }}</strong>
-          <span>平均评分</span>
-        </article>
-      </div>
-      <div v-if="store.adminAnalytics.recentDishes?.length" class="table-wrap">
-        <table>
-          <thead><tr><th>最近新增菜品</th><th>档口</th><th>价格</th><th>热量</th></tr></thead>
-          <tbody>
-            <tr v-for="dish in store.adminAnalytics.recentDishes" :key="dish.id">
-              <td>{{ dish.name }}</td>
-              <td>{{ stallName(dish.stallId) }}</td>
-              <td>¥{{ dish.price }}</td>
-              <td>{{ dish.nutrition?.calories || 0 }} kcal</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- 数据资产 -->
-    <section class="grid two-columns align-start">
-      <article class="card">
-        <div class="section-title horizontal">
-          <div>
-            <p class="eyebrow">当前数据资产</p>
-            <h2>食堂库</h2>
-          </div>
-          <span class="pill">{{ store.canteens.length }} 个食堂</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>食堂</th><th>位置</th><th>标签</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="canteen in store.canteens" :key="canteen.id">
-                <td>{{ canteen.name }}</td>
-                <td>{{ canteen.location }}</td>
-                <td>{{ canteen.tags.join(' / ') }}</td>
-                <td class="table-actions">
-                  <button class="ghost" type="button" @click="editCanteen(canteen)">编辑</button>
-                  <button class="ghost danger" type="button" @click="removeCanteen(canteen.id)">删除</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </article>
-
-      <article class="card">
-        <div class="section-title horizontal">
-          <div>
-            <p class="eyebrow">当前数据资产</p>
-            <h2>菜品营养库</h2>
-          </div>
-          <span class="pill">{{ store.dishes.length }} 道菜</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>菜品</th><th>档口</th><th>价格</th><th>热量</th><th>标签</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="dish in store.dishes" :key="dish.id">
-                <td>{{ dish.name }}</td>
-                <td>{{ stallName(dish.stallId) }}</td>
-                <td>¥{{ dish.price }}</td>
-                <td>{{ dish.nutrition.calories }}</td>
-                <td>{{ dish.tags.join(' / ') }}</td>
-                <td class="table-actions">
-                  <button class="ghost" type="button" @click="editDish(dish)">编辑</button>
-                  <button class="ghost danger" type="button" @click="removeDish(dish.id)">删除</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </article>
-    </section>
-
-    <!-- 用户管理与审计日志 -->
-    <section class="grid two-columns align-start">
-      <article class="card">
-        <div class="section-title horizontal">
-          <div>
-            <p class="eyebrow">User Management</p>
-            <h2>用户管理</h2>
-          </div>
-          <button class="ghost" type="button" @click="refreshUsers">刷新</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>注册时间</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="u in store.adminUsers" :key="u.id">
-                <td>{{ u.username }}</td>
-                <td>{{ u.nickname }}</td>
-                <td><span class="pill">{{ u.role }}</span></td>
-                <td>{{ u.createdAt?.slice(0, 10) }}</td>
-                <td class="table-actions">
-                  <select :value="u.role" @change="changeRole(u.id, $event.target.value)">
-                    <option value="student">学生</option>
-                    <option value="operator">录入员</option>
-                    <option value="stall_admin">档口管理员</option>
-                    <option value="canteen_admin">食堂管理员</option>
-                    <option value="auditor">审计员</option>
-                    <option value="finance">财务</option>
-                    <option value="tenant_admin">租户管理员</option>
-                    <option value="admin">平台管理员</option>
-                  </select>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-if="userMessage" class="form-message">{{ userMessage }}</p>
-      </article>
-
-      <article class="card">
-        <div class="section-title horizontal">
-          <div>
-            <p class="eyebrow">Audit Trail</p>
-            <h2>审计日志</h2>
-          </div>
-          <span class="pill">共 {{ store.adminAuditTotal }} 条</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>时间</th><th>用户</th><th>操作</th><th>实体</th><th>实体 ID</th></tr></thead>
-            <tbody>
-              <tr v-for="log in store.adminAuditLogs" :key="log.id">
-                <td>{{ log.createdAt?.slice(0, 19).replace('T', ' ') }}</td>
-                <td>{{ log.user || '—' }}</td>
-                <td><span class="pill">{{ log.action }}</span></td>
-                <td>{{ log.entity }}</td>
-                <td>{{ log.entityId || '—' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination" v-if="store.adminAuditTotal > auditPageSize">
-          <button class="ghost" type="button" :disabled="auditPage === 0" @click="auditPage--; refreshAuditLogs()">上一页</button>
-          <span>{{ auditPage + 1 }} / {{ Math.ceil(store.adminAuditTotal / auditPageSize) }}</span>
-          <button class="ghost" type="button" :disabled="(auditPage + 1) * auditPageSize >= store.adminAuditTotal" @click="auditPage++; refreshAuditLogs()">下一页</button>
-        </div>
-      </article>
+      <p v-if="!store.databaseRows.length && !dbLoading && dbActiveEntity" class="muted">该实体暂无数据。</p>
+      <p v-if="databaseMessage" class="form-message">{{ databaseMessage }}</p>
     </section>
   </template>
+
+
 
   <!-- ═══════════════════════════════════════════════════════════════
        ENTRY PAGE (/admin/input) — 数据录入与维护
@@ -452,127 +292,37 @@
       <button class="primary" type="button" :disabled="!excelRows.length || excelRows.some((row) => !row.valid)" @click="confirmCsvImport">确认导入 {{ excelRows.length }} 行</button>
     </section>
 
-    <!-- 校园环境 -->
+  </template>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       ENVIRONMENT PAGE (/admin/environment) — 校园环境
+       ═══════════════════════════════════════════════════════════════ -->
+  <template v-if="isAdmin && isEnvironmentPage">
     <section class="card admin-form">
       <div class="section-title horizontal">
         <div>
           <p class="eyebrow">Campus Environment</p>
           <h2>校园环境数据</h2>
         </div>
+        <button class="ghost" type="button" :disabled="environmentStatus === 'loading' || environmentStatus === 'saving'" @click="refreshEnvironment">刷新</button>
+      </div>
+      <p v-if="environmentStatus === 'loading'" class="muted">环境数据加载中…</p>
+      <p v-else-if="environmentStatus === 'error'" class="form-message danger">{{ environmentMessage || '环境数据加载失败，请稍后重试。' }}</p>
+      <p v-else-if="environmentStatus === 'empty'" class="muted">暂无校园环境数据，请填写后保存。</p>
+      <template v-else>
+        <div class="metric-grid" v-if="environment">
+          <article><strong>{{ environment.temperature }}°C</strong><span>当前温度</span></article>
+          <article><strong>{{ environment.weatherLabel }}</strong><span>当前天气</span></article>
+        </div>
+        <div class="form-grid">
+          <label>温度（°C）<input v-model.number="environmentForm.temperature" type="number" min="-20" max="50" /></label>
+          <label>天气描述<input v-model="environmentForm.weatherLabel" maxlength="20" placeholder="如：晴、多云、寒冷" /></label>
+        </div>
         <div class="table-actions">
-          <button class="ghost" type="button" @click="refreshEnvironment">刷新环境</button>
-          <button class="ghost" type="button" @click="refreshAnalytics">刷新统计</button>
+          <button class="primary" type="button" :disabled="environmentStatus === 'saving'" @click="saveCampusEnvironment">{{ environmentStatus === 'saving' ? '保存中…' : '保存环境数据' }}</button>
         </div>
-      </div>
-      <div class="metric-grid">
-        <article>
-          <strong>{{ environment.temperature }}°C</strong>
-          <span>当前温度</span>
-        </article>
-        <article>
-          <strong>{{ environment.weatherLabel }}</strong>
-          <span>当前天气</span>
-        </article>
-        <article>
-          <strong>{{ store.adminAnalytics.todayPublished }}</strong>
-          <span>今日已发布菜单</span>
-        </article>
-        <article>
-          <strong>{{ store.adminAnalytics.dishes }}</strong>
-          <span>活跃菜品</span>
-        </article>
-      </div>
-      <div class="grid two-columns" style="margin-top:12px;">
-        <label>温度 (°C)<input v-model.number="environmentForm.temperature" type="number" min="-20" max="50" /></label>
-        <label>天气描述<input v-model="environmentForm.weatherLabel" placeholder="晴、多云、小雨、高温" /></label>
-      </div>
-      <div class="table-actions" style="margin-top:8px;">
-        <button class="primary" type="button" @click="saveCampusEnvironment">保存环境数据</button>
-      </div>
-      <div class="metric-grid" style="margin-top:12px;">
-        <article v-for="canteen in store.canteens" :key="canteen.id">
-          <strong>{{ canteen.crowdLevel || 0 }}%</strong>
-          <span>{{ canteen.name }} 拥挤度</span>
-        </article>
-      </div>
-      <p class="muted">校园温度和天气会实时影响推荐算法（高温推荐消暑菜品，低温推荐暖胃菜品）。</p>
-      <p v-if="environmentMessage" class="form-message">{{ environmentMessage }}</p>
-    </section>
-
-    <!-- 菜单运营 -->
-    <section class="grid two-columns align-start">
-      <form class="card admin-form" @submit.prevent="saveMenu">
-        <div class="section-title horizontal">
-          <div>
-            <p class="eyebrow">Menu Ops</p>
-            <h2>菜单运营</h2>
-          </div>
-          <button class="ghost" type="button" @click="refreshMenus">刷新</button>
-        </div>
-        <label>菜单 ID<input v-model="menuForm.id" placeholder="留空自动生成" /></label>
-        <label>食堂<select v-model="menuForm.canteenId"><option v-for="canteen in store.canteens" :key="canteen.id" :value="canteen.id">{{ canteen.name }}</option></select></label>
-        <label>日期<input v-model="menuForm.date" type="date" /></label>
-        <label>餐段<select v-model="menuForm.mealType"><option value="breakfast">早餐</option><option value="lunch">午餐</option><option value="dinner">晚餐</option></select></label>
-        <label>状态<select v-model="menuForm.status"><option value="draft">草稿</option><option value="published">已发布</option><option value="archived">已下架</option></select></label>
-        <label>菜品<select v-model="menuItemForm.dishId"><option value="">选择菜品</option><option v-for="dish in store.dishes" :key="dish.id" :value="dish.id">{{ dish.name }}</option></select></label>
-        <div class="grid two-columns">
-          <label>当日价格<input v-model.number="menuItemForm.price" type="number" min="0" step="0.1" /></label>
-          <label>供应数量<input v-model.number="menuItemForm.supplyLimit" type="number" min="0" /></label>
-        </div>
-        <button class="secondary" type="button" @click="addMenuItem">加入菜单</button>
-        <button class="primary" type="submit">保存菜单</button>
-        <div v-if="selectedMenuIds.size" class="table-actions" style="margin-top:8px;">
-          <span class="pill">已选 {{ selectedMenuIds.size }} 项</span>
-          <button class="primary" type="button" @click="batchPublishMenus">批量发布</button>
-          <button class="ghost danger" type="button" @click="batchArchiveMenus">批量下架</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th><input type="checkbox" :checked="allMenusSelected" @change="toggleAllMenus" /></th><th>菜单</th><th>菜品</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="menu in store.adminMenus" :key="menu.id">
-                <td><input type="checkbox" :checked="selectedMenuIds.has(menu.id)" @change="toggleMenuSelection(menu.id)" /></td>
-                <td>{{ menu.date }} {{ menu.mealType }}<br /><span class="muted">{{ menu.canteenName || menu.canteenId }}</span></td>
-                <td>{{ menu.items.map((item) => item.dishName || item.dishId).join(' / ') || '未配置' }}</td>
-                <td><span class="pill">{{ menu.status }}</span></td>
-                <td class="table-actions"><button class="ghost" type="button" @click="editMenu(menu)">编辑</button><button class="ghost danger" type="button" @click="archiveMenu(menu.id)">下架</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </form>
-
-      <!-- 租户管理 -->
-      <form class="card admin-form" @submit.prevent="saveTenant">
-        <div class="section-title horizontal">
-          <div>
-            <p class="eyebrow">Tenant Ops</p>
-            <h2>租户管理</h2>
-          </div>
-          <button class="ghost" type="button" @click="refreshTenants">刷新</button>
-        </div>
-        <label>租户 ID<input v-model="tenantForm.id" placeholder="留空自动生成" /></label>
-        <label>名称<input v-model="tenantForm.name" placeholder="例如：未来校园" /></label>
-        <label>状态<select v-model="tenantForm.status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
-        <label>套餐<input v-model="tenantForm.plan" /></label>
-        <label>AI 月额度<input v-model.number="tenantForm.aiQuota" type="number" min="0" /></label>
-        <label>存储额度 MB<input v-model.number="tenantForm.storageQuotaMb" type="number" min="0" /></label>
-        <button class="primary" type="submit">保存租户</button>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>租户</th><th>状态</th><th>套餐</th><th>额度</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="tenant in store.adminTenants" :key="tenant.id">
-                <td>{{ tenant.name }}<br /><span class="muted">{{ tenant.id }}</span></td>
-                <td><span class="pill">{{ tenant.status }}</span></td>
-                <td>{{ tenant.plan }}</td>
-                <td>{{ tenant.aiQuota }} AI / {{ tenant.storageQuotaMb }}MB</td>
-                <td><button class="ghost" type="button" @click="editTenant(tenant)">编辑</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </form>
+        <p v-if="environmentMessage" class="form-message">{{ environmentMessage }}</p>
+      </template>
     </section>
   </template>
 
@@ -692,13 +442,56 @@
         <p class="eyebrow">Deployment Readiness</p>
         <h2>部署就绪度</h2>
       </div>
-      <div class="metric-grid">
-        <article v-for="(check, key) in deploymentReadiness.checks || {}" :key="key">
-          <strong>{{ check.pass ? '✓' : '✗' }}</strong>
-          <span>{{ check.label || key }}</span>
-        </article>
+      <p v-if="deploymentReadiness.error" class="form-message danger">部署检查失败：{{ deploymentReadiness.error }}</p>
+      <template v-else>
+        <div class="metric-grid">
+          <article v-for="(check, key) in deploymentReadiness.checks || {}" :key="key">
+            <strong>{{ check.pass ? '✓' : '✗' }}</strong>
+            <span>{{ check.label || key }}</span>
+          </article>
+        </div>
+        <p v-if="deploymentReadiness.summary" class="muted">{{ deploymentReadiness.summary }}</p>
+      </template>
+    </section>
+
+    <!-- 租户管理 -->
+    <section class="card admin-form">
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">Tenant Management</p>
+          <h2>租户管理</h2>
+        </div>
+        <button class="ghost" type="button" @click="refreshTenants">刷新</button>
       </div>
-      <p v-if="deploymentReadiness.summary" class="muted">{{ deploymentReadiness.summary }}</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>租户</th><th>状态</th><th>方案</th><th>AI 额度</th><th>存储额度</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="tenant in store.adminTenants" :key="tenant.id">
+              <td>{{ tenant.name }}</td>
+              <td><span class="pill">{{ tenant.status }}</span></td>
+              <td>{{ tenant.plan }}</td>
+              <td>{{ tenant.aiQuota }}</td>
+              <td>{{ tenant.storageQuotaMb }} MB</td>
+              <td class="table-actions">
+                <button class="ghost" type="button" @click="editTenant(tenant)">编辑</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="form-grid" v-if="tenantForm.id">
+        <label>名称<input v-model="tenantForm.name" required /></label>
+        <label>状态<select v-model="tenantForm.status"><option value="active">活跃</option><option value="suspended">暂停</option><option value="disabled">禁用</option></select></label>
+        <label>方案<select v-model="tenantForm.plan"><option value="starter">入门</option><option value="professional">专业</option><option value="enterprise">企业</option></select></label>
+        <label>AI 额度<input v-model.number="tenantForm.aiQuota" type="number" min="0" /></label>
+        <label>存储额度 MB<input v-model.number="tenantForm.storageQuotaMb" type="number" min="0" /></label>
+      </div>
+      <div class="table-actions" v-if="tenantForm.id">
+        <button class="primary" type="button" @click="saveTenant">保存租户</button>
+        <button class="ghost" type="button" @click="Object.assign(tenantForm, defaultTenantForm())">取消</button>
+      </div>
+      <p v-if="userMessage" class="form-message">{{ userMessage }}</p>
     </section>
   </template>
 </template>
@@ -714,12 +507,17 @@ const route = useRoute();
 const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
 const isAdmin = computed(() => store.user && adminRoleSet.has(store.user.role));
 const isAiPage = computed(() => route.path === '/admin/ai' || route.query.panel === 'ai');
+const isEnvironmentPage = computed(() => route.path === '/admin/environment' || (route.path === '/admin' && route.query.panel === 'environment'));
 const isEntryPage = computed(() => route.path === '/admin/input');
 const isManagePage = computed(() => route.path === '/admin');
+const activePanel = computed(() => String(route.query.panel || ''));
 const pageMeta = computed(() => {
   if (isAiPage.value) return { eyebrow: 'AI 配置', title: 'AI 提供商与部署配置', description: '配置 OpenAI-compatible API，查看模型状态、连接测试、使用量、配额和部署就绪度。' };
-  if (isEntryPage.value) return { eyebrow: '数据录入与维护', title: '数据录入与维护', description: '录入食堂、档口、菜品（含扩展营养）、CSV/视觉拍照批量导入、校园环境数据和菜单发布。' };
-  return { eyebrow: '评价管理', title: '评价管理与运营概览', description: '评价审核（批准/拒绝/删除）、数据资产查看、用户管理和审计日志。' };
+  if (isEnvironmentPage.value) return { eyebrow: '校园环境展览', title: '校园环境展览', description: '查看并维护校园环境数据。' };
+  if (isEntryPage.value) return { eyebrow: '数据中心', title: '数据中心数据录入', description: '维护食堂、档口、菜品与营养数据。' };
+  if (activePanel.value === 'reviews') return { eyebrow: '评价中心', title: '评价审核', description: '审核与处理评价。' };
+  if (activePanel.value === 'data') return { eyebrow: '数据中心', title: '数据中心', description: '查看、编辑和管理数据库实体数据。' };
+  return { eyebrow: '评价管理', title: '评价审核', description: '审核与处理评价。' };
 });
 const message = ref('');
 const bulkInput = ref('');
@@ -745,6 +543,18 @@ const menuForm = reactive(defaultMenuForm());
 const menuItemForm = reactive(defaultMenuItemForm());
 const deploymentReadiness = ref(null);
 const environmentMessage = ref('');
+const environmentStatus = ref('');
+const databaseOverview = ref(null);
+const databaseMessage = ref('');
+const dbLoading = ref(false);
+const dbError = ref('');
+const dbPage = ref(0);
+const dbPageSize = 25;
+const dbActiveEntity = ref('');
+const editingRow = ref(null);
+const editBuffer = ref({});
+const saving = ref(false);
+const COLUMN_LABELS = { id: 'ID', tenant_id: '租户', user_id: '用户', stall_id: '档口', canteen_id: '食堂', dish_id: '菜品', menu_id: '菜单', name: '名称', nickname: '昵称', username: '用户名', role: '角色', location: '位置', hours: '营业时间', crowd_level: '拥挤度', tags_json: '标签', description: '简介', status: '状态', floor: '楼层', category: '品类', rating: '评分', avg_price: '均价', open: '营业', price: '价格', taste: '口味', cuisine: '菜系', calories: '热量', protein: '蛋白', fat: '脂肪', carbs: '碳水', supply_limit: '供应上限', supply_count: '已供应', sold_out: '售罄', serving_start: '开始供应', serving_end: '结束供应', date: '日期', meal_type: '餐段', target_type: '目标类型', target_id: '目标', content: '内容', action: '操作', entity: '实体', entity_id: '实体ID', created_at: '创建时间', updated_at: '更新时间' };
 
 const environment = computed(() => store.adminEnvironment || { temperature: 25, weatherLabel: '晴' });
 const primaryCanteens = computed(() => store.canteens.filter((c) => c.canteenType === 'primary' || (!c.canteenType && !c.parentId)));
@@ -1124,26 +934,32 @@ async function refreshAnalytics() {
 }
 
 async function refreshEnvironment() {
+  environmentStatus.value = 'loading';
   try {
     await store.loadEnvironment();
     const env = store.adminEnvironment || { temperature: 25, weatherLabel: '晴' };
     environmentForm.temperature = env.temperature ?? 25;
     environmentForm.weatherLabel = env.weatherLabel || '晴';
     environmentMessage.value = '';
+    environmentStatus.value = env.id ? 'ready' : 'empty';
   } catch (error) {
     environmentMessage.value = error.message;
+    environmentStatus.value = 'error';
   }
 }
 
 async function saveCampusEnvironment() {
+  environmentStatus.value = 'saving';
   try {
     await store.saveEnvironment({
       temperature: assertNumber(environmentForm.temperature, '温度', -20, 50),
       weatherLabel: assertText(environmentForm.weatherLabel, '天气描述', 1, 20)
     });
     environmentMessage.value = '校园环境数据已保存。';
+    environmentStatus.value = 'ready';
   } catch (error) {
     environmentMessage.value = error.message;
+    environmentStatus.value = 'error';
   }
 }
 
@@ -1345,6 +1161,111 @@ function editTenant(tenant) {
   Object.assign(tenantForm, tenant);
 }
 
+async function refreshDatabaseOverview() {
+  try {
+    databaseOverview.value = await store.loadDatabaseOverview();
+    databaseMessage.value = '';
+  } catch (error) {
+    databaseMessage.value = error.message;
+  }
+}
+
+async function selectEntity(name) {
+  dbActiveEntity.value = name;
+  dbPage.value = 0;
+  editingRow.value = null;
+  editBuffer.value = {};
+  dbLoading.value = true;
+  dbError.value = '';
+  try {
+    await store.loadDatabaseRows(name, { limit: dbPageSize });
+    databaseMessage.value = '已加载 ' + (store.databaseEntityMeta?.label || name) + ' 数据。';
+  } catch (error) {
+    dbError.value = error.message;
+  } finally {
+    dbLoading.value = false;
+  }
+}
+
+function startEdit(row) {
+  editingRow.value = row.id;
+  editBuffer.value = { ...row };
+}
+
+function cancelEdit() {
+  editingRow.value = null;
+  editBuffer.value = {};
+}
+
+async function saveRow(id) {
+  saving.value = true;
+  dbError.value = '';
+  try {
+    const payload = {};
+    for (const col of store.databaseEntityMeta.writable || []) {
+      const val = editBuffer.value[col];
+      if (val !== undefined && val !== null) payload[col] = val;
+    }
+    if (!store.databaseEntityMeta.canWrite) throw new Error('当前角色没有编辑权限。');
+    await store.updateDatabaseRow(dbActiveEntity.value, id, payload);
+    editingRow.value = null;
+    editBuffer.value = {};
+    databaseMessage.value = '更新成功。';
+    await selectEntity(dbActiveEntity.value);
+  } catch (error) {
+    dbError.value = error.message;
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function deleteRowConfirm(id) {
+  if (!confirm('确定要删除这条记录吗？')) return;
+  dbError.value = '';
+  try {
+    await store.deleteDatabaseRow(dbActiveEntity.value, id);
+    databaseMessage.value = '已删除。';
+    await selectEntity(dbActiveEntity.value);
+  } catch (error) {
+    dbError.value = error.message;
+  }
+}
+
+async function nextPage() {
+  dbPage.value++;
+  dbLoading.value = true;
+  dbError.value = '';
+  try {
+    await store.loadDatabaseRows(dbActiveEntity.value, { offset: dbPage.value * dbPageSize, limit: dbPageSize });
+  } catch (error) {
+    dbError.value = error.message;
+  } finally {
+    dbLoading.value = false;
+  }
+}
+
+async function prevPage() {
+  dbPage.value--;
+  dbLoading.value = true;
+  dbError.value = '';
+  try {
+    await store.loadDatabaseRows(dbActiveEntity.value, { offset: dbPage.value * dbPageSize, limit: dbPageSize });
+  } catch (error) {
+    dbError.value = error.message;
+  } finally {
+    dbLoading.value = false;
+  }
+}
+
+const totalPages = computed(() => Math.max(1, Math.ceil(store.databaseTotal / dbPageSize)));
+
+function formatCell(value) {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 async function refreshMenus() {
   try {
     await store.loadMenus();
@@ -1396,24 +1317,28 @@ async function initializeAdminPage() {
   if (isAiPage.value) {
     await refreshAiSettings();
     await refreshAiUsage();
+    await refreshTenants();
     try {
       deploymentReadiness.value = await store.loadDeploymentReadiness();
-    } catch { /* silent */ }
+    } catch (error) {
+      deploymentReadiness.value = { error: error.message };
+    }
     await scrollToRequestedPanel();
     return;
   }
+  if (isEnvironmentPage.value) {
+    await refreshEnvironment();
+    return;
+  }
+  if (activePanel.value === 'data') {
+    await refreshDatabaseOverview();
+    try { await store.loadDatabaseEntities(); } catch { /* silent */ }
+    return;
+  }
   if (isEntryPage.value) {
-    refreshMenus();
-    refreshAnalytics();
-    refreshEnvironment();
     return;
   }
   // Manage page
-  refreshTenants();
-  refreshMenus();
-  refreshUsers();
-  refreshAuditLogs();
-  refreshAnalytics();
   refreshReviews();
 }
 
