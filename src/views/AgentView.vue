@@ -83,22 +83,29 @@
         <p class="eyebrow">Execution Trace</p>
         <h2>工具执行步骤</h2>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>#</th><th>工具</th><th>标题</th><th>类别</th><th>风险</th><th>状态</th><th>耗时</th></tr></thead>
-          <tbody>
-            <tr v-for="(step, idx) in result.steps" :key="idx">
-              <td>{{ idx + 1 }}</td>
-              <td><code>{{ step.tool }}</code></td>
-              <td>{{ step.title }}</td>
-              <td>{{ step.category }}</td>
-              <td><span class="pill" :class="step.riskLevel === 'high' ? 'danger' : ''">{{ step.riskLevel }}</span></td>
-              <td><span class="pill" :class="step.status === 'success' ? '' : 'danger'">{{ step.status }}</span></td>
-              <td>{{ step.latencyMs }}ms</td>
-            </tr>
-          </tbody>
-        </table>
+      <div class="trace-table-wrapper" :class="{ expanded: isExpanded }">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>工具</th><th>标题</th><th>类别</th><th>风险</th><th>状态</th><th>耗时</th></tr></thead>
+            <tbody>
+              <tr v-for="(step, idx) in result.steps" :key="idx">
+                <td>{{ idx + 1 }}</td>
+                <td><code>{{ step.tool }}</code></td>
+                <td>{{ step.title }}</td>
+                <td>{{ step.category }}</td>
+                <td><span class="pill" :class="step.riskLevel === 'high' ? 'danger' : ''">{{ step.riskLevel }}</span></td>
+                <td><span class="pill" :class="step.status === 'success' ? '' : 'danger'">{{ step.status }}</span></td>
+                <td>{{ step.latencyMs }}ms</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
+      <button v-if="result.steps.length > 5"
+              class="toggle-btn"
+              @click="isExpanded = !isExpanded">
+        {{ isExpanded ? '收起 ▲' : `展开更多 ▼ (共${result.steps.length}条)` }}
+      </button>
       <div class="metric-grid compact" style="margin-top:12px;">
         <article>
           <strong>{{ result.steps.length }}</strong>
@@ -121,17 +128,24 @@
 
     <!-- 工具输出摘要（不暴露密钥和原始 schema） -->
     <section v-if="result?.toolResults" class="card admin-form">
-      <div class="section-title">
-        <p class="eyebrow">Tool Outputs</p>
-        <h2>工具输出摘要</h2>
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">Tool Outputs</p>
+          <h2>工具输出摘要</h2>
+        </div>
+        <button class="toggle-btn" @click="isToolResultsExpanded = !isToolResultsExpanded">
+          {{ isToolResultsExpanded ? '收起 ▲' : '展开 ▼' }}
+        </button>
       </div>
-      <div class="stats-grid">
-        <article v-for="(value, key) in safeToolResults" :key="key" class="mini-card">
-          <strong>{{ key }}</strong>
-          <p class="muted">{{ summarizeToolOutput(value) }}</p>
-        </article>
+      <div class="tool-results-wrapper" :class="{ expanded: isToolResultsExpanded }">
+        <div class="stats-grid">
+          <article v-for="(value, key) in safeToolResults" :key="key" class="mini-card">
+            <strong>{{ key }}</strong>
+            <p class="muted">{{ summarizeToolOutput(value) }}</p>
+          </article>
+        </div>
+        <p class="muted">仅展示摘要信息，不暴露 API Key、原始函数 Schema 或敏感配置。</p>
       </div>
-      <p class="muted">仅展示摘要信息，不暴露 API Key、原始函数 Schema 或敏感配置。</p>
     </section>
 
     <!-- 待处理动作确认 -->
@@ -174,69 +188,6 @@
       </div>
     </section>
 
-    <!-- 记忆状态 -->
-    <section class="card admin-form">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">Memory</p>
-          <h2>智能体记忆</h2>
-        </div>
-        <div class="table-actions">
-          <button class="ghost" type="button" @click="loadMemory">刷新</button>
-          <button class="ghost danger" type="button" @click="clearMemory">清空</button>
-        </div>
-      </div>
-      <article v-if="memory.summary" class="mini-card">
-        <strong>长期记忆摘要</strong>
-        <p>{{ memory.summary }}</p>
-        <p v-if="memory.preferences" class="muted">偏好：{{ JSON.stringify(memory.preferences) }}</p>
-      </article>
-      <p v-else class="muted">暂无长期记忆。智能体会在对话中积累用户偏好和上下文。</p>
-    </section>
-
-    <!-- Eval 指标 -->
-    <section class="card admin-form">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">Eval Metrics</p>
-          <h2>评测指标</h2>
-        </div>
-        <div class="table-actions">
-          <button class="ghost" type="button" @click="loadEvalCases">刷新用例</button>
-        </div>
-      </div>
-      <div v-if="result?.eval" class="metric-grid">
-        <article>
-          <strong>{{ result.eval.score || '—' }}</strong>
-          <span>综合评分</span>
-        </article>
-        <article>
-          <strong>{{ result.eval.latencyMs || '—' }}ms</strong>
-          <span>总延迟</span>
-        </article>
-        <article>
-          <strong>{{ result.eval.toolCount || result.steps?.length || 0 }}</strong>
-          <span>工具调用数</span>
-        </article>
-      </div>
-      <div v-if="evalCases.length" class="table-wrap">
-        <table>
-          <thead><tr><th>用例</th><th>查询</th><th>期望</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="c in evalCases" :key="c.id">
-              <td>{{ c.name }}</td>
-              <td>{{ c.query }}</td>
-              <td>{{ c.expectedIntent || '—' }}</td>
-              <td class="table-actions">
-                <button class="ghost" type="button" @click="runEvalCase(c)">运行</button>
-                <button class="ghost danger" type="button" @click="deleteEvalCase(c.id)">删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p v-else class="muted">暂无评测用例。可通过 API 创建用例来测试智能体的回答质量。</p>
-    </section>
   </template>
 </template>
 
@@ -257,6 +208,8 @@ const actionStatus = ref('pending');
 const loading = ref(false);
 const message = ref('');
 const memory = ref({ summary: '', preferences: {} });
+const isExpanded = ref(false);
+const isToolResultsExpanded = ref(false);
 const evalCases = ref([]);
 
 const totalLatency = computed(() => {
@@ -283,6 +236,8 @@ async function runAgent() {
   }
   loading.value = true;
   message.value = '';
+  isExpanded.value = false;
+  isToolResultsExpanded.value = false;
   try {
     result.value = await store.runAgent({ query: text, sessionId: sessionId.value || undefined });
     sessionId.value = result.value.sessionId;
