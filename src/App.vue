@@ -1,7 +1,7 @@
 <template>
   <a class="skip-link" href="#main-content">跳到主要内容</a>
   <div v-if="!store.user" class="login-landing">
-    <section class="login-hero card">
+    <section class="login-hero">
       <RouterLink class="brand" to="/">
         <span class="brand-mark">食</span>
         <span>
@@ -10,8 +10,8 @@
         </span>
       </RouterLink>
       <p class="eyebrow">Smart Canteen Platform</p>
-      <h1>先登录，再进入个性化食堂主页</h1>
-      <p class="hero-copy">学生获取食堂导航、排行榜和健康推荐；管理员进入数据录入、评价管理、智能体实验和运营后台。</p>
+      <h1>开启您的智慧食堂体验，轻松搞定每一餐</h1>
+      <p class="hero-copy">档口菜品检索、每日热门排行、AI智能推荐、轻松点餐加购......解决您的吃饭难题！</p>
       <div class="metric-grid login-metrics">
         <article><strong>RBAC</strong><span>角色权限管控</span></article>
         <article><strong>RAG</strong><span>真实菜品检索</span></article>
@@ -20,43 +20,54 @@
       </div>
     </section>
 
-    <section class="login-panel card">
-      <div class="section-title">
-        <p class="eyebrow">{{ authMode === 'login' ? 'Login' : 'Register' }}</p>
-        <h2>{{ authMode === 'login' ? '选择身份进入主页' : '注册新账号' }}</h2>
-      </div>
-      <div class="auth-mode-tabs" role="tablist" aria-label="认证模式">
-        <button :class="['ghost', { active: authMode === 'login' }]" type="button" role="tab" :aria-selected="authMode === 'login'" @click="switchAuthMode('login')">登录</button>
-        <button :class="['ghost', { active: authMode === 'register' }]" type="button" role="tab" :aria-selected="authMode === 'register'" @click="switchAuthMode('register')">注册</button>
+    <section class="login-panel">
+      <!-- 左侧提示 -->
+      <div class="con-box left">
+        <span class="con-icon">🍽️</span>
+        <h2>欢迎来到<span>智慧食堂</span></h2>
+        <p>已有<span>账号</span>？</p>
+        <button @click="slideToLogin">去登录</button>
       </div>
 
-      <template v-if="authMode === 'login'">
-        <div class="role-tabs" role="tablist" aria-label="登录身份">
-          <button :class="['ghost', { active: loginForm.role === 'student' }]" type="button" @click="selectRole('student')">学生端</button>
-          <button :class="['ghost', { active: loginForm.role === 'admin' }]" type="button" @click="selectRole('admin')">管理员端</button>
-        </div>
-        <form class="login-form" @submit.prevent="handleLogin">
-          <label>用户名<input v-model.trim="loginForm.username" aria-label="用户名" autocomplete="username" placeholder="输入用户名" /></label>
-          <label>密码<input v-model="loginForm.password" aria-label="密码" autocomplete="current-password" type="password" placeholder="输入密码" /></label>
-          <button class="primary" type="submit" :disabled="store.loading">{{ store.loading ? '登录中...' : '进入系统' }}</button>
-          <p v-if="loginError || store.error" class="form-message danger">{{ loginError || store.error }}</p>
-        </form>
-        <div class="demo-accounts">
-          <button class="secondary" type="button" @click="useDemo('student')">使用学生演示账号</button>
-          <button class="secondary" type="button" @click="useDemo('admin')">使用管理员演示账号</button>
-        </div>
-      </template>
+      <!-- 右侧提示 -->
+      <div class="con-box right">
+        <span class="con-icon">🥗</span>
+        <h2>欢迎来到<span>智慧食堂</span></h2>
+        <p>还没有<span>账号</span>？</p>
+        <button @click="slideToRegister">去注册</button>
+      </div>
 
-      <template v-else>
-        <form class="login-form" @submit.prevent="handleRegister">
-          <label>用户名<input v-model.trim="registerForm.username" aria-label="用户名" autocomplete="username" placeholder="2-32 个字符" /></label>
-          <label>昵称 <small class="field-hint">（选填）</small><input v-model.trim="registerForm.nickname" aria-label="昵称" autocomplete="nickname" placeholder="选填，默认同用户名" /></label>
-          <label>密码<input v-model="registerForm.password" aria-label="密码" autocomplete="new-password" type="password" placeholder="至少 6 个字符" /></label>
-          <label>确认密码<input v-model="registerForm.confirmPassword" aria-label="确认密码" autocomplete="new-password" type="password" placeholder="再次输入密码" /></label>
-          <button class="primary" type="submit" :disabled="store.loading">{{ store.loading ? '注册中...' : '注册并进入' }}</button>
-          <p v-if="registerError" class="form-message danger">{{ registerError }}</p>
+      <!-- 滑动表单 -->
+      <div :class="['form-box', { 'slide-register': !isLogin }]">
+        <!-- 登录 -->
+        <form :class="['login-form-content', { hidden: !isLogin }]" @submit.prevent="handleLogin">
+          <h1>login</h1>
+          <p class="form-subtitle">选择身份进入系统</p>
+          <div class="role-tabs">
+            <button :class="{ active: loginForm.role === 'student' }" type="button" @click="selectRole('student')">🎓 学生端</button>
+            <button :class="{ active: loginForm.role === 'admin' }" type="button" @click="selectRole('admin')">⚙️ 管理员端</button>
+          </div>
+          <div class="input-group">
+            <input v-model.trim="loginForm.username" placeholder="用户名" autocomplete="username">
+            <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password">
+          </div>
+          <p v-if="loginError || store.error" class="form-error">{{ loginError || store.error }}</p>
+          <button class="submit-btn" type="submit" :disabled="store.loading">{{ store.loading ? '登录中...' : '进入系统' }}</button>
         </form>
-      </template>
+
+        <!-- 注册 -->
+        <form :class="['register-form-content', { hidden: isLogin }]" @submit.prevent="handleRegister">
+          <h1>register</h1>
+          <p class="form-subtitle">创建新账号进入系统</p>
+          <div class="input-group">
+            <input v-model.trim="registerForm.username" placeholder="用户名" autocomplete="username">
+            <input v-model="registerForm.password" type="password" placeholder="密码" autocomplete="new-password">
+            <input v-model="registerForm.confirmPassword" type="password" placeholder="确认密码" autocomplete="new-password">
+          </div>
+          <p v-if="registerError" class="form-error">{{ registerError }}</p>
+          <button class="submit-btn" type="submit" :disabled="store.loading">{{ store.loading ? '注册中...' : '注册并进入' }}</button>
+        </form>
+      </div>
     </section>
   </div>
 
@@ -158,7 +169,7 @@ const demoAccounts = {
 };
 const loginForm = reactive({ ...demoAccounts.student });
 const loginError = ref('');
-const authMode = ref('login');
+const isLogin = ref(true);
 const registerForm = reactive({ username: '', nickname: '', password: '', confirmPassword: '' });
 const registerError = ref('');
 const mobileNavOpen = ref(false);
@@ -196,10 +207,24 @@ async function handleLogin() {
   }
 }
 
-function switchAuthMode(mode) {
-  authMode.value = mode;
+function slideToRegister() {
+  if (!isLogin.value) return;
+  isLogin.value = false;
   loginError.value = '';
   registerError.value = '';
+  registerForm.username = '';
+  registerForm.password = '';
+  registerForm.confirmPassword = '';
+}
+
+function slideToLogin() {
+  if (isLogin.value) return;
+  isLogin.value = true;
+  loginError.value = '';
+  registerError.value = '';
+  const role = loginForm.role || 'student';
+  loginForm.username = demoAccounts[role].username;
+  loginForm.password = demoAccounts[role].password;
 }
 
 async function handleRegister() {
