@@ -74,7 +74,7 @@ export function embedText(text, dim = DEFAULT_EMBED_DIM) {
   const vec = new Float64Array(dim);
   for (const token of tokens) vec[hashFeature(token, dim)] += token.length > 1 ? 2 : 1;
   const chineseChars = [...String(text || '').toLowerCase()].filter((char) => /[\u4e00-\u9fa5]/.test(char));
-  for (let index = 0; index < chineseChars.length - 1; index += 1) vec[hashFeature(chineseChars[index] + chineseChars[index + 1], dim)] += 1.5;
+  for (let index = 0; index < chineseChars.length - 1; index += 1) vec[hashFeature(chineseChars[index] + chineseChars[index + 1], dim)] += 4;
   let norm = 0;
   for (let i = 0; i < dim; i++) norm += vec[i] * vec[i];
   norm = Math.sqrt(norm) || 1;
@@ -104,11 +104,12 @@ export async function storeDocumentEmbeddings(db, documents) {
       try { embedding = await createEmbedding(doc.content); } catch {}
     }
     embedding ||= embedText(doc.content);
+    const tenantId = doc.metadata?.tenantId || 'default';
     await db.prepare(
-      `INSERT INTO rag_documents (id, source_type, source_id, title, content, metadata_json, embedding_json, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content, metadata_json=excluded.metadata_json, embedding_json=excluded.embedding_json, updated_at=excluded.updated_at`
-    ).run(doc.id, doc.sourceType, doc.sourceId, doc.title, doc.content, JSON.stringify(doc.metadata), JSON.stringify(embedding), ts);
+      `INSERT INTO rag_documents (id, tenant_id, source_type, source_id, title, content, metadata_json, embedding_json, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET tenant_id=excluded.tenant_id, title=excluded.title, content=excluded.content, metadata_json=excluded.metadata_json, embedding_json=excluded.embedding_json, updated_at=excluded.updated_at`
+    ).run(doc.id, tenantId, doc.sourceType, doc.sourceId, doc.title, doc.content, JSON.stringify(doc.metadata || {}), JSON.stringify(embedding), ts);
   }
 }
 
@@ -127,10 +128,8 @@ export function searchByEmbedding(queryEmbedding, documentsWithEmbeddings, limit
 /**
  * Hybrid search: try pgvector SQL first, fall back to in-memory embedding,
  * then return null so the caller can fall back to lexical search.
- *
- * @returns {Array|null} search results or null if no embedding data
  */
-export async function searchDocumentsHybrid(query, db, limit = 8) {
+export async function searchDocumentsHybrid(query, db, limit = 8, tenantId = 'default') {
   let queryVec = null;
   if (isAiProviderEnabled()) {
     try { queryVec = await createEmbedding(query); } catch {}
@@ -146,17 +145,12 @@ export async function searchDocumentsHybrid(query, db, limit = 8) {
                       WHERE embedding IS NOT NULL AND tenant_id = $3
                       ORDER BY embedding <=> $1::vector
                       LIMIT $2`;
-      const res = await db.pool.query(pgSql, [JSON.stringify(queryVec), limit, 'default']);
+      const res = await db.pool.query(pgSql, [JSON.stringify(queryVec), limit, tenantId]);
       if (res.rows.length > 0) {
         return res.rows.map((r) => ({
-          id: r.source_id,
-          sourceType: r.source_type,
-          sourceId: r.source_id,
-          title: r.title,
-          name: r.title,
-          content: r.content,
-          metadata: parseJsonSafe(r.metadata_json, {}),
-          score: Number(r.score),
+          id: r.source_id, sourceType: r.source_type, sourceId: r.source_id,
+          title: r.title, name: r.title, content: r.content,
+          metadata: parseJsonSafe(r.metadata_json, {}), score: Number(r.score),
           snippet: r.content.slice(0, 180),
         }));
       }
@@ -167,17 +161,12 @@ export async function searchDocumentsHybrid(query, db, limit = 8) {
 
   // 2. In-memory embedding search from embedding_json column
   try {
-    const rows = await db.prepare("SELECT * FROM rag_documents WHERE embedding_json IS NOT NULL AND tenant_id = 'default'").all();
+    const rows = await db.prepare('SELECT * FROM rag_documents WHERE embedding_json IS NOT NULL AND tenant_id = ?').all(tenantId);
     if (rows.length > 0) {
       const docs = rows.map((r) => ({
-        id: r.id,
-        sourceType: r.source_type,
-        sourceId: r.source_id,
-        title: r.title,
-        name: r.title,
-        content: r.content,
-        metadata: parseJsonSafe(r.metadata_json, {}),
-        embedding: parseJsonSafe(r.embedding_json, []),
+        id: r.id, sourceType: r.source_type, sourceId: r.source_id,
+        title: r.title, name: r.title, content: r.content,
+        metadata: parseJsonSafe(r.metadata_json, {}), embedding: parseJsonSafe(r.embedding_json, []),
       }));
       const results = searchByEmbedding(queryVec, docs, limit);
       if (results.length > 0) return results;
@@ -188,6 +177,7 @@ export async function searchDocumentsHybrid(query, db, limit = 8) {
 
   return null;
 }
+
 
 function parseJsonSafe(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -218,16 +208,14 @@ function inferProfile(query, profile = {}) {
  * an OpenAI-compatible LLM for grounded response text after RAG + rules. Without
  * provider credentials, returns the deterministic template answer.
  */
-export async function answerMealQuestion({ query, profile, dishes, stalls, canteens, db }) {
+export async function answerMealQuestion({ query, profile, dishes, stalls, canteens, db, tenantId = 'default' }) {
   if (!String(query || '').trim()) throw Object.assign(new Error('请输入咨询问题'), { status: 400 });
   const inferredProfile = inferProfile(query, profile);
 
   let citations;
   if (db) {
-    const hybrid = await searchDocumentsHybrid(query, db, 5);
-    if (hybrid && hybrid.length > 0) {
-      citations = hybrid;
-    }
+    const hybrid = await searchDocumentsHybrid(query, db, 5, tenantId);
+    if (hybrid && hybrid.length > 0) citations = hybrid;
   }
   if (!citations) {
     const documents = buildDishDocuments(dishes, stalls, canteens);
@@ -238,7 +226,7 @@ export async function answerMealQuestion({ query, profile, dishes, stalls, cante
   const citedNames = citations.slice(0, 3).map((item) => item.name || item.title).join('、') || '当前菜品库';
   const pickNames = plan.dishes.map((dish) => dish.name).join('、') || '暂无完全匹配餐品';
   const templateAnswer = `根据真实菜品库检索到的 ${citedNames}，并结合你的目标"${plan.goalLabel}"，建议优先考虑：${pickNames}。${plan.reason}`;
-  const normalizedCitations = citations.map((item) => ({ id: item.sourceId, name: item.name || item.title, score: item.score, snippet: item.snippet }));
+  const normalizedCitations = citations.map((item) => ({ id: item.sourceId, name: item.name || item.title, score: item.score, snippet: item.snippet, sourceType: item.sourceType || 'dish', metadata: item.metadata || {} }));
   let answer = templateAnswer;
   let answerSource = 'template';
   if (isAiProviderEnabled()) {

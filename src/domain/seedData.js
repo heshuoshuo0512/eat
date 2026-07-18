@@ -1,16 +1,31 @@
 export const canteens = [
   {
     id: 'campus-main',
-    name: '校园主食堂',
+    name: '中央餐饮区',
     location: '校园中心区',
     hours: '06:00 - 22:00',
     crowdLevel: 55,
-    tags: ['校园总览', '综合服务'],
-    description: '校园主食堂，包含北苑、学苑、南湖三大子食堂。',
+    tags: ['中央校区', '综合服务'],
+    description: '中央餐饮区，下设学苑餐厅和中央风味食堂。',
     parentId: null,
     canteenType: 'primary',
     image: '🏫',
     imageUrl: 'https://images.unsplash.com/photo-1567521464027-f127ff144326?auto=format&fit=crop&w=1200&q=82'
+  },
+  {
+    id: 'north-zone', name: '北苑餐饮区', location: '北区生活广场', hours: '06:00 - 21:30', crowdLevel: 68,
+    tags: ['北区', '近宿舍'], description: '服务北区宿舍群，下设综合食堂与社区食堂。', parentId: null, canteenType: 'primary', image: '🏢',
+    imageUrl: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1200&q=82'
+  },
+  {
+    id: 'south-zone', name: '南湖餐饮区', location: '南区体育中心', hours: '06:30 - 23:00', crowdLevel: 46,
+    tags: ['南区', '夜宵'], description: '服务体育馆与南区宿舍，下设南湖食堂和运动主题食堂。', parentId: null, canteenType: 'primary', image: '🏠',
+    imageUrl: 'https://images.unsplash.com/photo-1559329007-40df8a9345d8?auto=format&fit=crop&w=1200&q=82'
+  },
+  {
+    id: 'east-zone', name: '东苑餐饮区', location: '东区图书馆旁', hours: '07:00 - 21:30', crowdLevel: 39,
+    tags: ['东区', '安静就餐'], description: '服务图书馆与实验楼，下设东苑餐厅和科创食堂。', parentId: null, canteenType: 'primary', image: '🏛️',
+    imageUrl: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=82'
   },
   {
     id: 'north',
@@ -20,7 +35,7 @@ export const canteens = [
     crowdLevel: 72,
     tags: ['早餐丰富', '高性价比', '近宿舍'],
     description: '北区学生最常去的综合食堂，早餐、盖饭、粉面和清真档口集中。',
-    parentId: 'campus-main',
+    parentId: 'north-zone',
     canteenType: 'sub',
     image: '🏢',
     imageUrl: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=1200&q=82'
@@ -46,11 +61,16 @@ export const canteens = [
     crowdLevel: 43,
     tags: ['夜宵', '地方风味', '大份量'],
     description: '晚餐和夜宵选择多，适合运动后补充能量。',
-    parentId: 'campus-main',
+    parentId: 'south-zone',
     canteenType: 'sub',
     image: '🏠',
     imageUrl: 'https://images.unsplash.com/photo-1544148103-0773bf10d330?auto=format&fit=crop&w=1200&q=82'
-  }
+  },
+  { id: 'north-community', name: '北苑社区食堂', location: '北区宿舍 8 号楼旁', hours: '06:30 - 21:00', crowdLevel: 51, tags: ['社区食堂', '早餐'], description: '面向北区宿舍的便捷社区食堂。', parentId: 'north-zone', canteenType: 'sub', image: '🍲', imageUrl: 'https://images.unsplash.com/photo-1567521464027-f127ff144326?auto=format&fit=crop&w=1200&q=82' },
+  { id: 'central-flavor', name: '中央风味食堂', location: '大学生活动中心东侧', hours: '10:00 - 21:30', crowdLevel: 63, tags: ['地方风味', '聚餐'], description: '汇集不同地域口味和特色套餐。', parentId: 'campus-main', canteenType: 'sub', image: '🍽️', imageUrl: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=1200&q=82' },
+  { id: 'south-sports', name: '南区运动食堂', location: '体育馆东门', hours: '07:00 - 22:30', crowdLevel: 36, tags: ['运动营养', '夜宵'], description: '面向运动人群的高蛋白和能量补给食堂。', parentId: 'south-zone', canteenType: 'sub', image: '💪', imageUrl: 'https://images.unsplash.com/photo-1544148103-0773bf10d330?auto=format&fit=crop&w=1200&q=82' },
+  { id: 'east-library', name: '东苑餐厅', location: '图书馆一层东侧', hours: '07:00 - 20:30', crowdLevel: 34, tags: ['轻食', '安静'], description: '适合学习间隙快速就餐。', parentId: 'east-zone', canteenType: 'sub', image: '📚', imageUrl: 'https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?auto=format&fit=crop&w=1200&q=82' },
+  { id: 'east-innovation', name: '科创食堂', location: '实验楼群南侧', hours: '10:30 - 21:30', crowdLevel: 44, tags: ['快餐', '夜间供餐'], description: '为实验楼和创新中心提供快速套餐。', parentId: 'east-zone', canteenType: 'sub', image: '🔬', imageUrl: 'https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=1200&q=82' },
 ];
 
 export const stalls = [
@@ -60,7 +80,12 @@ export const stalls = [
   { id: 'c-light', canteenId: 'central', floor: '1F', name: '绿野轻食', category: '低脂沙拉', rating: 4.6, avgPrice: 18, open: true, description: '蔬菜、优质蛋白和低脂酱汁搭配。' },
   { id: 's-local', canteenId: 'south', floor: '1F', name: '湖畔小炒', category: '地方小炒', rating: 4.5, avgPrice: 17, open: true, description: '现炒热菜，口味选择丰富。' },
   { id: 's-energy', canteenId: 'south', floor: '2F', name: '运动补给站', category: '高能套餐', rating: 4.7, avgPrice: 20, open: true, description: '高蛋白、高碳水，适合训练后恢复。' },
-  { id: 'n-cold', canteenId: 'north', floor: '1F', name: '清凉小食坊', category: '冷食小吃', rating: 4.5, avgPrice: 12, open: true, description: '凉皮、凉面、冷饮和消暑小吃。' }
+  { id: 'n-cold', canteenId: 'north', floor: '1F', name: '清凉小食坊', category: '冷食小吃', rating: 4.5, avgPrice: 12, open: true, description: '凉皮、凉面、冷饮和消暑小吃。' },
+  { id: 'n-breakfast', canteenId: 'north-community', floor: '1F', name: '晨光早餐铺', category: '早餐粥点', rating: 4.4, avgPrice: 8, open: true, description: '粥、包点、鸡蛋和豆浆。' },
+  { id: 'c-flavor', canteenId: 'central-flavor', floor: '1F', name: '八方风味档', category: '地方风味', rating: 4.6, avgPrice: 16, open: true, description: '每日轮换地方特色套餐。' },
+  { id: 's-sports', canteenId: 'south-sports', floor: '1F', name: '训练后厨房', category: '运动营养', rating: 4.7, avgPrice: 19, open: true, description: '高蛋白套餐与运动饮品。' },
+  { id: 'e-light', canteenId: 'east-library', floor: '1F', name: '书香轻食', category: '轻食简餐', rating: 4.5, avgPrice: 15, open: true, description: '低负担沙拉、三明治和咖啡。' },
+  { id: 'e-fast', canteenId: 'east-innovation', floor: '1F', name: '科创快餐', category: '快捷套餐', rating: 4.3, avgPrice: 13, open: true, description: '实验间隙也能快速取餐。' },
 ];
 
 export const dishes = [
@@ -283,7 +308,12 @@ export const dishes = [
     image: '🍙',
     imageUrl: 'https://images.unsplash.com/photo-1553621042-f6e147245754?auto=format&fit=crop&w=900&q=80',
     description: '方便快捷，适合课间赶时间。'
-  }
+  },
+  { id: 'd-breakfast-set', stallId: 'n-breakfast', name: '晨光粥点套餐', price: 8, taste: '清淡', cuisine: '早餐', ingredients: ['小米粥', '鸡蛋', '包子'], tags: ['早餐', '低价', '暖胃'], halal: false, mealTypes: ['breakfast'], nutrition: { calories: 360, protein: 16, fat: 9, carbs: 52 }, expandedNutrition: { fiber: 3, sodium: 380, sugar: 4, calcium: 70, iron: 2.1 }, rating: 4.4, reviewCount: 38, sales: 260, image: '🥣', imageUrl: 'https://images.unsplash.com/photo-1517673132405-a56a62b18caf?auto=format&fit=crop&w=900&q=80', description: '适合早课前的暖胃组合。' },
+  { id: 'd-flavor-chicken', stallId: 'c-flavor', name: '风味烤鸡饭', price: 16, taste: '香辣', cuisine: '地方风味', ingredients: ['鸡腿', '米饭', '时蔬'], tags: ['招牌', '高蛋白'], halal: false, mealTypes: ['lunch', 'dinner'], nutrition: { calories: 640, protein: 35, fat: 19, carbs: 78 }, expandedNutrition: { fiber: 3.2, sodium: 690, sugar: 5, calcium: 48, iron: 3.1 }, rating: 4.6, reviewCount: 52, sales: 300, image: '🍗', imageUrl: 'https://images.unsplash.com/photo-1532550907401-a500c9a57435?auto=format&fit=crop&w=900&q=80', description: '中央风味食堂的轮换招牌套餐。' },
+  { id: 'd-sports-pasta', stallId: 's-sports', name: '鸡肉能量意面', price: 19, taste: '黑椒', cuisine: '运动餐', ingredients: ['鸡胸肉', '意面', '西兰花'], tags: ['高蛋白', '训练后'], halal: false, mealTypes: ['lunch', 'dinner'], nutrition: { calories: 710, protein: 44, fat: 17, carbs: 91 }, expandedNutrition: { fiber: 5, sodium: 610, sugar: 6, calcium: 62, iron: 3.6 }, rating: 4.7, reviewCount: 41, sales: 220, image: '🍝', imageUrl: 'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?auto=format&fit=crop&w=900&q=80', description: '训练后补充蛋白和碳水。' },
+  { id: 'd-library-sandwich', stallId: 'e-light', name: '全麦鸡蛋三明治', price: 13, taste: '咸鲜', cuisine: '轻食', ingredients: ['全麦面包', '鸡蛋', '生菜'], tags: ['便携', '轻负担'], halal: false, mealTypes: ['breakfast', 'lunch'], nutrition: { calories: 390, protein: 21, fat: 12, carbs: 48 }, expandedNutrition: { fiber: 5.2, sodium: 420, sugar: 5, calcium: 86, iron: 2.5 }, rating: 4.5, reviewCount: 32, sales: 180, image: '🥪', imageUrl: 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=900&q=80', description: '图书馆学习间隙的便携选择。' },
+  { id: 'd-innovation-rice', stallId: 'e-fast', name: '科创双拼饭', price: 14, taste: '酱香', cuisine: '快餐', ingredients: ['鸡肉', '豆腐', '米饭'], tags: ['快餐', '双拼'], halal: false, mealTypes: ['lunch', 'dinner'], nutrition: { calories: 610, protein: 31, fat: 18, carbs: 79 }, expandedNutrition: { fiber: 3.4, sodium: 720, sugar: 5, calcium: 94, iron: 3.2 }, rating: 4.3, reviewCount: 29, sales: 205, image: '🍛', imageUrl: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?auto=format&fit=crop&w=900&q=80', description: '快速出餐的双拼套餐。' },
 ];
 
 export const reviews = [

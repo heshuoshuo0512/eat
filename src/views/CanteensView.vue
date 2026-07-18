@@ -6,11 +6,16 @@
   </section>
 
   <nav v-if="level !== 'primary'" class="breadcrumb">
-    <button class="text-link crumb" type="button" @click="goToPrimary">食堂总览</button>
-    <span class="crumb-sep">›</span>
-    <button v-if="level === 'stalls' || level === 'stall-dishes'" class="text-link crumb" type="button" @click="goToSubCanteen">
-      {{ selectedSubCanteen?.name }}
-    </button>
+    <button class="text-link crumb" type="button" @click="goToPrimary">四大食堂</button>
+    <template v-if="selectedPrimary">
+      <span class="crumb-sep">›</span>
+      <button v-if="level !== 'sub-canteens'" class="text-link crumb" type="button" @click="goToSubCanteens">{{ selectedPrimary.name }}</button>
+      <span v-else class="crumb current">{{ selectedPrimary.name }}</span>
+    </template>
+    <template v-if="level === 'stalls' || level === 'stall-dishes'">
+      <span class="crumb-sep">›</span>
+      <button class="text-link crumb" type="button" @click="goToSubCanteen">{{ selectedSubCanteen?.name }}</button>
+    </template>
     <template v-if="level === 'stall-dishes'">
       <span class="crumb-sep">›</span>
       <span class="crumb current">{{ selectedStall?.name }}</span>
@@ -59,6 +64,37 @@
     <p v-if="!primaryCanteens.length" class="muted empty-state">暂无食堂数据，请等待管理员添加。</p>
   </section>
 
+  <!-- Level 2: Choose a sub-canteen inside the selected primary area -->
+  <section v-if="level === 'sub-canteens'" class="sub-canteen-picker">
+    <header class="card picker-header">
+      <p class="eyebrow">第二级 · 子食堂</p>
+      <h2>{{ selectedPrimary?.name }}</h2>
+      <p class="muted">选择一个具体子食堂，再查看其中的档口和菜品。</p>
+    </header>
+    <div class="canteen-grid">
+      <article
+        v-for="canteen in selectedPrimarySubs"
+        :key="canteen.id"
+        class="card canteen-card"
+        role="button"
+        tabindex="0"
+        @click="selectSubCanteen(canteen.id)"
+        @keydown.enter="selectSubCanteen(canteen.id)"
+      >
+        <div class="canteen-visual">
+          <img v-if="canteenImage(canteen)" :src="canteenImage(canteen)" :alt="`${canteen.name}环境`" class="canteen-hero-img" />
+          <div v-else class="canteen-fallback-hero"><span class="emoji hero-emoji">🏫</span></div>
+        </div>
+        <div class="section-title horizontal">
+          <div><p class="eyebrow">{{ canteen.location }}</p><h2>{{ canteen.name }}</h2></div>
+          <span class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
+        </div>
+        <p class="muted">{{ canteen.description }}</p>
+        <div class="meta-row"><span class="pill">{{ store.stalls.filter((stall) => stall.canteenId === canteen.id).length }} 个档口</span><span class="pill">营业 {{ canteen.hours }}</span></div>
+        <p class="muted enter-hint">进入子食堂 →</p>
+      </article>
+    </div>
+  </section>
   <!-- Level 2: Sub-canteen overview (selected primary's children, or primary itself if no children) -->
   <section v-if="level === 'stalls'" class="sub-canteen-area">
     <header class="sub-canteen-header card">
@@ -187,7 +223,7 @@ import { useCanteenStore } from '../stores/canteenStore.js';
 const store = useCanteenStore();
 
 /* ── Navigation state ── */
-const level = ref('primary'); // 'primary' | 'stalls' | 'stall-dishes'
+const level = ref('primary'); // primary | sub-canteens | stalls | stall-dishes
 const selectedPrimaryId = ref('');
 const selectedSubCanteenId = ref('');
 const selectedStallId = ref('');
@@ -228,6 +264,8 @@ function stallCountOf(canteenId) {
   return store.stalls.filter((s) => s.canteenId === canteenId).length;
 }
 
+const selectedPrimary = computed(() => store.canteens.find((c) => c.id === selectedPrimaryId.value) || null);
+const selectedPrimarySubs = computed(() => subCanteensOf(selectedPrimaryId.value));
 const selectedSubCanteen = computed(() => store.canteens.find((c) => c.id === selectedSubCanteenId.value) || null);
 const selectedStall = computed(() => store.stalls.find((s) => s.id === selectedStallId.value) || null);
 
@@ -254,19 +292,20 @@ function dishCountForStall(stallId) {
 function selectPrimary(id) {
   const subs = subCanteensOf(id);
   selectedPrimaryId.value = id;
-  if (subs.length === 1) {
-    // Only one sub-canteen: jump directly to stalls
-    selectedSubCanteenId.value = subs[0].id;
-    level.value = 'stalls';
-  } else if (subs.length > 1) {
-    // Multiple sub-canteens: show first one (could show picker; for now go to first)
-    selectedSubCanteenId.value = subs[0].id;
-    level.value = 'stalls';
+  selectedSubCanteenId.value = '';
+  selectedStallId.value = '';
+  if (subs.length) {
+    level.value = 'sub-canteens';
   } else {
-    // No children: this canteen IS the sub-canteen
     selectedSubCanteenId.value = id;
     level.value = 'stalls';
   }
+}
+
+function selectSubCanteen(id) {
+  selectedSubCanteenId.value = id;
+  selectedStallId.value = '';
+  level.value = 'stalls';
 }
 
 function selectStall(stallId) {
@@ -281,6 +320,11 @@ function goToPrimary() {
   selectedStallId.value = '';
 }
 
+function goToSubCanteens() {
+  level.value = selectedPrimarySubs.value.length ? 'sub-canteens' : 'primary';
+  selectedSubCanteenId.value = '';
+  selectedStallId.value = '';
+}
 function goToSubCanteen() {
   level.value = 'stalls';
   selectedStallId.value = '';
@@ -290,6 +334,8 @@ function goBack() {
   if (level.value === 'stall-dishes') {
     goToSubCanteen();
   } else if (level.value === 'stalls') {
+    goToSubCanteens();
+  } else if (level.value === 'sub-canteens') {
     goToPrimary();
   }
 }
@@ -363,6 +409,8 @@ function crowdClass(value) {
 
 .enter-hint { font-size: 12px; color: var(--accent, #1f7a4d); margin-top: 8px; }
 
+.sub-canteen-picker { display: grid; gap: 20px; }
+.picker-header { margin-bottom: 0; }
 .sub-canteen-area { display: flex; flex-direction: column; gap: 20px; }
 .sub-canteen-header { padding-bottom: 20px; }
 

@@ -9,6 +9,10 @@ services:
       SMART_CANTEEN_SECRET: ${SMART_CANTEEN_SECRET:?set SMART_CANTEEN_SECRET in .env}
       DB_DRIVER: ${DB_DRIVER:-postgres}
       DB_MIGRATE: ${DB_MIGRATE:-1}
+      HEALTH_KB_AUTOLOAD: ${HEALTH_KB_AUTOLOAD:-1}
+      HEALTH_KB_DIR: ${HEALTH_KB_DIR:-/app/data/health-knowledge-bases}
+      HEALTH_KB_CHUNK_SIZE: ${HEALTH_KB_CHUNK_SIZE:-900}
+      HEALTH_KB_CHUNK_OVERLAP: ${HEALTH_KB_CHUNK_OVERLAP:-120}
       DATABASE_URL: ${DATABASE_URL:-postgres://smart_canteen:smart_canteen@postgres:5432/smart_canteen}
       SMART_CANTEEN_DB: /app/data/smart-canteen.sqlite
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}

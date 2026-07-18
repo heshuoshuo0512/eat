@@ -1,5 +1,5 @@
 <template>
-  <sc-page-shell tone="orange">
+  <sc-page-shell back title="菜单检索" subtitle="搜索 · 筛选 · 评价" tone="orange">
     <view class="hero-panel dishes-hero">
       <text class="hero-kicker">DISH DISCOVERY</text>
       <text class="hero-title">找得到，也买得到。</text>
@@ -110,29 +110,9 @@ function hashCode(value) {
 </script>
 
 <style scoped>
-.dishes-hero { margin-bottom: 22rpx; }
-.filter-panel { display: flex; flex-direction: column; gap: 18rpx; }
-.search-input {
-  width: 100%;
-  min-height: 94rpx;
-  padding: 0 30rpx;
-  border-radius: 999rpx;
-  background: #fff;
-  color: #20342b;
-  font-size: 28rpx;
-  box-sizing: border-box;
-  box-shadow: inset 0 0 0 1rpx rgba(24, 35, 42, 0.06);
-}
-.filter-row { display: flex; gap: 16rpx; }
-.half { flex: 1; }
-.check-row { display: flex; align-items: center; gap: 10rpx; color: #40505a; font-size: 26rpx; }
-.dish-stack { display: flex; flex-direction: column; gap: 18rpx; margin-bottom: 24rpx; }
-.detail-card { margin-bottom: 120rpx; }
-.detail-hero { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; }
-.detail-title { display: block; margin-top: 8rpx; color: #20342b; font-size: 40rpx; font-weight: 950; }
-.detail-location { display: block; margin-top: 8rpx; color: #70877b; font-size: 24rpx; }
-.detail-icon { width: 112rpx; height: 112rpx; border-radius: 34rpx; background: linear-gradient(145deg, #fff7d8, #e9f8ef); padding: 24rpx; box-sizing: border-box; }
-.tag-row { display: flex; flex-wrap: wrap; gap: 12rpx; margin: 22rpx 0; }
-.button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16rpx; margin-top: 20rpx; }
-.detail-actions { margin-top: 18rpx; }
+.dishes-hero { margin-bottom:18rpx; }
+.filter-panel { display:flex; flex-direction:column; gap:14rpx; padding:20rpx; border-radius:24rpx; }
+.search-input { width:100%; min-height:82rpx; padding:0 22rpx; border:1rpx solid #e5ece8; border-radius:18rpx; background:#f7faf8; color:#18251f; font-size:27rpx; box-sizing:border-box; }
+.filter-row { display:flex; gap:10rpx; }.half { flex:1; }.check-row { display:flex; align-items:center; gap:10rpx; color:#486257; font-size:24rpx; }
+.dish-stack { display:flex; flex-direction:column; gap:10rpx; margin-bottom:20rpx; }.detail-card { margin-bottom:100rpx; border-radius:26rpx; }.detail-hero { display:flex; align-items:center; justify-content:space-between; gap:18rpx; }.detail-title { display:block; margin-top:6rpx; color:#18251f; font-size:36rpx; font-weight:900; }.detail-location { display:block; margin-top:6rpx; color:#84918a; font-size:22rpx; }.detail-icon { width:96rpx; height:96rpx; border-radius:22rpx; background:#eaf5ef; padding:20rpx; box-sizing:border-box; }.tag-row { display:flex; flex-wrap:wrap; gap:8rpx; margin:18rpx 0; }.button-row { display:grid; grid-template-columns:1fr 1fr; gap:10rpx; margin-top:14rpx; }.detail-actions { margin-top:12rpx; }
 </style>

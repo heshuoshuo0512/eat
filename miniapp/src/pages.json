@@ -93,7 +93,7 @@
     "borderStyle": "white",
     "list": [
       { "pagePath": "pages/home/home", "text": "首页", "iconPath": "static/tab/home-normal.png", "selectedIconPath": "static/tab/home-active.png" },
-      { "pagePath": "pages/dishes/dishes", "text": "菜单", "iconPath": "static/tab/dishes-normal.png", "selectedIconPath": "static/tab/dishes-active.png" },
+      { "pagePath": "pages/canteens/canteens", "text": "菜单", "iconPath": "static/tab/dishes-normal.png", "selectedIconPath": "static/tab/dishes-active.png" },
       { "pagePath": "pages/health/health", "text": "健康", "iconPath": "static/tab/recommend-normal.png", "selectedIconPath": "static/tab/recommend-active.png" },
       { "pagePath": "pages/profile/profile", "text": "我的", "iconPath": "static/tab/profile-normal.png", "selectedIconPath": "static/tab/profile-active.png" }
     ]

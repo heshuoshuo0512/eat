@@ -38,7 +38,12 @@ export function normalizeProfile(profile = {}) {
     mealType: profile.mealType || 'lunch',
     taste: profile.taste || '不限',
     halalOnly: Boolean(profile.halalOnly),
-    avoid: Array.isArray(profile.avoid) ? profile.avoid.filter(Boolean) : String(profile.avoid || '').split(/[，,\s]+/).filter(Boolean)
+    avoid: Array.isArray(profile.avoid) ? profile.avoid.filter(Boolean) : String(profile.avoid || '').split(/[，,\s]+/).filter(Boolean),
+    activityLevel: profile.activityLevel || 'moderate',
+    conditions: Array.isArray(profile.conditions) ? profile.conditions.filter(Boolean) : String(profile.conditions || '').split(/[，,\s]+/).filter(Boolean),
+    allergies: Array.isArray(profile.allergies) ? profile.allergies.filter(Boolean) : String(profile.allergies || '').split(/[，,\s]+/).filter(Boolean),
+    weight: profile.weight ? Number(profile.weight) : null,
+    height: profile.height ? Number(profile.height) : null
   };
 }
 

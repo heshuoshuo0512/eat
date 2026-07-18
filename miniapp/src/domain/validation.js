@@ -38,6 +38,10 @@ export function normalizeProfileInput(form, avoidText = '') {
   return {
     ...form,
     budgetMax: assertNumber(form.budgetMax, '预算上限', 8, 200),
+    weight: form.weight ? assertNumber(form.weight, '体重', 20, 300) : null,
+    height: form.height ? assertNumber(form.height, '身高', 80, 240) : null,
+    conditions: parseList(form.conditions, '身体状况'),
+    allergies: parseList(form.allergies, '过敏源'),
     avoid: parseList(avoidText, '忌口食材')
   };
 }

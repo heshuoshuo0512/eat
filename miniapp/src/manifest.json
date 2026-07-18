@@ -5,7 +5,7 @@
   "versionName": "0.1.0",
   "versionCode": "100",
   "mp-weixin": {
-    "appid": "",
+    "appid": "wx40f3e65bbcafc6d8",
     "libVersion": "3.7.0",
     "__usePrivacyCheck__": true,
     "setting": {

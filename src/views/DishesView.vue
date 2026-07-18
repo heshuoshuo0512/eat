@@ -44,6 +44,18 @@
         <input v-model="store.searchFilters.halalOnly" type="checkbox" />
         只看清真
       </label>
+      <label>一级食堂
+        <select v-model="primaryFilter">
+          <option value="">全部一级食堂</option>
+          <option v-for="canteen in primaryCanteens" :key="canteen.id" :value="canteen.id">{{ canteen.name }}</option>
+        </select>
+      </label>
+      <label>二级子食堂
+        <select v-model="subCanteenFilter" :disabled="!primaryFilter">
+          <option value="">全部子食堂</option>
+          <option v-for="canteen in filteredSubCanteens" :key="canteen.id" :value="canteen.id">{{ canteen.name }}</option>
+        </select>
+      </label>
     </div>
   </section>
 
@@ -120,6 +132,7 @@
           <small class="muted">{{ dish.cuisine }} · {{ dish.taste }} · ¥{{ dish.price }}</small>
           <small class="muted">{{ dish.nutrition?.calories || 0 }} kcal · 蛋白 {{ dish.nutrition?.protein || 0 }}g · 脂肪 {{ dish.nutrition?.fat || 0 }}g · 碳水 {{ dish.nutrition?.carbs || 0 }}g</small>
           <small v-if="dishLocation(dish)" class="dish-location">{{ dishLocation(dish) }}</small>
+          <small :class="['supply-badge', supplyState(dish).className]">{{ supplyState(dish).label }}</small>
         </span>
         <span class="rating">{{ (dish.rating || 0).toFixed(1) }}</span>
       </button>
@@ -148,6 +161,7 @@
         <span class="pill">{{ detail.taste }}</span>
         <span v-if="detail.halal" class="pill halal-badge">清真</span>
       </div>
+        <span :class="['pill', 'supply-badge', supplyState(detail).className]">{{ supplyState(detail).label }}</span>
 
       <!-- Expanded nutrition -->
       <div class="nutrition-grid">
@@ -165,10 +179,16 @@
       <div class="tag-row">
         <span v-for="tag in detail.tags" :key="tag" class="pill">{{ tag }}</span>
       </div>
+      <div class="detail-actions">
+        <button class="secondary" type="button" @click="toggleFavorite(detail.id)">{{ isFavorite(detail.id) ? '★ 已收藏' : '☆ 收藏菜品' }}</button>
+        <button class="secondary" type="button" @click="markEaten(detail.id)">✓ 标记吃过</button>
+      </div>
+      <p v-if="preferenceMessage" class="form-message">{{ preferenceMessage }}</p>
 
-      <RouterLink class="primary button-link order-dish-btn" :to="{ path: '/orders', query: { dish: detail.id } }">
+      <RouterLink v-if="supplyState(detail).canOrder" class="primary button-link order-dish-btn" :to="{ path: '/orders', query: { dish: detail.id } }">
         🛒 去点这道菜
       </RouterLink>
+      <p v-else class="muted">该菜当前不可下单，可收藏后等待下次供应。</p>
 
       <form class="review-form" @submit.prevent="submitReview">
         <h3>发布评价</h3>
@@ -264,20 +284,55 @@ const sortDir = ref('desc');
 const review = reactive({ rating: 5, content: '' });
 const message = ref('');
 const reviewSection = ref(null);
+const primaryFilter = ref('');
+const subCanteenFilter = ref('');
+const preferenceMessage = ref('');
+
+const primaryCanteens = computed(() => store.canteens.filter((c) => c.canteenType === 'primary' || !c.parentId));
+const filteredSubCanteens = computed(() => store.canteens.filter((c) => c.parentId === primaryFilter.value));
+
+watch(primaryFilter, () => { subCanteenFilter.value = ''; });
 
 const stallFilterName = computed(() => store.stalls.find((s) => s.id === stallFilter.value)?.name || '');
+const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) => [dish.id, dish])));
+
+function supplyState(dish) {
+  const menuDish = todayMenuMap.value.get(dish.id);
+  if (!menuDish) return { label: '非今日供应', className: 'off-menu', canOrder: false };
+  const status = menuDish.supplyStatus || 'available';
+  if (status === 'sold_out') return { label: '今日售罄', className: 'sold-out', canOrder: false };
+  if (status === 'limited') return { label: '库存紧张', className: 'limited', canOrder: true };
+  return { label: '今日可点', className: 'available', canOrder: true };
+}
+
+function isFavorite(dishId) {
+  return store.dishPreferences.some((pref) => pref.dishId === dishId && pref.favorite);
+}
+
+async function toggleFavorite(dishId) {
+  preferenceMessage.value = '';
+  try {
+    await store.toggleFavorite(dishId);
+    preferenceMessage.value = isFavorite(dishId) ? '已加入收藏。' : '已取消收藏。';
+  } catch (error) { preferenceMessage.value = error.message; }
+}
+
+async function markEaten(dishId) {
+  preferenceMessage.value = '';
+  try { await store.markDishEaten(dishId); preferenceMessage.value = '已记录为吃过。'; }
+  catch (error) { preferenceMessage.value = error.message; }
+}
 
 const filteredDishes = computed(() => {
-  let list = store.searchedDishes;
-  if (stallFilter.value) list = list.filter((d) => d.stallId === stallFilter.value);
-  if (activeChips.size > 0) {
-    list = list.filter((dish) => {
-      for (const chip of activeChips) {
-        if (!matchesChip(dish, chip)) return false;
-      }
-      return true;
-    });
+  let list = store.searchedDishes.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive');
+  if (primaryFilter.value) {
+    const childIds = new Set(store.canteens.filter((c) => c.parentId === primaryFilter.value).map((c) => c.id));
+    const allowedCanteens = subCanteenFilter.value ? new Set([subCanteenFilter.value]) : childIds;
+    const allowedStalls = new Set(store.stalls.filter((stall) => allowedCanteens.has(stall.canteenId)).map((stall) => stall.id));
+    list = list.filter((dish) => allowedStalls.has(dish.stallId));
   }
+  if (stallFilter.value) list = list.filter((d) => d.stallId === stallFilter.value);
+  if (activeChips.size > 0) list = list.filter((dish) => [...activeChips].every((chip) => matchesChip(dish, chip)));
   return list;
 });
 
@@ -483,5 +538,12 @@ function detailLocationFull(detail) {
   .rag-form { flex-direction: column; }
   .dish-layout { flex-direction: column; }
   .detail-panel { width: 100%; }
+.filter-controls { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
+.supply-badge { width: max-content; border-radius: 999px; padding: 3px 8px; font-weight: 720; }
+.supply-badge.available { color: var(--primary-dark); background: rgba(31,122,77,.12); }
+.supply-badge.limited { color: #79510d; background: #fff0bd; }
+.supply-badge.sold-out { color: #fff; background: var(--danger); }
+.supply-badge.off-menu { color: var(--muted); background: rgba(100,112,95,.1); }
+.detail-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
 }
 </style>

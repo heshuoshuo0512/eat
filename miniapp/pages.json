@@ -52,16 +52,15 @@
     }
   ],
   "tabBar": {
-    "color": "#708093",
-    "selectedColor": "#0f9f76",
+    "color": "#8b9891",
+    "selectedColor": "#167a5b",
     "backgroundColor": "#ffffff",
     "borderStyle": "white",
     "list": [
       { "pagePath": "pages/home/home", "text": "首页" },
-      { "pagePath": "pages/dishes/dishes", "text": "菜品" },
-      { "pagePath": "pages/recommend/recommend", "text": "推荐" },
-      { "pagePath": "pages/vision/vision", "text": "识餐" },
-      { "pagePath": "pages/agent/agent", "text": "顾问" }
+      { "pagePath": "pages/canteens/canteens", "text": "排行榜" },
+      { "pagePath": "pages/health/health", "text": "健康" },
+      { "pagePath": "pages/profile/profile", "text": "我的" }
     ]
   },
   "globalStyle": {

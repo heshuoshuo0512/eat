@@ -71,9 +71,12 @@
         </span>
       </RouterLink>
       <nav class="nav-list" aria-label="主导航">
-        <RouterLink v-for="item in visibleNavItems" :key="navKey(item)" :to="item.to" custom v-slot="{ href, navigate }">
-          <a :href="href" :class="{ active: isNavActive(item) }" @click="handleNavClick(navigate, $event)"><span>{{ item.label }}</span><span v-if="item.featured" class="nav-badge">NEW</span></a>
-        </RouterLink>
+        <template v-for="group in visibleNavGroups" :key="group.label">
+          <p class="nav-section-label">{{ group.label }}</p>
+          <RouterLink v-for="item in group.items" :key="navKey(item)" :to="item.to" custom v-slot="{ href, navigate }">
+            <a :href="href" :class="{ active: isNavActive(item) }" @click="handleNavClick(navigate, $event)"><span>{{ item.label }}</span><span v-if="item.featured" class="nav-badge">NEW</span></a>
+          </RouterLink>
+        </template>
       </nav>
       <section class="session-card compact">
         <p class="eyebrow">当前身份</p>
@@ -101,41 +104,53 @@ const router = useRouter();
 const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
 const roleFeatures = {
   student: new Set(['student']),
-  operator: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'agent']),
-  stall_admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'agent']),
-  canteen_admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'agent']),
-  auditor: new Set(['operations', 'data_manage', 'reviews', 'agent']),
-  finance: new Set(['operations', 'data_manage', 'reviews', 'agent']),
-  tenant_admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'ai_config', 'agent']),
-  admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'ai_config', 'agent']),
-  super_admin: new Set(['operations', 'data_input', 'data_manage', 'reviews', 'ai_config', 'agent'])
+  operator: new Set(['data_input', 'agent']),
+  stall_admin: new Set(['data_input', 'agent']),
+  canteen_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'agent']),
+  auditor: new Set(['data_manage', 'agent']),
+  finance: new Set(['agent']),
+  tenant_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent']),
+  admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent']),
+  super_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent'])
 };
 const navItems = [
-  { to: '/', label: '学生首页', feature: 'student' },
-  { to: '/orders', label: '今日点餐', feature: 'student' },
-  { to: '/canteens', label: '食堂导航', feature: 'student' },
-  { to: '/dishes', label: '菜品检索', feature: 'student' },
-  { to: '/rankings', label: '排行榜', feature: 'student' },
-  { to: '/recommend', label: '健康推荐', feature: 'student' },
-  { to: '/', label: '运营概览', feature: 'operations' },
-  { to: '/admin/input', label: '数据录入与维护', feature: 'data_input' },
-  { to: '/admin', label: '评价管理', feature: 'reviews' },
-  { to: '/agent', label: 'RAG智能体实验室', feature: 'agent' },
-  { to: '/admin/ai', label: 'AI配置', feature: 'ai_config' }
+  { to: '/', label: '学生首页', feature: 'student', group: '发现与点餐' },
+  { to: '/orders', label: '今日点餐', feature: 'student', group: '发现与点餐' },
+  { to: '/canteens', label: '食堂导航', feature: 'student', group: '发现与点餐' },
+  { to: '/dishes', label: '菜品检索', feature: 'student', group: '发现与点餐' },
+  { to: '/rankings', label: '排行榜', feature: 'student', group: '发现与点餐' },
+  { to: '/recommend', label: '健康推荐', feature: 'student', group: '健康与计划' },
+  { to: '/recommend?panel=favorites', label: '收藏与吃过', feature: 'student', group: '个人记录' },
+  { to: '/admin?panel=reviews', label: '评价管理', feature: 'reviews', group: '评价中心' },
+  { to: '/admin?panel=data', label: '数据中心', feature: 'data_manage', group: '数据中心' },
+  { to: '/admin/input?panel=data', label: '数据录入', feature: 'data_input', group: '数据中心' },
+  { to: '/admin/environment', label: '校园环境展览', feature: 'environment', group: '校园环境' },
+  { to: '/agent', label: '智能体实验室', feature: 'agent', group: '智能与配置' },
+  { to: '/admin/ai', label: 'AI 配置（含租户管理）', feature: 'ai_config', group: '智能与配置' }
 ];
-const visibleNavItems = computed(() => {
+const visibleNavGroups = computed(() => {
   const features = roleFeatures[store.user?.role] || roleFeatures.student;
-  return navItems.filter((item) => features.has(item.feature));
+  const groups = [];
+  for (const item of navItems) {
+    if (!features.has(item.feature)) continue;
+    let group = groups.find((entry) => entry.label === item.group);
+    if (!group) {
+      group = { label: item.group, items: [] };
+      groups.push(group);
+    }
+    group.items.push(item);
+  }
+  return groups;
 });
 
 const isAdminFamily = computed(() => adminRoleSet.has(store.user?.role));
-
-function navKey(item) {
-  return item.to + item.feature;
-}
-
+function navKey(item) { return `${item.group}-${item.feature}-${item.to}`; }
 function isNavActive(item) {
-  return route.path === item.to;
+  const [path, queryString] = item.to.split('?');
+  if (route.path !== path && !(path !== '/' && route.path.startsWith(`${path}/`))) return false;
+  if (!queryString) return route.path === path || (path !== '/' && route.path.startsWith(`${path}/`));
+  const params = new URLSearchParams(queryString);
+  return [...params.entries()].every(([key, value]) => route.query[key] === value);
 }
 const demoAccounts = {
   student: { username: '演示学生', password: 'student123', role: 'student' },

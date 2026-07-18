@@ -240,3 +240,98 @@ export function calculateRanking(items, reviewsByTarget = new Map()) {
     })
     .sort((left, right) => right.rankScore - left.rankScore);
 }
+const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner'];
+
+/**
+ * Build a deterministic multi-day health meal plan.
+ * Avoids repeating the same dish in adjacent meals (prev meal of same day or last meal of previous day).
+ *
+ * @param {Array} dishes - Available dish pool
+ * @param {Object} profile - User health profile
+ * @param {number} days - 1, 3, or 7
+ * @returns {{ days, meals, dayTotals, planTotals, goalLabel, days: number }}
+ */
+export function buildHealthPlan(dishes, profile, days = 1) {
+  const clampedDays = Math.max(1, Math.min(7, Math.round(days)));
+  const normalized = normalizeProfile(profile);
+  const goal = goalProfiles[normalized.goal] || goalProfiles.healthy;
+
+  const planDays = [];
+  const usedRecent = []; // dish IDs used in the immediately preceding meal
+  const allDayTotals = [];
+
+  for (let d = 0; d < clampedDays; d++) {
+    const meals = [];
+    const dayUsed = new Set();
+
+    for (const mealType of MEAL_SLOTS) {
+      const mealProfile = { ...normalized, mealType };
+      const ranked = rankDishes(dishes, mealProfile);
+      const fallback = ranked.length ? ranked : rankDishes(dishes, { ...mealProfile, taste: '不限', halalOnly: normalized.halalOnly });
+
+      // Filter out dishes used in the previous meal to avoid adjacent repetition
+      const avoidSet = new Set(usedRecent);
+      const filtered = fallback.filter((dish) => !avoidSet.has(dish.id));
+      const picks = (filtered.length ? filtered : fallback).slice(0, 3);
+
+      const mealTotals = picks.reduce(
+        (sum, dish) => ({
+          calories: sum.calories + dish.nutrition.calories,
+          protein: sum.protein + dish.nutrition.protein,
+          fat: sum.fat + dish.nutrition.fat,
+          carbs: sum.carbs + dish.nutrition.carbs,
+          price: sum.price + dish.price
+        }),
+        { calories: 0, protein: 0, fat: 0, carbs: 0, price: 0 }
+      );
+
+      meals.push({
+        mealType,
+        mealTypeLabel: mealType === 'breakfast' ? '早餐' : mealType === 'lunch' ? '午餐' : '晚餐',
+        dishes: picks,
+        totals: mealTotals
+      });
+
+      // Track used dish IDs for adjacent-meal avoidance
+      usedRecent.length = 0;
+      for (const dish of picks) {
+        usedRecent.push(dish.id);
+        dayUsed.add(dish.id);
+      }
+    }
+
+    const dayTotals = meals.reduce(
+      (sum, m) => ({
+        calories: sum.calories + m.totals.calories,
+        protein: sum.protein + m.totals.protein,
+        fat: sum.fat + m.totals.fat,
+        carbs: sum.carbs + m.totals.carbs,
+        price: sum.price + m.totals.price
+      }),
+      { calories: 0, protein: 0, fat: 0, carbs: 0, price: 0 }
+    );
+
+    allDayTotals.push(dayTotals);
+    planDays.push({ dayIndex: d, meals, dayTotals });
+  }
+
+  const planTotals = allDayTotals.reduce(
+    (sum, dt) => ({
+      calories: sum.calories + dt.calories,
+      protein: sum.protein + dt.protein,
+      fat: sum.fat + dt.fat,
+      carbs: sum.carbs + dt.carbs,
+      price: sum.price + dt.price
+    }),
+    { calories: 0, protein: 0, fat: 0, carbs: 0, price: 0 }
+  );
+
+  return {
+    days: clampedDays,
+    goalLabel: goal.label,
+    reason: `${goal.reason} 已为您规划 ${clampedDays} 天餐单，预算上限 ${normalized.budgetMax} 元/餐。`,
+    planDays,
+    dayTotals: allDayTotals,
+    planTotals
+  };
+}

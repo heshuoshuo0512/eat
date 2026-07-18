@@ -86,6 +86,9 @@ export const apiClient = {
   async recommend() {
     return request('/api/recommend');
   },
+  async healthPlan(days) {
+    return request('/api/recommend/plan', { method: 'POST', body: JSON.stringify({ days }) });
+  },
   async createOrder(payload) {
     return request('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
   },
@@ -229,8 +232,32 @@ export const apiClient = {
   async getAnalytics() {
     return request('/api/admin/analytics');
   },
-  async listReviewsAdmin(limit = 50, offset = 0) {
-    return request(`/api/admin/reviews?limit=${limit}&offset=${offset}`);
+  async getDatabaseOverview() {
+    return request('/api/admin/database/overview');
+  },
+  async listDatabaseEntities() {
+    return request('/api/admin/database/entities');
+  },
+  async listDatabaseRows(entity, params = {}) {
+    const query = new URLSearchParams(params);
+    return request(`/api/admin/database/entities/${encodeURIComponent(entity)}?${query}`);
+  },
+  async createDatabaseRow(entity, payload) {
+    return request(`/api/admin/database/entities/${encodeURIComponent(entity)}`, { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async updateDatabaseRow(entity, id, payload) {
+    return request(`/api/admin/database/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+  async deleteDatabaseRow(entity, id) {
+    return request(`/api/admin/database/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+  async listReviewsAdmin(limit = 50, offset = 0, status = '') {
+    const qs = new URLSearchParams({ limit, offset });
+    if (status) qs.set('status', status);
+    return request(`/api/admin/reviews?${qs}`);
+  },
+  async listReviewAnalytics() {
+    return request('/api/admin/reviews/analytics');
   },
   async deleteReview(id) {
     return request(`/api/admin/reviews/${encodeURIComponent(id)}`, { method: 'DELETE' });

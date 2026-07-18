@@ -1,0 +1,40 @@
+{
+  "name": "smart-canteen-health-knowledge-bases",
+  "sourceSpec": "docs/健康知识库清单.md",
+  "collectedAt": "2026-07-16",
+  "statusLegend": {
+    "verified_page": "本次已读取并核验页面",
+    "public_entry": "发现公开入口，未下载全文或未逐条核验",
+    "restricted": "需注册、授权或当前访问受限",
+    "internal_required": "必须由项目真实数据生成"
+  },
+  "directories": [
+    "01_nutrition_guidelines",
+    "02_food_composition",
+    "03_food_safety_allergy",
+    "04_sports_weight",
+    "05_campus_operations",
+    "06_rag_agent_governance",
+    "07_project_internal",
+    "08_index_and_audit"
+  ],
+  "verifiedSources": [
+    "WHO Healthy diet",
+    "USDA FoodData Central",
+    "FAO INFOODS Tables and Databases",
+    "U.S. FDA Food Allergies",
+    "CDC Healthy Weight and Growth",
+    "NIST AI Risk Management Framework",
+    "NIST Privacy Framework",
+    "OWASP Top 10 for LLM Applications",
+    "Ragas documentation",
+    "BEIR repository"
+  ],
+  "importantLimitations": [
+    "未下载大体积数据包",
+    "中国居民膳食指南具体页面需重新核验",
+    "NIH ODS 当前抓取受限，仅保留入口",
+    "校园实时事实、学校制度、菜品配方和菜单必须由项目内部维护",
+    "外部来源不能直接替代医疗建议或中国法域合规审查"
+  ]
+}

@@ -1236,7 +1236,7 @@ async function runCanteenAgent(db, user, body) {
     const loaded = await todayMenuBundle(db, tenantId, profile.raw.mealType, now().slice(0, 10));
     return { ...loaded, dishCount: loaded.dishes.length };
   });
-  const mealAdvice = await runAgentTool(registry, 'rag.meal_advisor', user, steps, toolResults, async () => await answerMealQuestion({ query: effectiveQuery, profile: profile.raw, dishes: menu.dishes.length ? menu.dishes : await listDishes(db, new URLSearchParams(), tenantId), stalls: await listStalls(db, tenantId), canteens: await listCanteens(db, tenantId), db }));
+  const mealAdvice = await runAgentTool(registry, 'rag.meal_advisor', user, steps, toolResults, async () => await answerMealQuestion({ query: effectiveQuery, profile: profile.raw, dishes: menu.dishes.length ? menu.dishes : await listDishes(db, new URLSearchParams(), tenantId), stalls: await listStalls(db, tenantId), canteens: await listCanteens(db, tenantId), db, tenantId }));
 
   let orders = [];
   let analytics = null;
@@ -1605,7 +1605,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const status = getAiProviderStatus();
         await assertAiQuota(db, activeUser);
         try {
-          const answer = await answerMealQuestion({ query, profile, dishes: await listDishes(db, new URLSearchParams(), tenantId), stalls: await listStalls(db, tenantId), canteens: await listCanteens(db, tenantId), db });
+          const answer = await answerMealQuestion({ query, profile, dishes: await listDishes(db, new URLSearchParams(), tenantId), stalls: await listStalls(db, tenantId), canteens: await listCanteens(db, tenantId), db, tenantId });
           await recordAiUsage(db, activeUser, { feature: 'meal-advisor', provider: status.source, model: status.chatModel, status: 'success', inputTokens: estimateTokens(query), outputTokens: estimateTokens(answer.answer), latencyMs: Date.now() - startedAt });
           return send(res, 200, answer);
         } catch (error) {

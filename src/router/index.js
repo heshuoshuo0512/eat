@@ -27,6 +27,7 @@ export const router = createRouter({
     { path: '/admin', name: 'admin', component: AdminView, meta: { audience: 'admin' } },
     { path: '/admin/input', name: 'admin-input', component: AdminView, meta: { audience: 'admin' } },
     { path: '/admin/ai', name: 'admin-ai', component: AdminView, meta: { audience: 'admin' } },
+    { path: '/admin/environment', name: 'admin-environment', component: AdminView, meta: { audience: 'admin' } },
     { path: '/agent', name: 'agent', component: AgentView, meta: { audience: 'admin' } }
   ],
   scrollBehavior() {

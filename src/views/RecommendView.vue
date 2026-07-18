@@ -329,7 +329,7 @@
     </section>
 
     <!-- ── Favorites Panel ────────────────────────────────── -->
-    <section class="card favorites-panel">
+    <section v-if="route.query.panel === 'favorites'" class="card favorites-panel">
       <div class="section-title horizontal">
         <div>
           <h2>⭐ 收藏菜品</h2>
@@ -365,7 +365,7 @@
     </section>
 
     <!-- ── Frequent / Eaten Panel ─────────────────────────── -->
-    <section class="card favorites-panel">
+    <section v-if="route.query.panel === 'favorites'" class="card favorites-panel">
       <div class="section-title horizontal">
         <div>
           <h2>📊 吃过统计</h2>
@@ -411,9 +411,10 @@
 
 <script setup>
 import { computed, reactive, ref, watch, onMounted } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRoute } from 'vue-router';
 import { normalizeProfileInput } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
+const route = useRoute();
 
 /* ─── Store ──────────────────────────────────────────────── */
 const store = useCanteenStore();
