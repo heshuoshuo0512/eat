@@ -2004,7 +2004,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           dishesWithoutNutrition: Number((await db.prepare('SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = ? AND (calories IS NULL OR protein IS NULL)').get(tenantId)).count || 0)
         };
         await audit(db, activeUser, 'VIEW', 'database_overview', null);
-        return send(res, 200, { driver: process.env.DB_DRIVER === 'postgres' || process.env.DATABASE_URL ? 'postgresql' : 'sqlite', tables, quality, workflow: ['食堂', '档口', '菜品', '菜单', '菜单明细', '发布'] });
+        return send(res, 200, { driver: process.env.DB_DRIVER === 'postgres' || process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite', tables, quality, workflow: ['食堂', '档口', '菜品', '菜单', '菜单明细', '发布'] });
 
       }
       if (method === 'GET' && url.pathname === '/api/admin/database/entities') {

@@ -132,10 +132,9 @@ const navItems = [
   { to: '/rankings', label: '排行榜', feature: 'student', group: '发现与点餐' },
   { to: '/recommend', label: '健康推荐', feature: 'student', group: '健康与计划' },
   { to: '/recommend?panel=favorites', label: '收藏与吃过', feature: 'student', group: '个人记录' },
-  { to: '/admin?panel=reviews', label: '评价管理', feature: 'reviews', group: '评价中心' },
-  { to: '/admin?panel=data', label: '数据中心', feature: 'data_manage', group: '数据中心' },
-  { to: '/admin/input?panel=data', label: '数据录入', feature: 'data_input', group: '数据中心' },
-  { to: '/admin/environment', label: '校园环境展览', feature: 'environment', group: '校园环境' },
+  { to: '/admin?panel=reviews', label: '评价管理', feature: 'reviews', group: '数据中心' },
+  { to: '/admin?panel=data', label: '数据管理', feature: 'data_manage', group: '数据中心' },
+  { to: '/admin/input', label: '数据录入', feature: 'data_input', group: '数据中心' },
   { to: '/agent', label: '智能体实验室', feature: 'agent', group: '智能与配置' },
   { to: '/admin/ai', label: 'AI 配置（含租户管理）', feature: 'ai_config', group: '智能与配置' }
 ];
