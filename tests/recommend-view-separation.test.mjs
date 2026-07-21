@@ -32,11 +32,13 @@ describe('student health and preference views', () => {
   });
 
   it('recommendation page is a profile-aware agent workspace with sources and confidence', () => {
-    assert.match(recommendVue, /recommend-workspace/);
+    assert.match(recommendVue, /SmartMealComposer/);
+    assert.match(recommendVue, /buildProfilePrompts/);
     assert.match(recommendVue, /loadAgentMemory/);
     assert.match(recommendVue, /groundednessScore/);
     assert.match(recommendVue, /toolSuccessRate/);
     assert.match(recommendVue, /safetyScore/);
-    assert.match(recommendVue, /onMounted\(async \(\) =>[\s\S]*runPrompt\(profilePrompt\(\)\)/);
+    assert.match(recommendVue, /visibleRecommendationCitations/);
+    assert.match(recommendVue, /onMounted\(async \(\) =>[\s\S]*runPrompt\(profilePrompts\.value/);
   });
 });

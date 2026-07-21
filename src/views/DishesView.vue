@@ -1,123 +1,60 @@
 <template>
   <section class="page-heading">
-    <p class="eyebrow">检索 / 筛选 / 帮我找菜</p>
-    <h1>菜品多维查询</h1>
-    <p>按名称、食材、口味、价格筛选真实可买到的菜，或用 AI 帮你找。</p>
+    <p class="eyebrow">Smart Meal Discovery</p>
+    <h1>菜品检索</h1>
+    <p>说出这一餐的预算、口味或营养目标，从全部有效菜品中找到更合适的选择。</p>
   </section>
 
-  <section class="card filter-bar">
-    <div class="chip-bar">
-      <button
-        v-for="chip in filterChips"
-        :key="chip.key"
-        class="chip"
-        :class="{ active: activeChips.has(chip.key) }"
-        type="button"
-        @click="toggleChip(chip.key)"
-      >
-        {{ chip.label }}
+  <SmartMealComposer
+    v-model="ragQuery"
+    v-model:memory-draft="memoryDraft"
+    title="帮我找菜"
+    subtitle="快捷问题会随着你的健康档案、预算、餐次、口味和忌口自动变化。"
+    :prompts="profilePrompts"
+    :loading="ragLoading"
+    :memory-open="memoryOpen"
+    :memory-saving="memorySaving"
+    action-text="找一找"
+    loading-text="检索中…"
+    @submit="submitRagQuery"
+    @prompt="askPrompt"
+    @toggle-memory="memoryOpen = !memoryOpen"
+    @save-memory="saveMemory"
+    @clear-memory="clearMemory"
+  />
+
+  <section v-if="ragResult" class="card discovery-answer">
+    <div class="answer-heading">
+      <span class="rag-source-badge" :class="ragResult.answerSource === 'llm' ? 'source-llm' : 'source-template'">{{ ragResult.answerSource === 'llm' ? 'AI 检索' : '规则检索' }}</span>
+      <strong>检索结论</strong>
+    </div>
+    <p>{{ ragResult.answer }}</p>
+    <div v-if="visibleSearchCitations.length" class="compact-citations">
+      <button v-for="cite in visibleSearchCitations" :key="cite.id || cite.name" type="button" @click="jumpToDish(cite.id)">
+        <strong>{{ cite.name || '菜品数据' }}</strong>
+        <small>相关度 {{ formatCitationScore(cite.score) }} · {{ compactCitationSnippet(cite.snippet) }}</small>
       </button>
     </div>
-
-    <div class="filter-controls">
-      <label>
-        搜索
-        <input v-model="store.searchFilters.keyword" placeholder="鸡肉 / 清真 / 高蛋白" />
-      </label>
-      <label>
-        最高价格 ¥{{ store.searchFilters.maxPrice }}
-        <input v-model.number="store.searchFilters.maxPrice" type="range" min="1" max="30" />
-      </label>
-      <label>
-        口味
-        <input v-model="store.searchFilters.taste" placeholder="不限 / 麻辣 / 酸甜" list="taste-suggestions" @blur="normalizeTaste" />
-        <datalist id="taste-suggestions">
-          <option>不限</option>
-          <option>黑椒</option>
-          <option>酸甜</option>
-          <option>咸鲜</option>
-          <option>清爽</option>
-          <option>麻辣</option>
-        </datalist>
-      </label>
-      <label class="check-label">
-        <input v-model="store.searchFilters.halalOnly" type="checkbox" />
-        只看清真
-      </label>
-      <label>一级食堂
-        <select v-model="primaryFilter">
-          <option value="">全部一级食堂</option>
-          <option v-for="canteen in primaryCanteens" :key="canteen.id" :value="canteen.id">{{ canteen.name }}</option>
-        </select>
-      </label>
-      <label>二级子食堂
-        <select v-model="subCanteenFilter" :disabled="!primaryFilter">
-          <option value="">全部子食堂</option>
-          <option v-for="canteen in filteredSubCanteens" :key="canteen.id" :value="canteen.id">{{ canteen.name }}</option>
-        </select>
-      </label>
-    </div>
+    <button v-if="(ragResult.citations?.length || 0) > 3" class="text-link" type="button" @click="citationsExpanded = !citationsExpanded">{{ citationsExpanded ? '收起引用' : `查看全部 ${ragResult.citations.length} 条引用` }}</button>
   </section>
-
-  <!-- RAG 帮我找菜 -->
-  <section class="dish-assistant-workspace">
-    <aside class="card dish-assistant-rail">
-      <div class="section-title"><p class="eyebrow">Quick Ask</p><h3>快捷提问</h3></div>
-      <button v-for="prompt in dishPrompts" :key="prompt" class="assistant-prompt" type="button" :disabled="ragLoading" @click="askPrompt(prompt)">{{ prompt }}</button>
-      <div class="dish-memory">
-        <div class="section-title"><p class="eyebrow">Memory</p><h3>检索记忆</h3></div>
-        <textarea v-model="memoryDraft" maxlength="500" placeholder="记录常吃口味、预算或不喜欢的食材" />
-        <div><button class="secondary" type="button" :disabled="memorySaving" @click="saveMemory">保存</button><button class="ghost" type="button" :disabled="memorySaving" @click="clearMemory">清除</button></div>
-      </div>
-    </aside>
-
-    <section class="card rag-section">
-      <div class="rag-header">
-        <h3>帮我找菜</h3>
-        <small class="muted">用自然语言描述需求，AI 从真实菜品库中检索并标注引用</small>
-      </div>
-      <form class="rag-form" @submit.prevent="submitRagQuery">
-        <input v-model="ragQuery" placeholder="例如：低卡高蛋白的午餐推荐、适合减脂期吃的面食…" maxlength="200" />
-        <button class="primary" type="submit" :disabled="ragLoading || !ragQuery.trim()">{{ ragLoading ? '检索中…' : '找一找' }}</button>
-      </form>
-      <div v-if="ragResult" class="rag-result">
-        <div class="rag-answer">
-          <span class="rag-source-badge" :class="ragResult.answerSource === 'llm' ? 'source-llm' : 'source-template'">{{ ragResult.answerSource === 'llm' ? 'AI 回答' : '规则回答' }}</span>
-          <p>{{ ragResult.answer }}</p>
-        </div>
-        <div v-if="ragResult.citations?.length" class="rag-citations">
-          <h4>引用来源</h4>
-          <div class="citation-list">
-            <button v-for="cite in ragResult.citations" :key="cite.id" class="citation-chip" type="button" @click="jumpToDish(cite.id)">
-              <span><strong>{{ cite.name }}</strong><small v-if="cite.snippet">{{ cite.snippet }}</small></span>
-              <small v-if="cite.score">相关度 {{ (cite.score * 100).toFixed(0) }}%</small>
-            </button>
-          </div>
-        </div>
-        <div v-if="ragResult.plan?.picks?.length" class="rag-picks">
-          <h4>推荐菜品</h4>
-          <div class="pick-list">
-            <button v-for="pick in ragResult.plan.picks" :key="pick.id" class="pick-chip" type="button" @click="jumpToDish(pick.id)">{{ pick.name }}<small>¥{{ pick.price }}</small></button>
-          </div>
-        </div>
-      </div>
-      <p v-if="ragError" class="form-message rag-error">{{ ragError }}</p>
-    </section>
-  </section>
+  <p v-if="ragError" class="form-message rag-error">{{ ragError }}</p>
 
   <p v-if="stallFilter" class="stall-banner">
     正在查看：<strong>{{ stallFilterName }}</strong> 的菜品
     <button class="text-link" type="button" @click="clearStallFilter">查看全部</button>
   </p>
 
-  <div class="sort-bar">
-    <button class="pill sort-btn" :class="{ active: sortDir === 'desc' }" type="button" @click="sortDir = 'desc'">评分高→低</button>
-    <button class="pill sort-btn" :class="{ active: sortDir === 'asc' }" type="button" @click="sortDir = 'asc'">评分低→高</button>
+  <div class="result-toolbar">
+    <div><p class="eyebrow">All Active Dishes</p><h2>{{ sortedDishes.length }} 道有效菜品</h2></div>
+    <div class="sort-bar" role="group" aria-label="菜品评分排序">
+      <button class="pill sort-btn" :class="{ active: sortDir === 'desc' }" type="button" @click="sortDir = 'desc'">评分高→低</button>
+      <button class="pill sort-btn" :class="{ active: sortDir === 'asc' }" type="button" @click="sortDir = 'asc'">评分低→高</button>
+    </div>
   </div>
 
   <section class="dish-layout">
     <div class="dish-list">
-      <button v-for="dish in sortedDishes" :key="dish.id" class="dish-card" type="button" @click="selectDish(dish.id)">
+      <button v-for="dish in sortedDishes" :key="dish.id" :class="['dish-card', { selected: dish.id === selectedId }]" type="button" @click="selectDish(dish.id)">
         <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb" />
         <span v-else class="emoji large">{{ dish.image }}</span>
         <span class="dish-card-info">
@@ -127,9 +64,9 @@
           <small v-if="dishLocation(dish)" class="dish-location">{{ dishLocation(dish) }}</small>
           <small :class="['supply-badge', supplyState(dish).className]">{{ supplyState(dish).label }}</small>
         </span>
-        <span class="rating">{{ (dish.rating || 0).toFixed(1) }}</span>
+        <span class="rating">{{ dish.displayRating.toFixed(1) }}</span>
       </button>
-      <p v-if="!sortedDishes.length" class="muted" style="padding:1.125rem;text-align:center;">没有匹配的菜品，试试调整筛选条件。</p>
+      <p v-if="!sortedDishes.length" class="muted empty-dishes">暂无有效菜品。</p>
     </div>
 
     <aside v-if="detail" class="card detail-panel">
@@ -220,74 +157,25 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch, watchEffect } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
+import SmartMealComposer from '../components/SmartMealComposer.vue';
+import { buildProfilePrompts, compactCitationSnippet, createRatingMap, sortDishesByRating, visibleCitations } from '../domain/studentDiscovery.js';
 import { validateReviewForm } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
 const route = useRoute();
 
-/* ── Chip filters ── */
-const filterChips = [
-  { key: '清爽', label: '清爽' },
-  { key: '肉食', label: '肉食' },
-  { key: '米饭', label: '米饭' },
-  { key: '面食', label: '面食' },
-  { key: '粉类', label: '粉类' },
-  { key: '饼类', label: '饼类' },
-  { key: '清真', label: '清真' },
-  { key: '素食', label: '素食' },
-  { key: '低价', label: '低价' },
-  { key: '高蛋白', label: '高蛋白' },
-];
-
-const activeChips = reactive(new Set());
-
-function toggleChip(key) {
-  if (activeChips.has(key)) activeChips.delete(key);
-  else activeChips.add(key);
-}
-
-function matchesChip(dish, chipKey) {
-  const name = (dish.name || '').toLowerCase();
-  const taste = (dish.taste || '').toLowerCase();
-  const cuisine = (dish.cuisine || '').toLowerCase();
-  const tags = (dish.tags || []).map((t) => t.toLowerCase());
-  const ingredients = (dish.ingredients || []).map((i) => i.toLowerCase());
-  const text = `${name} ${taste} ${cuisine} ${tags.join(' ')} ${ingredients.join(' ')}`;
-
-  switch (chipKey) {
-    case '清爽': return /清爽|清淡|沙拉|轻食|凉拌/.test(text);
-    case '肉食': return /鸡|牛|猪|羊|鸭|鱼|虾|肉|排骨|鸡腿|鸡胸/.test(text);
-    case '米饭': return /饭|盖饭|炒饭|拌饭|粥|碗饭|套餐/.test(text);
-    case '面食': return /面|拉面|拌面|刀削|宽面|细面|汤面/.test(text);
-    case '粉类': return /粉|米粉|河粉|螺蛳|红薯粉|粉丝/.test(text);
-    case '饼类': return /饼|煎饼|馅饼|肉饼|烤饼|手抓饼|卷饼/.test(text);
-    case '清真': return dish.halal || /清真|halal|牛肉面|羊肉/.test(text);
-    case '素食': return /素|斋|豆腐|蔬菜|沙拉|蔬/.test(text) && !/鸡|牛|猪|羊|鸭|鱼|虾|肉/.test(text);
-    case '低价': return (dish.price || 0) <= 12;
-    case '高蛋白': return (dish.nutrition?.protein || 0) >= 20 || /高蛋白|蛋白|鸡胸/.test(text);
-    default: return true;
-  }
-}
-
-/* ── Stall / route filtering ── */
 const stallFilter = ref(route.query.stall || '');
 const selectedId = ref(route.query.dish || '');
 const sortDir = ref('desc');
 const review = reactive({ rating: 5, content: '' });
 const message = ref('');
 const reviewSection = ref(null);
-const primaryFilter = ref('');
-const subCanteenFilter = ref('');
 const preferenceMessage = ref('');
-
-const primaryCanteens = computed(() => store.canteens.filter((c) => c.canteenType === 'primary' || !c.parentId));
-const filteredSubCanteens = computed(() => store.canteens.filter((c) => c.parentId === primaryFilter.value));
-
-watch(primaryFilter, () => { subCanteenFilter.value = ''; });
 
 const stallFilterName = computed(() => store.stalls.find((s) => s.id === stallFilter.value)?.name || '');
 const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) => [dish.id, dish])));
+const ratingById = computed(() => createRatingMap(store.rankings.dishes));
 
 function supplyState(dish) {
   const menuDish = todayMenuMap.value.get(dish.id);
@@ -317,23 +205,12 @@ async function markEaten(dishId) {
 }
 
 const filteredDishes = computed(() => {
-  let list = store.searchedDishes.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive');
-  if (primaryFilter.value) {
-    const childIds = new Set(store.canteens.filter((c) => c.parentId === primaryFilter.value).map((c) => c.id));
-    const allowedCanteens = subCanteenFilter.value ? new Set([subCanteenFilter.value]) : childIds;
-    const allowedStalls = new Set(store.stalls.filter((stall) => allowedCanteens.has(stall.canteenId)).map((stall) => stall.id));
-    list = list.filter((dish) => allowedStalls.has(dish.stallId));
-  }
+  let list = store.dishes.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive');
   if (stallFilter.value) list = list.filter((d) => d.stallId === stallFilter.value);
-  if (activeChips.size > 0) list = list.filter((dish) => [...activeChips].every((chip) => matchesChip(dish, chip)));
   return list;
 });
 
-const sortedDishes = computed(() => {
-  const list = [...filteredDishes.value];
-  list.sort((a, b) => sortDir.value === 'desc' ? (b.rating || 0) - (a.rating || 0) : (a.rating || 0) - (b.rating || 0));
-  return list;
-});
+const sortedDishes = computed(() => sortDishesByRating(filteredDishes.value, ratingById.value, sortDir.value));
 
 const detail = computed(() => {
   store.state;
@@ -367,10 +244,6 @@ function clearStallFilter() {
   stallFilter.value = '';
 }
 
-function normalizeTaste() {
-  if (!store.searchFilters.taste.trim()) store.searchFilters.taste = '不限';
-}
-
 function jumpToReviews() {
   nextTick(() => {
     reviewSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -397,10 +270,13 @@ const ragError = ref('');
 const memoryDraft = ref('');
 const memoryPreferences = ref({});
 const memorySaving = ref(false);
-const dishPrompts = ['15 元以内高蛋白', '清淡低脂午餐', '不排队的今日供应', '适合减脂的面食'];
+const memoryOpen = ref(false);
+const citationsExpanded = ref(false);
+const profilePrompts = computed(() => buildProfilePrompts(store.profile, 'search'));
+const visibleSearchCitations = computed(() => visibleCitations(ragResult.value?.citations || [], citationsExpanded.value));
 
-function askPrompt(prompt) {
-  ragQuery.value = prompt;
+function askPrompt(query) {
+  ragQuery.value = query;
   submitRagQuery();
 }
 
@@ -410,6 +286,7 @@ async function submitRagQuery() {
   ragLoading.value = true;
   ragError.value = '';
   ragResult.value = null;
+  citationsExpanded.value = false;
   try {
     ragResult.value = await store.askMealAdvisor({ query: q });
   } catch (err) {
@@ -455,16 +332,15 @@ async function clearMemory() {
 
 function jumpToDish(dishId) {
   if (!dishId) return;
-  // Clear filters so the dish is visible
   stallFilter.value = '';
-  activeChips.clear();
-  store.searchFilters.keyword = '';
-  store.searchFilters.taste = '不限';
-  store.searchFilters.halalOnly = false;
-  store.searchFilters.maxPrice = 30;
   nextTick(() => {
     selectedId.value = dishId;
   });
+}
+
+function formatCitationScore(value) {
+  const score = Number(value || 0);
+  return `${Math.round((score <= 1 ? score * 100 : score))}%`;
 }
 
 /* ── Location helpers ── */
@@ -562,13 +438,22 @@ onMounted(loadMemory);
 .citation-chip small, .pick-chip small { color: var(--text-secondary, #888); }
 .rag-error { margin-top: 8px; }
 
+.discovery-answer { display: grid; gap: 12px; margin-top: 14px; padding: 18px 20px; }
+.answer-heading { display: flex; align-items: center; gap: 10px; }.discovery-answer > p { margin: 0; line-height: 1.65; }
+.compact-citations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.compact-citations button { min-width: 0; display: grid; gap: 5px; padding: 10px 12px; text-align: left; border: 1px solid rgba(31,122,77,.13); background: #f8fbf7; color: inherit; }
+.compact-citations strong, .compact-citations small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.compact-citations small { color: var(--muted); font-size: 11px; }
+.result-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 28px 0 14px; }.result-toolbar h2 { margin: 0; font-size: 20px; }
+
 .stall-banner { display: flex; align-items: center; gap: 10px; padding: 12px 18px; margin-bottom: 14px; border-radius: 18px; background: linear-gradient(135deg, rgba(31,122,77,.1), rgba(255,255,255,.68)); border: 1px solid rgba(31,122,77,.14); font-size: 14px; }
-.sort-bar { display: flex; gap: 8px; margin-bottom: 14px; }
+.sort-bar { display: flex; gap: 8px; margin: 0; }
 .sort-btn { cursor: pointer; border: 1px solid rgba(255,255,255,.62); background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(255,255,255,.56)); transition: border-color .18s, box-shadow .18s; }
 .sort-btn.active { border-color: rgba(31,122,77,.32); box-shadow: 0 0 0 2px rgba(31,122,77,.12); }
 .dish-thumb { width: 56px; height: 56px; border-radius: 16px; object-fit: cover; flex-shrink: 0; border: 1px solid rgba(255,255,255,.62); }
 .dish-card-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.dish-card { transition: transform .2s ease, border-color .2s ease, background .2s ease; }.dish-card:hover { transform: translateX(3px); }.dish-card.selected { border-color: rgba(31,122,77,.3); background: #f1f8ee; }
 .dish-location { color: var(--accent, #1f7a4d); font-size: 12px; font-weight: 500; }
+.empty-dishes { padding: 28px; text-align: center; }
 
 .detail-location { margin-bottom: 10px; }
 .location-pill { background: rgba(31,122,77,.08); color: var(--primary-dark, #155f3b); font-weight: 500; }
@@ -587,6 +472,7 @@ onMounted(loadMemory);
   .citation-list { grid-template-columns: 1fr; }
   .dish-layout { flex-direction: column; }
   .detail-panel { width: 100%; }
+.result-toolbar { align-items: stretch; flex-direction: column; }.sort-bar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }.compact-citations { grid-template-columns: 1fr; }
 .filter-controls { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
 .supply-badge { width: max-content; border-radius: 999px; padding: 3px 8px; font-weight: 720; }
 .supply-badge.available { color: var(--primary-dark); background: rgba(31,122,77,.12); }
@@ -596,6 +482,6 @@ onMounted(loadMemory);
 .detail-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .assistant-prompt, .citation-chip, .pick-chip, .chip, .sort-btn { transition: none; }
+  .assistant-prompt, .citation-chip, .pick-chip, .chip, .sort-btn, .dish-card { transition: none; }
 }
 </style>

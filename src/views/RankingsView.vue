@@ -8,12 +8,12 @@
   <div class="rankings-grid">
     <!-- ── Dish Rankings ── -->
     <section class="card rank-card" :class="{ 'is-expanded': expandedSection === 'dishes' }">
-      <div class="rank-card-header" @click="toggleSection('dishes')" role="button" tabindex="0" @keydown.enter="toggleSection('dishes')">
+      <div class="rank-card-header" @click="toggleSection('dishes')" role="button" tabindex="0" @keydown.enter="toggleSection('dishes')" @keydown.space.prevent="toggleSection('dishes')">
         <div>
           <p class="eyebrow">菜品排行</p>
           <h2>菜品乐榜</h2>
         </div>
-        <span class="expand-indicator">{{ expandedSection === 'dishes' ? '▾' : '▸' }}</span>
+        <span class="expand-indicator">›</span>
       </div>
 
       <!-- Collapsed: top 3 preview -->
@@ -70,12 +70,12 @@
 
     <!-- ── Stall Rankings ── -->
     <section class="card rank-card" :class="{ 'is-expanded': expandedSection === 'stalls' }">
-      <div class="rank-card-header" @click="toggleSection('stalls')" role="button" tabindex="0" @keydown.enter="toggleSection('stalls')">
+      <div class="rank-card-header" @click="toggleSection('stalls')" role="button" tabindex="0" @keydown.enter="toggleSection('stalls')" @keydown.space.prevent="toggleSection('stalls')">
         <div>
           <p class="eyebrow">档口排行</p>
           <h2>档口口碑</h2>
         </div>
-        <span class="expand-indicator">{{ expandedSection === 'stalls' ? '▾' : '▸' }}</span>
+        <span class="expand-indicator">›</span>
       </div>
 
       <!-- Collapsed: top 3 preview -->
@@ -122,12 +122,12 @@
 
     <!-- ── Canteen Rankings ── -->
     <section class="card rank-card" :class="{ 'is-expanded': expandedSection === 'canteens' }">
-      <div class="rank-card-header" @click="toggleSection('canteens')" role="button" tabindex="0" @keydown.enter="toggleSection('canteens')">
+      <div class="rank-card-header" @click="toggleSection('canteens')" role="button" tabindex="0" @keydown.enter="toggleSection('canteens')" @keydown.space.prevent="toggleSection('canteens')">
         <div>
           <p class="eyebrow">食堂排行</p>
           <h2>食堂综合榜</h2>
         </div>
-        <span class="expand-indicator">{{ expandedSection === 'canteens' ? '▾' : '▸' }}</span>
+        <span class="expand-indicator">›</span>
       </div>
 
       <!-- Collapsed: top 3 preview -->
@@ -279,6 +279,7 @@ function crowdLabel(level) {
   border-color: rgba(31, 122, 77, .18);
   box-shadow: 0 20px 48px rgba(31, 122, 77, .1);
 }
+.rank-card.is-expanded .expand-indicator { transform: rotate(90deg); }
 
 /* ── Clickable Header ── */
 .rank-card-header {
@@ -295,6 +296,7 @@ function crowdLabel(level) {
 .rank-card-header:hover {
   background: rgba(31, 122, 77, .04);
 }
+.rank-card-header:active { transform: scale(.99); }
 .rank-card-header h2 {
   margin: 0;
   font-family: var(--font-display, sans-serif);
@@ -388,6 +390,7 @@ function crowdLabel(level) {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  animation: rank-list-in .28s ease both;
 }
 
 .rank-item {
@@ -404,6 +407,8 @@ function crowdLabel(level) {
   transform: translateY(-1px);
   box-shadow: 0 4px 16px rgba(0,0,0,.06);
 }
+.rank-item:active { transform: scale(.985); }
+@keyframes rank-list-in { from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ── Rank badge ── */
 .rank-badge {
@@ -530,5 +535,6 @@ function crowdLabel(level) {
   .rank-card-header {
     transition: none !important;
   }
+  .rank-list { animation: none; }
 }
 </style>

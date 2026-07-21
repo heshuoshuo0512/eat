@@ -22,17 +22,19 @@ describe('student community and workspace UI contracts', () => {
     }
   });
 
-  it('moves reveal to home and uses four equal dashboard modules', () => {
+  it('moves two-step reveal and the nine-feature orbit to home', () => {
     assert.match(home, /class="card reveal-home"/);
-    assert.match(home, /揭晓下一张/);
-    assert.match(home, /student-dashboard-grid/);
-    assert.equal((home.match(/class="card dashboard-module"/g) || []).length, 4);
+    assert.match(home, /revealPhase === 'covered'/);
+    assert.match(home, /handleRevealAction/);
+    assert.match(home, /StudentFeatureOrbit/);
+    assert.equal((home.match(/id: '(dishes|recommend|canteens|rankings|regions|reviews|community|saved|orders)'/g) || []).length, 9);
   });
 
-  it('adds quick questions and memory beside structured dish search', () => {
-    assert.match(dishes, /dish-assistant-workspace/);
-    assert.match(dishes, /快捷提问/);
-    assert.match(dishes, /检索记忆/);
+  it('uses the shared composer and dynamic profile prompts for dish discovery', () => {
+    assert.match(dishes, /SmartMealComposer/);
+    assert.match(dishes, /buildProfilePrompts/);
+    assert.doesNotMatch(dishes, /class="card filter-bar"/);
+    assert.doesNotMatch(dishes, /store\.searchedDishes/);
     assert.match(dishes, /ragResult\.citations/);
   });
 
@@ -63,5 +65,7 @@ describe('student community and workspace UI contracts', () => {
     assert.match(orders, /copyPickupCode/);
     assert.match(orders, /pickup-code-panel/);
     assert.match(orders, /prefers-reduced-motion/);
+    assert.match(orders, /联调中，暂不可提交/);
+    assert.doesNotMatch(orders, /store\.createOrder/);
   });
 });

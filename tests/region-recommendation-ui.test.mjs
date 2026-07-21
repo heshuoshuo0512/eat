@@ -18,8 +18,8 @@ describe('student region recommendation navigation', () => {
   });
 
   it('links the student homepage to the region page', () => {
-    assert.match(homeVue, /to="\/regions"/);
-    assert.match(homeVue, /path:\s*'\/regions'[^}]*query:\s*\{\s*region:/);
+    assert.match(homeVue, /id:\s*'regions'[^\n]*to:\s*'\/regions'/);
+    assert.match(homeVue, /StudentFeatureOrbit/);
   });
 });
 

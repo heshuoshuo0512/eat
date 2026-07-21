@@ -1,108 +1,64 @@
 <template>
   <!-- Student homepage -->
   <template v-if="!isAdmin">
-    <section class="hero card">
+    <div class="student-home">
+    <section class="hero card student-hero">
       <div>
         <p class="eyebrow">校园智慧食堂</p>
         <h1>数据驱动选菜，吃得明白，又健康</h1>
-        <p class="hero-copy">从今日供应到营养依据，把选菜、点餐和真实校园口碑放在同一处。</p>
+        <p class="hero-copy">先说出这一餐想怎么吃，再从真实菜品、评分和校园口碑中找到答案。</p>
         <div class="hero-actions">
-          <RouterLink class="primary button-link" to="/orders">今日点餐</RouterLink>
+          <RouterLink class="primary button-link" to="/dishes">菜品检索</RouterLink>
           <RouterLink class="secondary button-link" to="/recommend">智能推荐</RouterLink>
         </div>
       </div>
       <div class="metric-grid compact">
-        <article>
-          <strong>{{ store.canteens.length }}</strong>
-          <span>食堂</span>
-        </article>
-        <article>
-          <strong>{{ store.stalls.length }}</strong>
-          <span>档口</span>
-        </article>
-        <article>
-          <strong>{{ store.dishes.length }}</strong>
-          <span>菜品</span>
-        </article>
-        <article>
-          <strong>{{ topDish?.computedRating?.toFixed(1) || '—' }}</strong>
-          <span>最高评分</span>
-        </article>
+        <article><strong>{{ store.canteens.length }}</strong><span>食堂</span></article>
+        <article><strong>{{ store.stalls.length }}</strong><span>档口</span></article>
+        <article><strong>{{ store.dishes.length }}</strong><span>菜品</span></article>
+        <article><strong>{{ topDish?.computedRating?.toFixed(1) || '—' }}</strong><span>最高评分</span></article>
       </div>
     </section>
 
-    <section class="card reveal-home" aria-label="逐张揭晓推荐">
+    <section class="card reveal-home" :class="`phase-${revealPhase}`" aria-label="逐张揭晓推荐">
       <div class="reveal-copy">
         <p class="eyebrow">逐张揭晓</p>
-        <h2>按排名发现下一顿</h2>
+        <h2>{{ revealPhase === 'covered' ? '点一下图片，再看看答案' : '这张推荐适合你' }}</h2>
         <p v-if="contextSummary" class="muted">{{ contextSummary }}</p>
         <p v-else class="muted">推荐会根据健康档案、今日供应和个人记录自动更新。</p>
         <div class="reveal-controls">
-          <button class="primary" type="button" :disabled="recLoading || !revealDish" @click="advanceReveal">揭晓下一张</button>
+          <button class="primary" type="button" :disabled="recLoading || !revealDish" @click="handleRevealAction">{{ revealPhase === 'covered' ? '揭晓这一张' : '看下一张' }}</button>
           <button class="ghost" type="button" :disabled="!revealDish" @click="resetReveal">重置</button>
           <span>{{ revealDish ? `第 ${revealIndex + 1} / ${recContext.ranked.length} 张` : '等待推荐' }}</span>
         </div>
       </div>
       <article v-if="revealDish" :key="revealDish.id" class="reveal-dish">
-        <div class="reveal-media">
-          <img v-if="revealDish.imageUrl" :src="revealDish.imageUrl" :alt="revealDish.name" />
+        <button class="reveal-media reveal-media-button" type="button" :aria-label="revealPhase === 'covered' ? '点击揭晓当前推荐菜品' : '点击查看下一张推荐'" @click="handleRevealAction">
+          <img v-if="revealDish.imageUrl" :src="revealDish.imageUrl" :alt="revealPhase === 'covered' ? '' : revealDish.name" />
           <span v-else class="emoji large">{{ revealDish.image || '🍽️' }}</span>
           <span class="rank-badge">{{ revealIndex + 1 }}</span>
-        </div>
-        <div class="reveal-info">
+          <span v-if="revealPhase === 'covered'" class="reveal-cover"><strong>点击揭晓</strong><small>答案还藏在图片后面</small></span>
+          <span v-else class="reveal-next-hint">再点一次看下一张</span>
+        </button>
+        <div v-if="revealPhase === 'revealed'" class="reveal-info">
           <strong>{{ revealDish.name }}</strong>
           <small>{{ dishStallLabel(revealDish) }}</small>
           <p>{{ formatWhy(revealDish.why) || '结合你的健康档案与当前供应排序。' }}</p>
           <div><span class="pill">{{ revealDish.nutrition?.calories || 0 }} kcal</span><span class="pill">¥{{ revealDish.price }}</span></div>
         </div>
-        <RouterLink class="primary button-link" :to="{ path: '/orders', query: { dish: revealDish.id } }">点这道菜</RouterLink>
+        <div v-else class="reveal-placeholder" aria-hidden="true"><span></span><span></span><span></span></div>
+        <RouterLink v-if="revealPhase === 'revealed'" class="primary button-link" :to="{ path: '/dishes', query: { dish: revealDish.id } }">查看菜品</RouterLink>
       </article>
       <div v-else class="reveal-empty"><p>{{ recLoading ? '正在加载推荐…' : '暂时没有推荐结果' }}</p><button v-if="!recLoading" class="secondary" type="button" @click="loadRecommendation">重新加载</button></div>
     </section>
 
-    <section class="student-dashboard-grid">
-      <article class="card dashboard-module">
-        <div class="section-title horizontal"><div><p class="eyebrow">今日点餐</p><h2>正在供应</h2></div><RouterLink class="text-link" to="/orders">去点餐</RouterLink></div>
-        <div class="module-list">
-          <RouterLink v-for="dish in store.todayMenu.dishes.slice(0, 3)" :key="dish.id" :to="{ path: '/orders', query: { dish: dish.id } }" class="module-row">
-            <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" /><span v-else class="emoji">{{ dish.image }}</span>
-            <span><strong>{{ dish.name }}</strong><small>¥{{ dish.price }} · {{ dish.supplyStatus === 'limited' ? '余量紧张' : '供应中' }}</small></span>
-          </RouterLink>
-        </div>
-        <p v-if="!store.todayMenu.dishes.length" class="muted">今日菜单更新中。</p>
-      </article>
+    <StudentFeatureOrbit :items="studentFeatures" />
 
-      <article class="card dashboard-module">
-        <div class="section-title horizontal"><div><p class="eyebrow">热门排行</p><h2>评分靠前</h2></div><RouterLink class="text-link" to="/rankings">完整榜单</RouterLink></div>
-        <div class="module-list">
-          <RouterLink v-for="(dish, index) in store.rankings.dishes.slice(0, 3)" :key="dish.id" :to="{ path: '/dishes', query: { dish: dish.id } }" class="module-row rank-row">
-            <span class="rank-badge">{{ index + 1 }}</span><span><strong>{{ dish.name }}</strong><small>{{ dishStallLabel(dish) }}</small></span><span class="pill">{{ dish.rankScore }}</span>
-          </RouterLink>
-        </div>
-      </article>
-
-      <article class="card dashboard-module">
-        <div class="section-title horizontal"><div><p class="eyebrow">区域推荐</p><h2>按风味挑选</h2></div><RouterLink class="text-link" to="/regions">查看全部</RouterLink></div>
-        <div class="module-list region-list">
-          <RouterLink v-for="region in featuredRegions.slice(0, 3)" :key="region.id" :to="{ path: '/regions', query: { region: region.id, sort: 'forYou' } }" class="module-row">
-            <img v-if="region.heroDish?.imageUrl" :src="region.heroDish.imageUrl" :alt="region.name" /><span v-else class="emoji">{{ region.icon }}</span>
-            <span><strong>{{ region.name }}</strong><small>{{ region.count }} 道菜 · {{ region.averageRating.toFixed(1) }} 分</small></span>
-          </RouterLink>
-        </div>
-      </article>
-
-      <article class="card dashboard-module">
-        <div class="section-title"><p class="eyebrow">快捷入口</p><h2>常用功能</h2></div>
-        <div class="quick-links-grid">
-          <RouterLink to="/dishes"><span>⌕</span><strong>菜品检索</strong></RouterLink>
-          <RouterLink to="/health-profile"><span>+</span><strong>健康档案</strong></RouterLink>
-          <RouterLink to="/saved"><span>★</span><strong>收藏记录</strong></RouterLink>
-          <RouterLink to="/reviews"><span>✓</span><strong>评价总览</strong></RouterLink>
-          <RouterLink to="/community"><span>◌</span><strong>校园帖子</strong></RouterLink>
-          <RouterLink to="/canteens"><span>⌂</span><strong>食堂导航</strong></RouterLink>
-        </div>
-      </article>
+    <section class="health-profile-entry">
+      <div><p class="eyebrow">健康档案</p><h2>低频设置，长期影响每一次推荐</h2><p>当前目标：{{ profileSummary }}</p></div>
+      <RouterLink class="secondary button-link" to="/health-profile">管理档案</RouterLink>
     </section>
+    </div>
   </template>
 
   <!-- Admin homepage -->
@@ -264,7 +220,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import { summarizeRegions } from '../domain/regionRecommendation.js';
+import StudentFeatureOrbit from '../components/StudentFeatureOrbit.vue';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
@@ -273,22 +229,39 @@ const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'audit
 const isAdmin = computed(() => store.user && adminRoleSet.has(store.user.role));
 
 const topDish = computed(() => store.rankings.dishes[0]);
-const regionSummaries = computed(() => summarizeRegions(store.dishes, {
-  ratingById: new Map(store.rankings.dishes.map((dish) => [dish.id, dish])),
-  preferences: store.dishPreferences
-}));
-const featuredRegions = computed(() => [...regionSummaries.value]
-  .sort((left, right) => right.totalSales - left.totalSales)
-  .slice(0, 4));
-const menuSourceLabel = computed(() => (store.todayMenu.dishes.length ? '今日供应' : '菜品库兜底'));
 
 const recContext = computed(() => store.contextualRecommendation);
 const recLoading = ref(false);
 const aiReadiness = ref(null);
 const revealIndex = ref(0);
+const revealPhase = ref('covered');
 const revealDish = computed(() => recContext.value.ranked[revealIndex.value] || recContext.value.ranked[0] || null);
 
-const recommendationLabel = computed(() => recContext.value.goalLabel ? `${recContext.value.goalLabel}推荐` : '今日智能推荐');
+const profileSummary = computed(() => {
+  const profile = store.profile || {};
+  const goals = { fatLoss: '减脂', muscleGain: '增肌', maintain: '均衡', healthy: '健康' };
+  const meals = { breakfast: '早餐', lunch: '午餐', dinner: '晚餐' };
+  const parts = [goals[profile.goal] || '健康', meals[profile.mealType] || '午餐'];
+  if (profile.budgetMax) parts.push(`¥${profile.budgetMax} 内`);
+  if (profile.taste && profile.taste !== '不限') parts.push(profile.taste);
+  return parts.join(' · ');
+});
+
+function featureImage(dishIndex, canteenIndex = 0) {
+  return store.dishes[dishIndex]?.imageUrl || store.canteens[canteenIndex]?.imageUrl || '';
+}
+
+const studentFeatures = computed(() => [
+  { id: 'dishes', to: '/dishes', eyebrow: '智能吃饭', label: '菜品检索', description: '从真实菜品中按综合评分挑选', imageUrl: featureImage(0), icon: '检' },
+  { id: 'recommend', to: '/recommend', eyebrow: '智能吃饭', label: '智能推荐', description: '结合健康档案和今日供应生成建议', imageUrl: featureImage(1), icon: '荐' },
+  { id: 'canteens', to: '/canteens', eyebrow: '更多探索', label: '食堂导航', description: '快速找到食堂、楼层与档口', imageUrl: featureImage(2, 0), icon: '导' },
+  { id: 'rankings', to: '/rankings', eyebrow: '更多探索', label: '排行榜', description: '查看校园真实评分与热度', imageUrl: featureImage(3), icon: '榜' },
+  { id: 'regions', to: '/regions', eyebrow: '更多探索', label: '区域推荐', description: '按风味区域发现下一餐', imageUrl: featureImage(4), icon: '味' },
+  { id: 'reviews', to: '/reviews', eyebrow: '校园互动', label: '菜品评价', description: '汇总各食堂审核通过的评价', imageUrl: featureImage(5), icon: '评' },
+  { id: 'community', to: '/community', eyebrow: '校园互动', label: '校园帖子', description: '分享菜品体验与校园口碑', imageUrl: featureImage(6), icon: '帖' },
+  { id: 'saved', to: '/saved', eyebrow: '个人记录', label: '收藏与吃过', description: '把喜欢和吃过的菜统一收好', imageUrl: featureImage(7), icon: '藏' },
+  { id: 'orders', to: '/orders', eyebrow: '今日菜单', label: '今日点餐', description: '浏览菜单、购物车和历史取餐码', imageUrl: featureImage(8), icon: '餐', badge: '待开发 · 可预览' }
+]);
 
 const contextSummary = computed(() => {
   const ctx = recContext.value.context;
@@ -354,6 +327,7 @@ async function loadRecommendation() {
   try {
     await store.fetchRecommendation();
     revealIndex.value = 0;
+    revealPhase.value = 'covered';
   } finally {
     recLoading.value = false;
   }
@@ -363,11 +337,22 @@ async function advanceReveal() {
   const dishes = recContext.value.ranked;
   if (!dishes.length) return;
   revealIndex.value = (revealIndex.value + 1) % dishes.length;
-  try { await store.recordDishDrawn(dishes[revealIndex.value].id); } catch { /* recommendation remains usable */ }
+  revealPhase.value = 'covered';
+}
+
+async function handleRevealAction() {
+  if (!revealDish.value) return;
+  if (revealPhase.value === 'covered') {
+    revealPhase.value = 'revealed';
+    try { await store.recordDishDrawn(revealDish.value.id); } catch { /* recommendation remains usable */ }
+    return;
+  }
+  await advanceReveal();
 }
 
 function resetReveal() {
   revealIndex.value = 0;
+  revealPhase.value = 'covered';
 }
 
 async function refreshAdminMetrics() {
@@ -393,6 +378,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.student-home { min-width: 0; width: 100%; max-width: 100%; overflow-x: hidden; }
 .dish-thumb {
   width: 80px;
   height: 80px;
@@ -422,17 +408,29 @@ onMounted(async () => {
   overflow: hidden;
   background: linear-gradient(120deg, #ffffff 0 52%, #eef7ea 52% 100%);
 }
+.student-hero, .student-hero > *, .reveal-home, .reveal-home > *, .health-profile-entry { min-width: 0; max-width: 100%; }
 
 .reveal-copy { display: grid; gap: 8px; }
 .reveal-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
 .reveal-controls span { color: var(--muted); font-size: 12px; }
-.reveal-dish { display: grid; grid-template-columns: 156px minmax(0, 1fr) auto; align-items: center; gap: 18px; animation: reveal-in .38s ease both; }
-.reveal-media { position: relative; width: 156px; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: #dfeeda; display: grid; place-items: center; }
-.reveal-media img { width: 100%; height: 100%; object-fit: cover; }
+.reveal-dish { display: grid; grid-template-columns: 176px minmax(0, 1fr) auto; align-items: center; gap: 18px; animation: reveal-in .38s ease both; }
+.reveal-media { position: relative; width: 176px; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: #dfeeda; display: grid; place-items: center; }
+.reveal-media-button { min-height: 0; padding: 0; border: 0; color: #fff; cursor: pointer; box-shadow: 0 14px 30px rgba(20,53,36,.18); transform-style: preserve-3d; transition: transform .48s cubic-bezier(.22,.8,.24,1), box-shadow .25s ease; }
+.phase-covered .reveal-media-button:hover { transform: translateY(-4px) rotateY(-5deg); box-shadow: 0 20px 38px rgba(20,53,36,.24); }
+.phase-revealed .reveal-media-button { transform: rotateY(360deg); }
+.reveal-media img { width: 100%; height: 100%; object-fit: cover; transition: transform .45s ease, filter .3s ease; }
+.phase-covered .reveal-media img { transform: scale(1.06); filter: saturate(.7) brightness(.72); }
 .reveal-media .rank-badge { position: absolute; left: 10px; top: 10px; }
+.reveal-cover { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 18px; text-align: center; background: linear-gradient(180deg, rgba(18,50,32,.18), rgba(18,50,32,.78)); }
+.reveal-cover strong { font-size: 20px; }.reveal-cover small { opacity: .8; }
+.reveal-next-hint { position: absolute; right: 9px; bottom: 9px; padding: 5px 8px; border-radius: 999px; background: rgba(12,31,20,.72); font-size: 11px; }
 .reveal-info { display: grid; gap: 7px; min-width: 0; }
 .reveal-info > strong { font-size: 22px; }.reveal-info p { margin: 0; color: var(--muted); line-height: 1.55; }.reveal-info > div { display: flex; gap: 7px; flex-wrap: wrap; }
+.reveal-placeholder { display: grid; gap: 10px; min-width: 0; }.reveal-placeholder span { display: block; height: 11px; border-radius: 6px; background: linear-gradient(90deg, #e5eee1, #f4f8f2, #e5eee1); background-size: 200% 100%; animation: placeholder-flow 1.8s ease infinite; }.reveal-placeholder span:nth-child(2) { width: 78%; }.reveal-placeholder span:nth-child(3) { width: 52%; }
 .reveal-empty { min-height: 156px; display: grid; place-items: center; align-content: center; gap: 8px; }
+
+.health-profile-entry { margin-top: 34px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 22px; border-top: 1px solid rgba(31,122,77,.16); border-bottom: 1px solid rgba(31,122,77,.16); background: rgba(249,252,248,.7); }
+.health-profile-entry h2 { margin: 0; font-size: 18px; }.health-profile-entry p:last-child { margin: 6px 0 0; color: var(--muted); }
 
 .student-dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .dashboard-module { min-height: 330px; display: flex; flex-direction: column; }
@@ -447,6 +445,7 @@ onMounted(async () => {
 .quick-links-grid a:hover { transform: translateY(-2px); background: #eff7eb; }.quick-links-grid span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--primary); color: #fff; font-weight: 800; }
 
 @keyframes reveal-in { from { opacity: 0; transform: translateX(14px) rotate(.3deg); } to { opacity: 1; transform: translateX(0) rotate(0); } }
+@keyframes placeholder-flow { to { background-position: -200% 0; } }
 
 .region-preview { display: grid; gap: 1rem; }
 
@@ -570,10 +569,16 @@ onMounted(async () => {
 @media (max-width: 560px) {
   .student-dashboard-grid { grid-template-columns: 1fr; }
   .dashboard-module { min-height: auto; }
-  .reveal-dish { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
-  .reveal-media { width: 104px; }
-  .reveal-dish .button-link { grid-column: 1 / 3; width: 100%; justify-content: center; }
+  .reveal-home { padding: 18px; }
+  .student-hero { grid-template-columns: minmax(0, 1fr); }
+  .student-hero .metric-grid { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reveal-dish { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .reveal-media { width: 100%; aspect-ratio: 16 / 9; }
+  .reveal-placeholder { display: none; }
+  .reveal-dish .button-link { grid-column: 1; width: 100%; justify-content: center; }
   .reveal-controls button { flex: 1; }
+  .health-profile-entry { align-items: stretch; flex-direction: column; margin-top: 26px; padding: 18px 4px; }
+  .health-profile-entry .button-link { width: 100%; justify-content: center; }
   .region-preview { gap: .75rem; }
   .region-preview-grid { grid-template-columns: 1fr; gap: .75rem; }
   .region-preview-card {
@@ -600,6 +605,8 @@ onMounted(async () => {
 
 @media (prefers-reduced-motion: reduce) {
   .reveal-dish { animation: none; }
+  .reveal-media-button, .reveal-media img, .reveal-placeholder span { transition: none; animation: none; }
+  .phase-revealed .reveal-media-button, .phase-covered .reveal-media-button:hover { transform: none; }
   .module-row, .quick-links-grid a { transition: none; }
 }
 </style>

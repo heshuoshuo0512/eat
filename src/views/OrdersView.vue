@@ -1,10 +1,11 @@
 <template>
   <section class="page-heading">
     <p class="eyebrow">Order Flow</p>
-    <h1>今日点餐与取餐码</h1>
-    <p>从已发布今日菜单下单，系统实时扣减供应量，售罄后自动阻止继续购买。</p>
+    <h1>今日点餐预览与取餐码</h1>
+    <p>可浏览今日菜单、体验加购并查看已有订单；新订单提交正在联调。</p>
   </section>
 
+  <p class="preview-banner"><strong>预览模式</strong><span>菜单与购物车可操作，新订单暂不提交到服务器。</span></p>
   <p v-if="dishNotice" class="form-message dish-notice" :class="dishNoticeType">{{ dishNotice }}</p>
   <p v-if="menuError" class="form-message error">{{ menuError }}</p>
 
@@ -110,7 +111,7 @@
         <article><strong>¥{{ totalAmount }}</strong><span>合计</span></article>
         <article><strong>{{ cartCount }}</strong><span>份数</span></article>
       </div>
-      <button class="primary" type="button" :disabled="!canSubmit || submitting" @click="submitOrder">{{ submitting ? '提交中…' : '提交订单' }}</button>
+      <button class="primary submit-preview" type="button" disabled>联调中，暂不可提交</button>
       <p v-if="message" class="form-message" :class="{ error: isError }">{{ message }}</p>
     </article>
   </section>
@@ -150,7 +151,7 @@
         </div>
       </article>
     </div>
-    <p v-else class="muted">暂无订单。从左侧菜单选菜下单后，订单和取餐码将显示在此处。</p>
+    <p v-else class="muted">暂无历史订单。联调完成后，新订单和取餐码会显示在此处。</p>
   </section>
 </template>
 
@@ -165,7 +166,6 @@ const cart = ref([]);
 const note = ref('');
 const message = ref('');
 const isError = ref(false);
-const submitting = ref(false);
 const menuLoading = ref(false);
 const menuError = ref('');
 const ordersLoading = ref(false);
@@ -186,12 +186,6 @@ const totalAmount = computed(() => {
   return (sub + (deliveryMode.value === 'dorm' ? DELIVERY_FEE : 0)).toFixed(2);
 });
 const cartCount = computed(() => cart.value.reduce((sum, item) => sum + item.quantity, 0));
-
-const canSubmit = computed(() => {
-  if (!cart.value.length) return false;
-  if (deliveryMode.value === 'dorm' && (!dormBuilding.value.trim() || !dormRoom.value.trim())) return false;
-  return true;
-});
 
 onMounted(async () => {
   menuLoading.value = true;
@@ -305,15 +299,6 @@ function decrement(dishId) {
   if (item.quantity <= 0) cart.value = cart.value.filter((entry) => entry.dishId !== dishId);
 }
 
-function buildNote() {
-  const parts = [];
-  if (note.value.trim()) parts.push(note.value.trim());
-  if (deliveryMode.value === 'dorm') {
-    parts.push(`[宿舍配送] ${dormBuilding.value.trim()} ${dormRoom.value.trim()}`);
-  }
-  return parts.join(' | ');
-}
-
 async function refreshMenu() {
   menuLoading.value = true;
   menuError.value = '';
@@ -335,30 +320,6 @@ async function refreshOrders() {
     ordersError.value = `订单刷新失败：${err.message}`;
   } finally {
     ordersLoading.value = false;
-  }
-}
-
-async function submitOrder() {
-  submitting.value = true;
-  message.value = '';
-  isError.value = false;
-  try {
-    const payload = {
-      items: cart.value.map(({ dishId, quantity }) => ({ dishId, quantity })),
-      note: buildNote()
-    };
-    const order = await store.createOrder(payload);
-    cart.value = [];
-    note.value = '';
-    deliveryMode.value = 'pickup';
-    dormBuilding.value = '';
-    dormRoom.value = '';
-    message.value = `下单成功，取餐码 ${order.pickupCode}`;
-  } catch (error) {
-    message.value = error.message;
-    isError.value = true;
-  } finally {
-    submitting.value = false;
   }
 }
 
@@ -402,6 +363,8 @@ function statusLabel(status) {
 </script>
 
 <style scoped>
+.preview-banner { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 11px 14px; border: 1px solid #ead48b; background: #fff8dc; color: #6d5200; }.preview-banner strong { flex: 0 0 auto; }.preview-banner span { font-size: 13px; }
+.submit-preview:disabled { opacity: 1; cursor: not-allowed; background: #dfe8dc; color: #5d6b59; box-shadow: none; }
 .dish-thumb {
   width: 56px;
   height: 56px;

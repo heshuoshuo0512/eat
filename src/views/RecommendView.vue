@@ -8,25 +8,32 @@
     <RouterLink class="secondary button-link" to="/health-profile">调整健康档案</RouterLink>
   </section>
 
-  <section class="recommend-workspace">
-    <aside class="card workspace-panel quick-panel">
-      <div class="section-title"><p class="eyebrow">Quick Ask</p><h2>快捷提问</h2></div>
-      <div class="quick-prompts">
-        <button v-for="prompt in quickPrompts" :key="prompt.label" type="button" class="prompt-button" :disabled="loading" @click="runPrompt(prompt.query)">
-          <span>{{ prompt.icon }}</span><strong>{{ prompt.label }}</strong><small>{{ prompt.hint }}</small>
-        </button>
-      </div>
+  <SmartMealComposer
+    v-model="question"
+    v-model:memory-draft="memoryDraft"
+    title="帮我规划这一餐"
+    subtitle="结合健康档案、今日真实供应、评价和校园环境生成推荐。"
+    :prompts="profilePrompts"
+    :loading="loading"
+    :memory-open="memoryOpen"
+    :memory-saving="memorySaving"
+    action-text="生成推荐"
+    loading-text="分析中…"
+    @submit="runPrompt(question)"
+    @prompt="runPrompt"
+    @toggle-memory="memoryOpen = !memoryOpen"
+    @save-memory="saveMemory"
+    @clear-memory="clearMemory"
+  />
 
-      <div class="memory-editor">
-        <div class="section-title horizontal"><div><p class="eyebrow">Memory</p><h2>推荐记忆</h2></div><span class="memory-status">{{ memory.updatedAt ? '已同步' : '待同步' }}</span></div>
-        <textarea v-model="memoryDraft" maxlength="500" placeholder="例如：最近偏好清淡、高蛋白，午餐不想排长队。" />
-        <div class="memory-actions">
-          <button class="secondary" type="button" :disabled="memorySaving" @click="saveMemory">保存</button>
-          <button class="ghost" type="button" :disabled="memorySaving" @click="clearMemory">清除</button>
-        </div>
-      </div>
-    </aside>
+  <section v-if="result" class="trust-status-bar" aria-label="推荐可信度参考">
+    <article><span>依据充分度</span><strong>{{ percent(result?.eval?.groundednessScore) }}</strong></article>
+    <article><span>工具成功率</span><strong>{{ percent(result?.eval?.toolSuccessRate) }}</strong></article>
+    <article><span>安全性</span><strong>{{ percent(result?.eval?.safetyScore) }}</strong></article>
+    <small>指标用于辅助判断，饮食选择仍需结合个人身体状况。</small>
+  </section>
 
+  <section class="recommend-results-grid">
     <main class="card workspace-panel conversation-panel">
       <div class="conversation-header">
         <div><p class="eyebrow">Recommendation</p><h2>你的用餐建议</h2></div>
@@ -44,42 +51,29 @@
       </div>
 
       <div v-if="mealPicks.length" class="recommendation-strip">
+        <div class="recommend-sort"><strong>推荐菜品</strong><div role="group" aria-label="推荐评分排序"><button class="pill" :class="{ active: sortDir === 'desc' }" type="button" @click="sortDir = 'desc'">评分高→低</button><button class="pill" :class="{ active: sortDir === 'asc' }" type="button" @click="sortDir = 'asc'">评分低→高</button></div></div>
         <article v-for="(dish, index) in mealPicks" :key="dish.id" class="recommend-dish" :style="{ '--delay': `${index * 70}ms` }">
           <RouterLink :to="{ path: '/dishes', query: { dish: dish.id } }" class="recommend-dish-media">
             <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" />
             <span v-else class="emoji large">{{ dish.image || '🍽️' }}</span>
           </RouterLink>
-          <div><strong>{{ dish.name }}</strong><small>¥{{ dish.price }} · {{ dish.nutrition?.calories || 0 }} kcal</small></div>
-          <RouterLink class="primary button-link compact order-link" :to="{ path: '/orders', query: { dish: dish.id } }">点餐</RouterLink>
+          <div><strong>{{ dish.name }}</strong><small>评分 {{ dish.displayRating.toFixed(1) }} · ¥{{ dish.price }} · {{ dish.nutrition?.calories || 0 }} kcal</small></div>
+          <RouterLink class="primary button-link compact order-link" :to="{ path: '/dishes', query: { dish: dish.id } }">查看详情</RouterLink>
         </article>
       </div>
-
-      <form class="recommend-input" @submit.prevent="runPrompt(question)">
-        <textarea v-model="question" maxlength="300" placeholder="继续追问：预算 20 元，想吃高蛋白又不辣的午餐…" />
-        <button class="primary send-button" type="submit" :disabled="loading || !question.trim()" aria-label="发送问题" title="发送问题">➤</button>
-      </form>
       <p v-if="message" class="form-message" :class="{ danger: isError }">{{ message }}</p>
     </main>
 
     <aside class="workspace-side">
-      <section class="card workspace-panel trust-panel">
-        <div class="section-title"><p class="eyebrow">Trust</p><h2>可信度参考</h2></div>
-        <div class="trust-metrics">
-          <article><span>依据充分度</span><strong>{{ percent(result?.eval?.groundednessScore) }}</strong><i><b :style="{ width: percent(result?.eval?.groundednessScore) }"></b></i></article>
-          <article><span>工具成功率</span><strong>{{ percent(result?.eval?.toolSuccessRate) }}</strong><i><b :style="{ width: percent(result?.eval?.toolSuccessRate) }"></b></i></article>
-          <article><span>安全性</span><strong>{{ percent(result?.eval?.safetyScore) }}</strong><i><b :style="{ width: percent(result?.eval?.safetyScore) }"></b></i></article>
-        </div>
-        <p class="muted trust-copy">评分用于辅助判断，最终饮食选择仍需结合个人身体状况。</p>
-      </section>
-
       <section class="card workspace-panel source-panel">
         <div class="section-title horizontal"><div><p class="eyebrow">Sources</p><h2>真实引用</h2></div><span class="pill">{{ citations.length }} 条</span></div>
         <div v-if="citations.length" class="source-list">
-          <RouterLink v-for="source in citations" :key="source.id || source.sourceId || source.name" :to="citationLink(source)" class="source-item">
+          <RouterLink v-for="source in visibleRecommendationCitations" :key="source.id || source.sourceId || source.name" :to="citationLink(source)" class="source-item">
             <strong>{{ source.name || source.title || '菜品数据' }}</strong>
             <small>相关度 {{ formatScore(source.score) }}</small>
-            <p>{{ source.snippet || '来源于当前校园菜品库与已发布菜单。' }}</p>
+            <p>{{ compactCitationSnippet(source.snippet) }}</p>
           </RouterLink>
+          <button v-if="citations.length > 3" class="text-link source-toggle" type="button" @click="citationsExpanded = !citationsExpanded">{{ citationsExpanded ? '收起引用' : `查看全部 ${citations.length} 条` }}</button>
         </div>
         <p v-else class="muted">完成一次推荐后显示引用来源。</p>
       </section>
@@ -98,6 +92,8 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import SmartMealComposer from '../components/SmartMealComposer.vue';
+import { buildProfilePrompts, compactCitationSnippet, createRatingMap, sortDishesByRating, visibleCitations } from '../domain/studentDiscovery.js';
 import { validateQuestion } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
@@ -115,21 +111,21 @@ const memory = ref({ summary: '', preferences: {} });
 const memoryDraft = ref('');
 const memorySaving = ref(false);
 const conversationEl = ref(null);
-
-const quickPrompts = [
-  { icon: '◉', label: '按档案推荐', hint: '结合目标与忌口', query: '请根据我的健康档案和今天的供应，推荐一顿合适的餐，并说明理由。' },
-  { icon: '¥', label: '预算内吃好', hint: '控制总价与营养', query: '请在我的预算内推荐高性价比午餐，优先保证蛋白质和蔬菜。' },
-  { icon: '⌁', label: '避开排队', hint: '优先低人流食堂', query: '我不想排长队，请结合食堂拥挤度推荐现在适合去的档口和菜品。' },
-  { icon: '✓', label: '检查忌口', hint: '核对食材风险', query: '请检查今天适合我的菜品，排除健康档案中的忌口和过敏食材。' }
-];
-
-const mealPicks = computed(() => result.value?.mealPlan?.picks || result.value?.plan?.picks || []);
-
-function profilePrompt() {
-  const profile = store.profile;
-  const goalMap = { fatLoss: '减脂', muscleGain: '增肌', maintain: '维持体重', healthy: '健康饮食' };
-  return `请根据我的健康档案自动生成本餐推荐。目标：${goalMap[profile.goal] || '健康饮食'}，预算不超过 ${profile.budgetMax || 20} 元，口味偏好 ${profile.taste || '不限'}，并结合今日真实供应、营养和拥挤度说明选择依据。`;
-}
+const memoryOpen = ref(false);
+const citationsExpanded = ref(false);
+const sortDir = ref('desc');
+const profilePrompts = computed(() => buildProfilePrompts(store.profile, 'recommend'));
+const visibleRecommendationCitations = computed(() => visibleCitations(citations.value, citationsExpanded.value));
+const ratingById = computed(() => createRatingMap(store.rankings.dishes));
+const mealPicks = computed(() => {
+  const rawPicks = result.value?.mealPlan?.picks || result.value?.plan?.picks || [];
+  const dishById = new Map(store.dishes.map((dish) => [String(dish.id), dish]));
+  const hydrated = rawPicks.map((pick) => {
+    const id = pick.id || pick.dishId;
+    return { ...(dishById.get(String(id)) || {}), ...pick, id };
+  }).filter((dish) => dish.id);
+  return sortDishesByRating(hydrated, ratingById.value, sortDir.value);
+});
 
 async function runPrompt(rawText) {
   const text = String(rawText || '').trim();
@@ -142,6 +138,7 @@ async function runPrompt(rawText) {
   loading.value = true;
   message.value = '';
   isError.value = false;
+  citationsExpanded.value = false;
   conversation.value.push({ role: 'user', content: text });
   question.value = '';
   await scrollToLatest();
@@ -249,12 +246,15 @@ function citationLink(source) {
 
 onMounted(async () => {
   await loadMemory();
-  await runPrompt(profilePrompt());
+  await runPrompt(profilePrompts.value[0]?.query || '请根据我的健康档案和今天的真实供应推荐一顿合适的餐。');
 });
 </script>
 
 <style scoped>
 .recommendation-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.trust-status-bar { display: grid; grid-template-columns: repeat(3, minmax(120px, .55fr)) minmax(240px, 1.4fr); align-items: center; gap: 10px; margin: 14px 0; padding: 10px 14px; border: 1px solid rgba(31,122,77,.14); background: #f7fbf5; }
+.trust-status-bar article { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; border-right: 1px solid rgba(31,122,77,.12); font-size: 12px; }.trust-status-bar strong { color: var(--primary-dark); }.trust-status-bar small { color: var(--muted); line-height: 1.45; }
+.recommend-results-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, .72fr); gap: 16px; align-items: start; }
 .recommend-workspace { display: grid; grid-template-columns: minmax(210px, .72fr) minmax(420px, 1.55fr) minmax(240px, .82fr); gap: 16px; align-items: start; }
 .workspace-panel { padding: 18px; border-radius: 8px; }
 .quick-panel { display: grid; gap: 22px; position: sticky; top: 18px; }
@@ -268,7 +268,7 @@ onMounted(async () => {
 .memory-status { font-size: 11px; color: var(--primary-dark); }
 .memory-actions { display: flex; gap: 8px; }
 .memory-actions button { flex: 1; }
-.conversation-panel { min-height: 680px; display: flex; flex-direction: column; gap: 16px; }
+.conversation-panel { min-height: 570px; display: flex; flex-direction: column; gap: 16px; }
 .conversation-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .live-indicator { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--primary-dark); white-space: nowrap; }
 .live-indicator i { width: 8px; height: 8px; border-radius: 50%; background: #36a567; box-shadow: 0 0 0 5px rgba(54, 165, 103, .12); }
@@ -284,6 +284,7 @@ onMounted(async () => {
 .assistant-thinking span:nth-child(2) { animation-delay: .12s; }.assistant-thinking span:nth-child(3) { animation-delay: .24s; }
 .assistant-thinking p { flex-basis: 100%; text-align: center; }
 .recommendation-strip { display: grid; gap: 9px; }
+.recommend-sort { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }.recommend-sort > div { display: flex; gap: 7px; }.recommend-sort .pill { border: 1px solid rgba(31,122,77,.12); background: #f8fbf7; }.recommend-sort .pill.active { color: #fff; background: var(--primary); }
 .recommend-dish { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px; border: 1px solid rgba(31, 122, 77, .12); border-radius: 8px; animation: dish-in .32s ease both; animation-delay: var(--delay); }
 .recommend-dish-media { width: 58px; aspect-ratio: 1; overflow: hidden; border-radius: 6px; background: #edf6e9; display: grid; place-items: center; }
 .recommend-dish-media img { width: 100%; height: 100%; object-fit: cover; }
@@ -302,21 +303,23 @@ onMounted(async () => {
 .source-list { display: grid; gap: 9px; }
 .source-item { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid rgba(31, 122, 77, .1); color: inherit; text-decoration: none; }
 .source-item p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.source-toggle { width: max-content; justify-self: start; margin-top: 3px; }
 .pending-action { display: grid; gap: 7px; padding: 10px 0; border-bottom: 1px solid rgba(31, 122, 77, .1); }
 .pending-action > div { display: flex; gap: 8px; }
 @keyframes thinking { 0%, 100% { transform: translateY(0); opacity: .45; } 50% { transform: translateY(-6px); opacity: 1; } }
 @keyframes message-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes dish-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
 @media (max-width: 1180px) {
-  .recommend-workspace { grid-template-columns: 230px minmax(0, 1fr); }
-  .workspace-side { grid-column: 1 / 3; grid-template-columns: repeat(3, minmax(0, 1fr)); position: static; }
+  .recommend-results-grid { grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr); }
+  .trust-status-bar { grid-template-columns: repeat(3, 1fr); }.trust-status-bar small { grid-column: 1 / 4; }
 }
 @media (max-width: 760px) {
   .recommendation-heading { align-items: stretch; flex-direction: column; }
   .recommendation-heading .button-link { width: 100%; justify-content: center; }
-  .recommend-workspace { grid-template-columns: 1fr; }
+  .recommend-results-grid { grid-template-columns: 1fr; }
   .quick-panel, .workspace-side { position: static; }
   .workspace-side { grid-column: auto; grid-template-columns: 1fr; }
+  .trust-status-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); }.trust-status-bar article { align-items: flex-start; flex-direction: column; }.trust-status-bar small { grid-column: 1 / 4; }
   .quick-prompts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conversation-panel { min-height: 600px; }
   .message { max-width: 94%; }
@@ -325,6 +328,8 @@ onMounted(async () => {
   .quick-prompts { grid-template-columns: 1fr; }
   .recommend-dish { grid-template-columns: 52px minmax(0, 1fr); }
   .recommend-dish .button-link { grid-column: 1 / 3; width: 100%; justify-content: center; }
+  .recommend-sort { align-items: stretch; flex-direction: column; }.recommend-sort > div { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .trust-status-bar { grid-template-columns: 1fr; }.trust-status-bar article { align-items: center; flex-direction: row; padding: 0 0 8px; border-right: 0; border-bottom: 1px solid rgba(31,122,77,.1); }.trust-status-bar small { grid-column: auto; }
   .recommend-input { grid-template-columns: minmax(0, 1fr) 44px; }
 }
 @media (prefers-reduced-motion: reduce) {

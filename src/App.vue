@@ -85,7 +85,7 @@
         <template v-for="group in visibleNavGroups" :key="group.label">
           <p class="nav-section-label">{{ group.label }}</p>
           <RouterLink v-for="item in group.items" :key="navKey(item)" :to="item.to" custom v-slot="{ href, navigate }">
-            <a :href="href" :class="{ active: isNavActive(item) }" @click="handleNavClick(navigate, $event)"><span>{{ item.label }}</span><span v-if="item.featured" class="nav-badge">NEW</span></a>
+            <a :href="href" :class="{ active: isNavActive(item) }" @click="handleNavClick(navigate, $event)"><span>{{ item.label }}</span><span v-if="item.badge || item.featured" class="nav-badge">{{ item.badge || 'NEW' }}</span></a>
           </RouterLink>
         </template>
       </nav>
@@ -126,17 +126,17 @@ const roleFeatures = {
   super_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent'])
 };
 const navItems = [
-  { to: '/', label: '学生首页', feature: 'student', group: '发现与点餐' },
-  { to: '/orders', label: '今日点餐', feature: 'student', group: '发现与点餐' },
-  { to: '/canteens', label: '食堂导航', feature: 'student', group: '发现与点餐' },
-  { to: '/dishes', label: '菜品检索', feature: 'student', group: '发现与点餐' },
-  { to: '/rankings', label: '排行榜', feature: 'student', group: '发现与点餐' },
-  { to: '/regions', label: '区域推荐', feature: 'student', group: '发现与点餐' },
-  { to: '/recommend', label: '智能推荐', feature: 'student', group: '智能与健康', featured: true },
-  { to: '/health-profile', label: '健康档案', feature: 'student', group: '智能与健康' },
-  { to: '/saved', label: '收藏与吃过', feature: 'student', group: '个人记录' },
+  { to: '/', label: '学生首页', feature: 'student', group: '首页' },
+  { to: '/dishes', label: '菜品检索', feature: 'student', group: '智能吃饭', featured: true },
+  { to: '/recommend', label: '智能推荐', feature: 'student', group: '智能吃饭', featured: true },
   { to: '/reviews', label: '菜品评价', feature: 'student', group: '校园互动' },
   { to: '/community', label: '校园帖子', feature: 'student', group: '校园互动', featured: true },
+  { to: '/canteens', label: '食堂导航', feature: 'student', group: '更多探索' },
+  { to: '/rankings', label: '排行榜', feature: 'student', group: '更多探索' },
+  { to: '/regions', label: '区域推荐', feature: 'student', group: '更多探索' },
+  { to: '/saved', label: '收藏与吃过', feature: 'student', group: '个人记录' },
+  { to: '/orders', label: '今日点餐', feature: 'student', group: '待开发', badge: '预览' },
+  { to: '/health-profile', label: '健康档案', feature: 'student', group: '健康档案' },
   { to: '/admin?panel=reviews&tab=reviews', label: '内容审核', feature: 'reviews', group: '数据中心' },
   { to: '/admin?panel=data', label: '数据管理', feature: 'data_manage', group: '数据中心' },
   { to: '/admin/input', label: '数据录入', feature: 'data_input', group: '数据中心' },

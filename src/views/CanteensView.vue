@@ -398,13 +398,14 @@ function crowdClass(value) {
 .back-row { margin-bottom: 14px; }
 .back-btn { cursor: pointer; border: 1px solid rgba(255,255,255,.6); background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(255,255,255,.56)); }
 
-.canteen-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.canteen-card { cursor: pointer; transition: transform .16s, box-shadow .16s; }
-.canteen-card:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+.canteen-grid { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.canteen-card { cursor: pointer; padding: 18px; animation: canteen-enter .42s ease both; transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
+.canteen-card:nth-child(2) { animation-delay: 70ms; }.canteen-card:nth-child(3) { animation-delay: 140ms; }.canteen-card:nth-child(4) { animation-delay: 210ms; }
+.canteen-card:hover { transform: translateY(-4px); border-color: rgba(31,122,77,.2); box-shadow: 0 14px 30px rgba(21,95,59,.1); }.canteen-card:active { transform: scale(.985); }
 
-.canteen-visual { overflow: hidden; border-radius: 22px; margin-bottom: 16px; background: linear-gradient(135deg, rgba(235,247,229,.52), rgba(255,255,255,.42)); border: 1px solid rgba(255,255,255,.6); }
-.canteen-hero-img { display: block; width: 100%; height: 160px; object-fit: cover; }
-.canteen-fallback-hero { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 160px; }
+.canteen-visual { overflow: hidden; border-radius: 8px; margin-bottom: 13px; background: linear-gradient(135deg, rgba(235,247,229,.52), rgba(255,255,255,.42)); border: 1px solid rgba(255,255,255,.6); }
+.canteen-hero-img { display: block; width: 100%; height: 126px; object-fit: cover; transition: transform .45s ease; }.canteen-card:hover .canteen-hero-img { transform: scale(1.035); }
+.canteen-fallback-hero { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 126px; }
 .hero-emoji { font-size: 48px; }
 
 .enter-hint { font-size: 12px; color: var(--accent, #1f7a4d); margin-top: 8px; }
@@ -440,6 +441,7 @@ function crowdClass(value) {
 .dish-preview-info { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
 
 .empty-state { padding: 32px; text-align: center; }
+@keyframes canteen-enter { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
 /* Mobile */
 @media (max-width: 640px) {
@@ -450,6 +452,6 @@ function crowdClass(value) {
   .dish-preview-img { width: 100%; height: 140px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .canteen-card, .stall-card, .dish-preview-card { transition: none; }
+  .canteen-card, .canteen-hero-img, .stall-card, .dish-preview-card { animation: none; transition: none; }
 }
 </style>

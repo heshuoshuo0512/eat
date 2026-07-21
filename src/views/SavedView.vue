@@ -11,7 +11,12 @@
     <article><strong>{{ totalEaten }}</strong><span>累计吃过</span></article>
   </section>
 
-  <section class="saved-section">
+  <div class="saved-tabs segmented" role="tablist" aria-label="个人记录类型">
+    <button type="button" role="tab" :aria-selected="activeSavedTab === 'favorites'" :class="{ active: activeSavedTab === 'favorites' }" @click="activeSavedTab = 'favorites'">收藏菜品</button>
+    <button type="button" role="tab" :aria-selected="activeSavedTab === 'history'" :class="{ active: activeSavedTab === 'history' }" @click="activeSavedTab = 'history'">吃过统计</button>
+  </div>
+
+  <section v-if="activeSavedTab === 'favorites'" class="saved-section saved-panel">
     <div class="section-title horizontal">
       <div><p class="eyebrow">Favorites</p><h2>收藏菜品</h2></div>
       <RouterLink class="text-link" to="/dishes">继续找菜</RouterLink>
@@ -39,7 +44,7 @@
     </div>
   </section>
 
-  <section class="saved-section">
+  <section v-else class="saved-section saved-panel">
     <div class="section-title"><p class="eyebrow">History</p><h2>吃过统计</h2></div>
     <div v-if="eatenEntries.length" class="history-list">
       <article v-for="entry in eatenEntries" :key="entry.id" class="history-row">
@@ -62,6 +67,7 @@ import { useCanteenStore } from '../stores/canteenStore.js';
 const store = useCanteenStore();
 const message = ref('');
 const isError = ref(false);
+const activeSavedTab = ref('favorites');
 const preferenceMap = computed(() => new Map(store.dishPreferences.map((item) => [item.dishId, item])));
 
 const favoriteEntries = computed(() => store.dishes
@@ -108,7 +114,9 @@ function markEaten(dishId) {
 .saved-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 28px; }
 .saved-summary article { padding: 18px; border: 1px solid rgba(31, 122, 77, .14); background: #fff; border-radius: 8px; display: grid; gap: 4px; }
 .saved-summary strong { color: var(--primary-dark); font-size: 26px; }
+.saved-tabs { display: inline-grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); margin-bottom: 22px; padding: 4px; border: 1px solid rgba(31,122,77,.16); background: #eef5eb; }.saved-tabs button { border: 0; background: transparent; color: var(--muted); }.saved-tabs button.active { background: #fff; color: var(--primary-dark); box-shadow: 0 3px 10px rgba(21,95,59,.1); }
 .saved-section { margin-bottom: 32px; }
+.saved-panel { animation: saved-panel-in .26s ease both; }
 .saved-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .saved-item { display: grid; grid-template-columns: 132px minmax(0, 1fr); min-height: 132px; overflow: hidden; border: 1px solid rgba(31, 122, 77, .14); border-radius: 8px; background: #fff; transition: transform .22s ease, box-shadow .22s ease; }
 .saved-item:hover { transform: translateY(-3px); box-shadow: 0 14px 30px rgba(21, 95, 59, .1); }
@@ -124,8 +132,10 @@ function markEaten(dishId) {
 .history-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-bottom: 1px solid rgba(31, 122, 77, .12); background: #fff; }
 .history-count { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: var(--primary); color: #fff; font-weight: 800; }
 .history-main { display: grid; gap: 4px; flex: 1; min-width: 0; }
+@keyframes saved-panel-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 820px) { .saved-grid { grid-template-columns: 1fr; } }
 @media (max-width: 600px) {
+  .saved-tabs { width: 100%; }
   .saved-summary { grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .saved-summary article { padding: 12px 8px; text-align: center; }
   .saved-summary strong { font-size: 21px; }
@@ -133,5 +143,5 @@ function markEaten(dishId) {
   .history-row { align-items: flex-start; flex-wrap: wrap; }
   .history-row button { width: 100%; }
 }
-@media (prefers-reduced-motion: reduce) { .saved-item { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .saved-item { transition: none; }.saved-panel { animation: none; } }
 </style>

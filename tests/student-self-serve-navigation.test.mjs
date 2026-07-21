@@ -106,18 +106,12 @@ describe('App.vue exposes /orders in student navigation', () => {
 /*  3. HomeView: student homepage has /orders entry points            */
 /* ================================================================== */
 describe('HomeView has /orders entry for students', () => {
-  it('hero section links to /orders (today ordering)', () => {
+  it('feature orbit contains the preview ordering entry', () => {
     assert.ok(
-      /RouterLink[^>]*to="\/orders"/.test(homeTemplate),
-      'hero or quick-links must contain a RouterLink to /orders'
+      /id:\s*'orders'[^\n]*to:\s*'\/orders'/.test(homeVue),
+      'student feature list must contain /orders'
     );
-  });
-
-  it('at least one /orders link appears outside the admin template branch', () => {
-    // The student template block is the first <template v-if="!isAdmin">.
-    // We just check that at least two /orders links exist (hero + quick-links).
-    const matches = homeTemplate.match(/RouterLink[^>]*to="\/orders"/g) || [];
-    assert.ok(matches.length >= 2, `expected ≥ 2 /orders links in student section, found ${matches.length}`);
+    assert.match(homeVue, /待开发 · 可预览/);
   });
 });
 
@@ -147,24 +141,15 @@ describe('DishesView links to /orders with dish query parameter', () => {
 /* ================================================================== */
 /*  5. RecommendView: reveals / panels link to /orders with dish      */
 /* ================================================================== */
-describe('RecommendView links to /orders with dish query parameter', () => {
-  it('at least one RouterLink points to /orders with dish query', () => {
+describe('RecommendView links picks to the shared dish detail', () => {
+  it('recommended dishes point to /dishes with dish query', () => {
     assert.ok(
-      recommendTemplate.includes("path: '/orders'") || recommendTemplate.includes("path:'/orders'"),
-      'RecommendView must contain a link to /orders'
+      recommendTemplate.includes("path: '/dishes'") || recommendTemplate.includes("path:'/dishes'"),
+      'RecommendView must contain a link to /dishes'
     );
     assert.ok(
       /query:\s*\{\s*dish:/.test(recommendTemplate),
-      'RecommendView /orders links must carry a dish query parameter'
-    );
-  });
-
-  it('top-pick section links to /orders (order this dish)', () => {
-    // Top pick has an order-link icon button to /orders with the top dish id
-    assert.ok(
-      /order-link[^>]*:to=\{[^}]*path:\s*'\/orders'/.test(recommendTemplate) ||
-      /class="[^"]*order-link[^"]*"[^>]*:to=/.test(recommendTemplate),
-      'recommend top-pick must have an order link to /orders'
+      'RecommendView detail links must carry a dish query parameter'
     );
   });
 });
