@@ -51,6 +51,31 @@
       </div>
     </section>
 
+    <section class="region-preview">
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">区域推荐</p>
+          <h2>按风味找到想吃的</h2>
+        </div>
+        <RouterLink class="text-link" to="/regions">查看全部区域</RouterLink>
+      </div>
+      <div class="region-preview-grid">
+        <RouterLink
+          v-for="region in featuredRegions"
+          :key="region.id"
+          class="region-preview-card"
+          :to="{ path: '/regions', query: { region: region.id, sort: 'forYou' } }"
+        >
+          <img v-if="region.heroDish?.imageUrl" :src="region.heroDish.imageUrl" :alt="region.name" />
+          <span v-else class="emoji large">{{ region.icon }}</span>
+          <span>
+            <strong>{{ region.name }}</strong>
+            <small>{{ region.count }} 道菜 · ⭐ {{ region.averageRating.toFixed(1) }}</small>
+          </span>
+        </RouterLink>
+      </div>
+    </section>
+
     <section class="card">
       <div class="section-title horizontal">
         <div>
@@ -301,6 +326,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import { summarizeRegions } from '../domain/regionRecommendation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
@@ -309,6 +335,13 @@ const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'audit
 const isAdmin = computed(() => store.user && adminRoleSet.has(store.user.role));
 
 const topDish = computed(() => store.rankings.dishes[0]);
+const regionSummaries = computed(() => summarizeRegions(store.dishes, {
+  ratingById: new Map(store.rankings.dishes.map((dish) => [dish.id, dish])),
+  preferences: store.dishPreferences
+}));
+const featuredRegions = computed(() => [...regionSummaries.value]
+  .sort((left, right) => right.totalSales - left.totalSales)
+  .slice(0, 4));
 const menuSourceLabel = computed(() => (store.todayMenu.dishes.length ? '今日供应' : '菜品库兜底'));
 
 const recContext = computed(() => store.contextualRecommendation);
@@ -429,6 +462,51 @@ onMounted(async () => {
   gap: 12px;
 }
 
+.region-preview { display: grid; gap: 1rem; }
+
+.region-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .875rem;
+}
+
+.region-preview-card {
+  display: grid;
+  grid-template-columns: 4.25rem minmax(0, 1fr);
+  align-items: center;
+  gap: .75rem;
+  min-width: 0;
+  padding: .75rem;
+  border: 1px solid rgba(255,255,255,.72);
+  border-radius: 1.125rem;
+  background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(244,250,239,.7));
+  color: inherit;
+  text-decoration: none;
+  box-shadow: var(--shadow-soft);
+  transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease);
+}
+
+.region-preview-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(31,122,77,.16);
+  box-shadow: var(--shadow-hover);
+}
+
+.region-preview-card img,
+.region-preview-card > .emoji {
+  display: grid;
+  place-items: center;
+  width: 4.25rem;
+  height: 4.25rem;
+  object-fit: cover;
+  border-radius: .875rem;
+  background: rgba(235,247,229,.72);
+}
+
+.region-preview-card span:last-child { display: grid; gap: .25rem; min-width: 0; }
+.region-preview-card strong, .region-preview-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.region-preview-card small { color: var(--muted); font-size: .75rem; }
+
 .quick-link-item {
   display: flex;
   align-items: center;
@@ -495,5 +573,13 @@ onMounted(async () => {
 .rec-reason {
   color: var(--primary, #4f46e5);
   font-style: italic;
+}
+
+@media (max-width: 1020px) {
+  .region-preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .region-preview-grid { grid-template-columns: 1fr; }
 }
 </style>

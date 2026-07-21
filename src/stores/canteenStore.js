@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { buildMealPlan, calculateRanking, contextualRankDishes, normalizeProfile } from '../domain/recommendation.js';
+import { previewDishes as previewExtraDishes } from '../domain/previewData.js';
+import { canteens as seedCanteens, dishes as seedDishes, reviews as seedReviews, stalls as seedStalls, userDishPreferences as seedPreferences } from '../domain/seedData.js';
 import { apiClient } from '../services/apiClient.js';
 
 function emptyState() {
@@ -63,6 +65,31 @@ export const useCanteenStore = defineStore('canteen', () => {
     } finally {
       loading.value = false;
     }
+  }
+
+  function loadPreviewState() {
+    const previewDishPool = [...seedDishes, ...previewExtraDishes];
+    const previewMenuDishes = previewDishPool
+      .filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive' && dish.mealTypes?.includes('lunch'))
+      .map((dish) => ({ ...dish, supplyStatus: 'available' }));
+    setState({
+      session: { user: { id: 'preview-student', username: 'preview-student', nickname: '页面预览', role: 'student' } },
+      canteens: seedCanteens,
+      stalls: seedStalls,
+      dishes: previewDishPool,
+      reviews: seedReviews,
+      dishPreferences: seedPreferences,
+      profile: normalizeProfile({ goal: 'healthy', budgetMax: 20, mealType: 'lunch' })
+    });
+    todayMenu.value = {
+      date: '2026-07-21',
+      mealType: 'lunch',
+      menus: [],
+      dishes: previewMenuDishes,
+      source: 'preview'
+    };
+    error.value = '';
+    return state.value;
   }
 
   const user = computed(() => state.value.session.user);
@@ -590,6 +617,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     contextualRecommendation,
     adminEnvironment,
     load,
+    loadPreviewState,
     login,
     register,
     logout,

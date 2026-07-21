@@ -3,6 +3,7 @@ import HomeView from '../views/HomeView.vue';
 import CanteensView from '../views/CanteensView.vue';
 import DishesView from '../views/DishesView.vue';
 import RankingsView from '../views/RankingsView.vue';
+import RegionRecommendationsView from '../views/RegionRecommendationsView.vue';
 import RecommendView from '../views/RecommendView.vue';
 import AdminView from '../views/AdminView.vue';
 import AgentView from '../views/AgentView.vue';
@@ -19,6 +20,7 @@ export const router = createRouter({
     { path: '/canteens', name: 'canteens', component: CanteensView, meta: { audience: 'student' } },
     { path: '/dishes', name: 'dishes', component: DishesView, meta: { audience: 'student' } },
     { path: '/rankings', name: 'rankings', component: RankingsView, meta: { audience: 'student' } },
+    { path: '/regions', name: 'regions', component: RegionRecommendationsView, meta: { audience: 'student' } },
     { path: '/recommend', name: 'recommend', component: RecommendView, meta: { audience: 'student' } },
     { path: '/visual-meal', name: 'visual-meal', component: VisualMealView, meta: { audience: 'student', hidden: true } },
     { path: '/orders', name: 'orders', component: OrdersView, meta: { audience: 'student' } },

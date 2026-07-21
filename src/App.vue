@@ -1,6 +1,6 @@
 <template>
   <a class="skip-link" href="#main-content">跳到主要内容</a>
-  <div v-if="!store.user" class="login-landing">
+  <div v-if="!store.user && !previewMode" class="login-landing">
     <section class="login-hero">
       <RouterLink class="brand" to="/">
         <span class="brand-mark">食</span>
@@ -89,10 +89,10 @@
           </RouterLink>
         </template>
       </nav>
-      <section class="session-card compact">
+      <section v-if="store.user" class="session-card compact">
         <p class="eyebrow">当前身份</p>
         <strong>{{ store.user.nickname }}</strong>
-        <small>{{ isAdminFamily ? '管理员端已解锁' : '学生端体验' }}</small>
+        <small>{{ previewMode ? '区域推荐预览模式' : (isAdminFamily ? '管理员端已解锁' : '学生端体验') }}</small>
         <button class="ghost" type="button" @click="store.logout">退出登录</button>
       </section>
     </aside>
@@ -112,6 +112,7 @@ import { useCanteenStore } from './stores/canteenStore.js';
 const store = useCanteenStore();
 const route = useRoute();
 const router = useRouter();
+const previewMode = computed(() => route.query.preview === '1' || route.query.preview === 'regions');
 const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
 const roleFeatures = {
   student: new Set(['student']),
@@ -130,6 +131,7 @@ const navItems = [
   { to: '/canteens', label: '食堂导航', feature: 'student', group: '发现与点餐' },
   { to: '/dishes', label: '菜品检索', feature: 'student', group: '发现与点餐' },
   { to: '/rankings', label: '排行榜', feature: 'student', group: '发现与点餐' },
+  { to: '/regions', label: '区域推荐', feature: 'student', group: '发现与点餐' },
   { to: '/recommend', label: '健康推荐', feature: 'student', group: '健康与计划' },
   { to: '/recommend?panel=favorites', label: '收藏与吃过', feature: 'student', group: '个人记录' },
   { to: '/admin?panel=reviews', label: '评价管理', feature: 'reviews', group: '数据中心' },
@@ -174,6 +176,10 @@ const registerError = ref('');
 const mobileNavOpen = ref(false);
 
 onMounted(async () => {
+  if (previewMode.value) {
+    store.loadPreviewState();
+    return;
+  }
   await store.load();
   const audience = route.meta.audience;
   const isAdmin = adminRoleSet.has(store.user?.role);
