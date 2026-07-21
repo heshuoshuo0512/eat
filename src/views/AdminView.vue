@@ -34,7 +34,7 @@
 
     <!-- 递进式层级树：食堂 → 档口 → 菜品 -->
     <section class="card admin-form">
-      <div class="section-title horizontal" style="margin-bottom:8px;">
+      <div class="section-title horizontal" style="margin-bottom:0.5rem;">
         <div>
           <p class="eyebrow">Hierarchy Browser</p>
           <h2>食堂 → 档口 → 菜品</h2>
@@ -43,13 +43,13 @@
       </div>
 
       <div class="tree" v-if="store.canteens.length">
-        <div v-for="canteen in store.canteens" :key="canteen.id" style="margin-bottom:4px;">
+        <div v-for="canteen in store.canteens" :key="canteen.id" style="margin-bottom:0.25rem;">
           <!-- 食堂行 -->
           <div class="canteen-row" @click="toggleCanteen(canteen.id)">
             <span :class="['tree-caret', { open: openCanteens.has(canteen.id) }]">▶</span>
             <span class="tree-icon">🏢</span>
             <span class="tree-name">{{ canteen.name }}</span>
-            <span class="muted" style="font-size:13px;">{{ canteen.location }}</span>
+            <span class="muted" style="font-size:0.8125rem;">{{ canteen.location }}</span>
             <div class="tree-stats">
               <div class="tree-stat"><strong>{{ stallsByCanteen(canteen.id).length }}</strong><span>档口</span></div>
               <div class="tree-stat"><strong>{{ dishesByCanteen(canteen.id).length }}</strong><span>菜品</span></div>
@@ -75,7 +75,7 @@
                     <div v-for="dish in dishesByStall(stall.id)" :key="dish.id" class="dish-row-tree">
                       <span>🍛</span>
                       <span style="flex:1;">{{ dish.name }}</span>
-                      <span class="muted" style="font-size:12px;">{{ dish.taste }} · {{ dish.nutrition?.calories || '—' }}kcal</span>
+                      <span class="muted" style="font-size:0.75rem;">{{ dish.taste }} · {{ dish.nutrition?.calories || '—' }}kcal</span>
                       <span style="color:var(--primary-dark);font-weight:720;">¥{{ dish.price }}</span>
                     </div>
                   </template>
@@ -118,7 +118,7 @@
         <label>标签<input v-model="canteenForm.tags" placeholder="低脂, 夜宵" /></label>
         <label>简介<textarea v-model="canteenForm.description" required /></label>
         <label>拥挤度 (0-100)<input v-model.number="canteenForm.crowdLevel" type="number" min="0" max="100" /></label>
-        <div v-if="canteenForm.imageUrl" class="vision-preview" style="max-width:200px;margin-bottom:8px;"><img :src="canteenForm.imageUrl" :alt="canteenForm.name || '食堂图片'" /></div>
+        <div v-if="canteenForm.imageUrl" class="vision-preview" style="max-width:12.5rem;margin-bottom:0.5rem;"><img :src="canteenForm.imageUrl" :alt="canteenForm.name || '食堂图片'" /></div>
         <button class="primary" type="submit">{{ canteenForm.id ? '更新食堂' : '保存食堂' }}</button>
       </form>
 
@@ -139,7 +139,7 @@
         <label>描述<textarea v-model="stallForm.description" /></label>
         <label class="check-label"><input v-model="stallForm.open" type="checkbox" /> 营业中</label>
         <button class="primary" type="submit">{{ stallForm.id ? '更新档口' : '保存档口' }}</button>
-        <div class="table-wrap" style="margin-top:12px;">
+        <div class="table-wrap" style="margin-top:0.75rem;">
           <table>
             <thead><tr><th>档口</th><th>食堂</th><th>楼层</th><th>品类</th><th>评分</th><th>操作</th></tr></thead>
             <tbody>
@@ -200,7 +200,7 @@
         </div>
         <label class="check-label"><input v-model="dishForm.halal" type="checkbox" /> 清真</label>
         <label>过敏原提示<input v-model="dishForm.allergens" placeholder="花生, 乳制品, 麸质" /></label>
-        <div v-if="dishForm.imageUrl" class="vision-preview" style="max-width:240px;margin-bottom:8px;">
+        <div v-if="dishForm.imageUrl" class="vision-preview" style="max-width:15rem;margin-bottom:0.5rem;">
           <img :src="dishForm.imageUrl" :alt="dishForm.name || '菜品图片'" />
         </div>
         <button class="primary" type="submit">{{ dishForm.id ? '更新菜品' : '保存菜品' }}</button>

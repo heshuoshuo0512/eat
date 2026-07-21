@@ -79,7 +79,7 @@
         </RouterLink>
       </div>
       <p v-else class="muted">{{ recLoading ? '正在加载推荐...' : '暂无推荐，去今日点餐看看今天有什么好吃的吧！' }} <RouterLink v-if="!recLoading" class="text-link" to="/orders">查看今日供应</RouterLink></p>
-      <div v-if="recContext.totals" class="metric-grid compact" style="margin-top:12px;">
+      <div v-if="recContext.totals" class="metric-grid compact" style="margin-top:0.75rem;">
         <article><strong>{{ recContext.totals.calories || 0 }}</strong><span>kcal 合计</span></article>
         <article><strong>{{ recContext.totals.protein || 0 }}g</strong><span>蛋白</span></article>
         <article><strong>¥{{ recContext.totals.price || 0 }}</strong><span>总价</span></article>

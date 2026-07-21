@@ -106,7 +106,7 @@
               @click="isExpanded = !isExpanded">
         {{ isExpanded ? '收起 ▲' : `展开更多 ▼ (共${result.steps.length}条)` }}
       </button>
-      <div class="metric-grid compact" style="margin-top:12px;">
+      <div class="metric-grid compact" style="margin-top:0.75rem;">
         <article>
           <strong>{{ result.steps.length }}</strong>
           <span>工具调用</span>

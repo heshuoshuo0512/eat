@@ -136,7 +136,7 @@
         </span>
         <span class="rating">{{ (dish.rating || 0).toFixed(1) }}</span>
       </button>
-      <p v-if="!sortedDishes.length" class="muted" style="padding:18px;text-align:center;">没有匹配的菜品，试试调整筛选条件。</p>
+      <p v-if="!sortedDishes.length" class="muted" style="padding:1.125rem;text-align:center;">没有匹配的菜品，试试调整筛选条件。</p>
     </div>
 
     <aside v-if="detail" class="card detail-panel">
@@ -144,10 +144,10 @@
         <p class="eyebrow">菜品详情</p>
         <h2>{{ detail.name }}</h2>
       </div>
-      <div v-if="detail.imageUrl" class="vision-preview" style="max-width:100%;margin-bottom:12px;">
+      <div v-if="detail.imageUrl" class="vision-preview" style="max-width:100%;margin-bottom:0.75rem;">
         <img :src="detail.imageUrl" :alt="detail.name" />
       </div>
-      <span v-else class="emoji large" style="display:block;margin-bottom:12px;">{{ detail.image }}</span>
+      <span v-else class="emoji large" style="display:block;margin-bottom:0.75rem;">{{ detail.image }}</span>
       <p class="muted">{{ detail.description }}</p>
 
       <!-- Precise location: primary → sub → stall -->
@@ -204,7 +204,7 @@
         <p v-if="message" class="form-message">{{ message }}</p>
       </form>
 
-      <button class="pill sort-btn" type="button" @click="jumpToReviews" style="margin-top:8px;">查看评价列表 ↓</button>
+      <button class="pill sort-btn" type="button" @click="jumpToReviews" style="margin-top:0.5rem;">查看评价列表 ↓</button>
 
       <div ref="reviewSection" class="reviews">
         <h3>评价列表</h3>
