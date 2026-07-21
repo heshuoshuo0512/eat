@@ -16,6 +16,8 @@ const postgresBaseline = readFileSync(join(root, 'migrations', 'postgres', '001_
 const runtimeFoundation = readFileSync(join(root, 'server', 'migrations', '001_enterprise_foundation.sql'), 'utf8');
 const runtimeColumnsUpgrade = readFileSync(join(root, 'server', 'migrations', '009_dish_menu_runtime_columns.sql'), 'utf8');
 const runtimeColumnsVersion = '009_dish_menu_runtime_columns';
+const regionAllergenUpgrade = readFileSync(join(root, 'server', 'migrations', '010_region_allergen_contract.sql'), 'utf8');
+const regionAllergenVersion = '010_region_allergen_contract';
 
 class FakeMigrationDatabase {
   constructor() {
@@ -158,6 +160,9 @@ describe('PostgreSQL migration runner', () => {
       assert.match(runtimeColumnsUpgrade, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`, 'i'));
       assert.match(runtimeColumnsUpgrade, new RegExp(`ALTER COLUMN ${column} SET NOT NULL`, 'i'));
     }
+    assert.match(regionAllergenUpgrade, /ADD COLUMN IF NOT EXISTS regional_taste/i);
+    assert.match(regionAllergenUpgrade, /ADD COLUMN IF NOT EXISTS allergies_json/i);
+    assert.match(regionAllergenUpgrade, /ALTER COLUMN allergies_json SET NOT NULL/i);
   });
 
   it('normalizes old explicit migration names before running missing migrations', async () => {
@@ -175,7 +180,7 @@ describe('PostgreSQL migration runner', () => {
 
     const applied = await runMigrations(db);
 
-    assert.deepEqual(applied, ['004_database_workbench', '005_campus_posts', runtimeColumnsVersion]);
+    assert.deepEqual(applied, ['004_database_workbench', '005_campus_posts', runtimeColumnsVersion, regionAllergenVersion]);
     assert.ok(db.versions.has('001_enterprise_foundation'));
     assert.ok(db.versions.has('008_retrieval_pgvector'));
     assert.ok(!db.executed.includes('002_generic_review_targets'));
@@ -192,8 +197,8 @@ describe('PostgreSQL migration runner', () => {
 
     const applied = await runMigrations(db);
 
-    assert.deepEqual(applied, [runtimeColumnsVersion]);
-    assert.deepEqual(db.executed, [runtimeColumnsVersion]);
+    assert.deepEqual(applied, [runtimeColumnsVersion, regionAllergenVersion]);
+    assert.deepEqual(db.executed, [runtimeColumnsVersion, regionAllergenVersion]);
     for (const version of migrationVersions.filter((item) => /^00[2-7]_/.test(item))) {
       assert.ok(db.versions.has(version), `${version} should be backfilled`);
     }

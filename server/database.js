@@ -104,6 +104,8 @@ function migrate(db) {
       image_url TEXT,
       description TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
+      regional_taste TEXT NOT NULL DEFAULT '',
+      allergens_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -141,6 +143,7 @@ function migrate(db) {
       taste TEXT NOT NULL DEFAULT '不限',
       halal_only INTEGER NOT NULL DEFAULT 0,
       avoid_json TEXT NOT NULL DEFAULT '[]',
+      allergies_json TEXT NOT NULL DEFAULT '[]',
       updated_at TEXT NOT NULL
     );
 
@@ -397,6 +400,9 @@ function migrate(db) {
   try { db.exec("ALTER TABLE menu_items ADD COLUMN serving_end TEXT NOT NULL DEFAULT '13:30'"); } catch {}
   // Dish allergen info
   try { db.exec("ALTER TABLE dishes ADD COLUMN allergens_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  // Regional display label and health-profile allergen constraints
+  try { db.exec("ALTER TABLE dishes ADD COLUMN regional_taste TEXT NOT NULL DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN allergies_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   // Review moderation status
   try { db.exec("ALTER TABLE reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
   const reviewSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reviews'").get()?.sql || '';
@@ -690,6 +696,7 @@ export function rowToDish(row) {
     calcium: row.calcium || 0,
     iron: row.iron || 0,
     allergens: parseJson(row.allergens_json, []),
+    regionalTaste: row.regional_taste || '',
     rating: row.rating,
     reviewCount: row.review_count,
     sales: row.sales,
@@ -745,12 +752,13 @@ export function rowToProfile(row) {
     taste: row.taste,
     halalOnly: Boolean(row.halal_only),
     avoid: parseJson(row.avoid_json, []),
+    allergies: parseJson(row.allergies_json, []),
     dietaryPattern: row.dietary_pattern || 'balanced',
     spiceLevel: row.spice_level ?? 3,
     nutritionFocus: parseJson(row.nutrition_focus_json, []),
     preferLowCrowd: Boolean(row.prefer_low_crowd),
     favoriteTags: parseJson(row.favorite_tags_json, [])
-  } : { goal: 'healthy', budgetMax: 20, mealType: 'lunch', taste: '不限', halalOnly: false, avoid: [], dietaryPattern: 'balanced', spiceLevel: 3, nutritionFocus: [], preferLowCrowd: false, favoriteTags: [] };
+  } : { goal: 'healthy', budgetMax: 20, mealType: 'lunch', taste: '不限', halalOnly: false, avoid: [], allergies: [], dietaryPattern: 'balanced', spiceLevel: 3, nutritionFocus: [], preferLowCrowd: false, favoriteTags: [] };
 }
 
 export function rowToUser(row) {
