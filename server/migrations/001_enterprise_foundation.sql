@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS dishes (
   cuisine TEXT NOT NULL,
   ingredients_json TEXT NOT NULL DEFAULT '[]',
   tags_json TEXT NOT NULL DEFAULT '[]',
+  allergens_json TEXT NOT NULL DEFAULT '[]',
   halal INTEGER NOT NULL DEFAULT 0,
   meal_types_json TEXT NOT NULL DEFAULT '["lunch","dinner"]',
   calories REAL NOT NULL DEFAULT 0,
@@ -145,6 +146,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   action TEXT NOT NULL,
   entity TEXT NOT NULL,
   entity_id TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
 
@@ -166,7 +168,10 @@ CREATE TABLE IF NOT EXISTS menu_items (
   dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
   price REAL NOT NULL CHECK(price >= 0),
   supply_limit INTEGER NOT NULL DEFAULT 0,
+  supply_count INTEGER NOT NULL DEFAULT 0,
   sold_out INTEGER NOT NULL DEFAULT 0,
+  serving_start TEXT NOT NULL DEFAULT '11:00',
+  serving_end TEXT NOT NULL DEFAULT '13:30',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

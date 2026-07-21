@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../server/database.js';
 import { loadHealthKnowledgeDocuments, loadHealthKnowledgeBase } from '../server/healthKnowledgeBase.js';
-import { searchDocumentsHybrid } from '../server/rag.js';
+import { searchRetrievalIndex } from '../server/retrievalIndex.js';
 
 describe('health knowledge base RAG integration', () => {
   it('loads verified health extracts with citation metadata and chunks', () => {
@@ -17,17 +17,24 @@ describe('health knowledge base RAG integration', () => {
     assert.ok(documents.every((doc) => Number.isInteger(doc.metadata.chunkIndex)));
   });
 
-  it('persists chunks and retrieves a health citation through hybrid search', async () => {
+  it('persists tenant-safe chunks and retrieves a health citation through the retrieval index', async () => {
     const db = openDatabase(':memory:');
     try {
       const imported = await loadHealthKnowledgeBase(db, { chunkSize: 500, chunkOverlap: 50 });
       assert.ok(imported.count > 0);
-      const results = await searchDocumentsHybrid('过敏原 交叉污染 呼吸困难', db, 8);
-      assert.ok(results?.length);
-      const health = results.find((result) => result.sourceType === 'health_knowledge');
+      const result = await searchRetrievalIndex(db, '过敏原 交叉污染 呼吸困难', {
+        tenantId: 'default',
+        sourceTypes: ['health_knowledge'],
+        limit: 8,
+        embeddingProvider: null
+      });
+      assert.ok(result.items.length);
+      assert.equal(result.meta.degraded, true);
+      const health = result.items.find((item) => item.sourceType === 'health_knowledge');
       assert.ok(health, 'expected a health knowledge citation');
       assert.equal(health.metadata.sourceStatus, 'verified_page');
       assert.ok(health.metadata.sourceFile.includes('FDA-food-allergy'));
+      assert.match(health.id, /^retrieval:default:health_knowledge:/);
     } finally {
       db.close();
     }

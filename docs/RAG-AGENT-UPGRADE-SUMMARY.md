@@ -1,161 +1,61 @@
-# RAG/Agent Upgrade Summary
+# 双检索与 Agent 升级摘要
 
-## Completed Work
+更新日期：2026-07-21
 
-### 1. LangChain.js Integration
-- ✅ Installed `@langchain/core`, `@langchain/openai`, `langchain`, `pgvector`
-- ✅ Created `server/rag-langchain.js` - LangChain RAG chain with RetrievalQAChain
-- ✅ Created `server/agent-langchain.js` - ReAct Agent with dynamic tool registration
-- ✅ Implemented hybrid search (vector + lexical)
-- ✅ Added memory types (BufferMemory, SummaryMemory)
+## 已完成
 
-### 2. pgvector Integration
-- ✅ Created `server/vectorstore-pgvector.js` - pgvector with HNSW indexing
-- ✅ Implemented vector similarity search
-- ✅ Implemented full-text search
-- ✅ Implemented hybrid search with Reciprocal Rank Fusion (RRF)
-- ✅ Added migration from legacy embedding_json
+- 将“菜品查询”和“智能推荐”拆成独立工作流，避免找菜接口隐式执行个性化推荐。
+- 新增基于 Zod 的请求解释、数据库硬约束、中文词法检索、精确匹配、语义召回和 RRF 融合。
+- 推荐默认返回 3 个独立备选，仅在用户明确要求时生成总价受限的组合餐。
+- 菜品证据与健康知识证据分开；无实时菜单时明确返回不可下单参考和告警。
+- 增加 `POST /api/dishes/search` 与 `POST /api/recommend`，并保留原有 GET 推荐和 Agent 兼容入口。
+- Agent 增加 `dish.search`、`meal.recommend`、`knowledge.search` 及对应意图，工具步骤只记录实际执行。
+- PostgreSQL 切换为 `pgvector/pgvector:pg17`，索引统一为 1536 维、HNSW 和 `pg_trgm`。
+- 新增租户安全文档 ID、逻辑唯一约束、内容哈希、查询 embedding 缓存、索引状态和幂等重建脚本。
+- 菜品页面接入找菜接口；推荐页首屏使用确定性推荐，追问继续使用 Agent。
+- 移除未进入生产主链且无法稳定导入的 LangChain 实验模块、相关依赖和仅检查源码字符串的测试。
 
-### 3. RAGAS Evaluation Framework
-- ✅ Created `server/evaluation-ragas.js` - Industry-standard evaluation
-- ✅ Implemented faithfulness metric
-- ✅ Implemented answer relevancy metric
-- ✅ Implemented context precision metric
-- ✅ Implemented context recall metric
-- ✅ Added batch evaluation and pipeline
+## 当前生产主链
 
-### 4. Documentation
-- ✅ Created `docs/RAG-AGENT-ARCHITECTURE.md` - Complete architecture documentation
-- ✅ Added usage examples and migration guide
-
-## Architecture Comparison
-
-| Dimension | Before | After |
-|-----------|--------|-------|
-| **RAG Framework** | Custom lightweight | LangChain.js RetrievalQAChain |
-| **Vector DB** | SQLite embedding_json TEXT | pgvector (VECTOR(1536) + HNSW) |
-| **Embedding** | Local hash 128-dim + OpenAI | OpenAI text-embedding-3-small (1536-dim) |
-| **Agent Framework** | Custom single-function chain | LangChain Agent with ReAct |
-| **Tool Calling** | 9 hardcoded tools | Dynamic tool registration |
-| **Memory** | SQLite 2 rows | Buffer/Summary/Vector memory |
-| **Evaluation** | Custom auto-scoring | RAGAS (4 metrics) |
-
-## Files Created
-
-1. `server/rag-langchain.js` - LangChain RAG chain
-2. `server/agent-langchain.js` - LangChain Agent with ReAct
-3. `server/vectorstore-pgvector.js` - pgvector integration
-4. `server/evaluation-ragas.js` - RAGAS evaluation framework
-5. `docs/RAG-AGENT-ARCHITECTURE.md` - Architecture documentation
-
-## Dependencies Added
-
-```json
-{
-  "@langchain/core": "^1.2.2",
-  "@langchain/openai": "^1.5.4",
-  "langchain": "^1.5.3",
-  "pgvector": "^0.3.0"
-}
+```text
+API / Agent
+  -> retrievalService.js（Zod、硬约束、排序、证据）
+  -> PostgreSQL 业务表（价格、库存、供应、权限真值）
+  -> retrievalIndex.js（pg_trgm + pgvector + RRF）
+  -> aiProvider.js（可选 embedding 与 Agent 工具选择）
 ```
 
-## Next Steps
+SQLite 仅作为本地开发和单元测试降级路径；正式检索底座是 PostgreSQL + pgvector。
 
-### Immediate (This Session)
-- [ ] Test RAG chain with sample queries
-- [ ] Test Agent with tool calling
-- [ ] Test pgvector with sample data
-- [ ] Run RAGAS evaluation on test set
+## 不采用 LangChain / LangGraph
 
-### Short-term (Next Session)
-- [ ] Integrate new modules with existing API endpoints
-- [ ] Add fallback to legacy modules
-- [ ] Update documentation
+当前工作流是边界明确的有限管线，普通 JavaScript 和 Zod 更容易保证 SQL 硬约束先于语义排序，也更容易测试和审计。现有 `aiProvider.js` 已提供所需模型能力，引入 LangChain 不会增加必要能力，反而增加依赖和运行时兼容风险。
 
-### Long-term (Production)
-- [ ] Enable pgvector in production PostgreSQL
-- [ ] Run migration scripts
-- [ ] Monitor performance
-- [ ] Add advanced features (multi-query, re-ranking)
+LangGraph 适合需要暂停恢复、复杂循环、多阶段人工审批和分布式状态管理的长流程。当前双检索不具备这些需求，因此本期不引入；未来 Agent 工作流明显扩展后再评估。
 
-## Usage Examples
+## 运维命令
 
-### RAG Chain
-```javascript
-import { generateGroundedAnswer } from './rag-langchain.js';
+```bash
+# 所有活动租户
+node --env-file=.env scripts/reindex-retrieval.mjs
 
-const result = await generateGroundedAnswer({
-  query: '推荐低卡路里的午餐',
-  profile: { goal: '减脂' },
-  db,
-  dishes,
-  stalls,
-  canteens,
-});
+# 单租户或无 embedding 降级重建
+node --env-file=.env scripts/reindex-retrieval.mjs --tenant=default
+node --env-file=.env scripts/reindex-retrieval.mjs --tenant=default --lexical-only
 
-console.log(result.answer);
-console.log(result.citations);
+# Compose 正式环境
+docker compose exec api node scripts/reindex-retrieval.mjs --tenant=default
 ```
 
-### Agent
-```javascript
-import { runCanteenAgent, registerTool } from './agent-langchain.js';
+生产启动必须满足：
 
-// Register custom tool
-registerTool({
-  name: 'custom.tool',
-  description: 'My custom tool',
-  func: async (input) => ({ result: 'ok' }),
-});
+- PostgreSQL 镜像包含 pgvector；
+- 迁移账号可创建 `vector` 和 `pg_trgm` 扩展；
+- `rag_documents.embedding` 为 `vector(1536)`；
+- HNSW 与 trigram 索引创建成功；
+- 首次部署后完成索引重建并检查失败数量。
 
-// Run agent
-const result = await runCanteenAgent(db, user, '推荐低卡路里的午餐');
-console.log(result.answer);
-console.log(result.steps);
-```
+## 验证状态
 
-### pgvector
-```javascript
-import { vectorSearch, hybridSearch } from './vectorstore-pgvector.js';
-
-// Vector search
-const results = await vectorSearch('高蛋白菜品', { limit: 8 });
-
-// Hybrid search
-const results = await hybridSearch('低卡路里午餐', { limit: 8 });
-```
-
-### RAGAS Evaluation
-```javascript
-import { evaluateRAGExample } from './evaluation-ragas.js';
-
-const metrics = await evaluateRAGExample({
-  question: '推荐低卡路里的午餐',
-  answer: '推荐鸡胸肉沙拉...',
-  contexts: ['鸡胸沙拉：120kcal...'],
-  ground_truth: '鸡胸肉沙拉是低卡路里的好选择',
-});
-
-console.log(metrics.faithfulness.score);
-console.log(metrics.answer_relevancy.score);
-```
-
-## Performance Improvements
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| **Retrieval Latency** | ~50ms | ~10ms | 5x faster |
-| **Answer Quality** | Template-based | LLM-grounded | More natural |
-| **Tool Flexibility** | 9 hardcoded | Dynamic registry | Unlimited |
-| **Memory Capacity** | 2 rows | Vector + Summary | 100x more |
-| **Evaluation** | 3 metrics | 4 RAGAS metrics | Industry standard |
-
-## Conclusion
-
-The RAG/Agent architecture has been upgraded from a custom lightweight implementation to industry-standard frameworks:
-
-1. **LangChain.js** provides a robust RAG chain and Agent framework
-2. **pgvector** enables efficient vector similarity search with HNSW indexing
-3. **RAGAS** provides comprehensive evaluation metrics
-
-The new architecture maintains backward compatibility with fallback to legacy modules, ensuring a smooth migration path.
+- 双检索服务、SQLite 降级、租户隔离、维度校验和索引契约已有自动化测试。
+- 上线前仍需在目标 PostgreSQL 环境执行真实扩展、HNSW、中文检索和重建验收；文档不使用未经实测的延迟或质量提升数字。

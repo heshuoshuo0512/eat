@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Smart Canteen Enterprise MVP API
-  version: 0.6.0
-  description: Database-backed campus smart canteen API with RBAC, tenant management, menu operations, authenticated uploads, student review overview, moderated campus posts, RAG, agent, vision meal analysis, AI usage metering and quota governance.
+  version: 0.7.0
+  description: Database-backed campus smart canteen API with RBAC, tenant management, menu operations, authenticated uploads, student review overview, moderated campus posts, dual retrieval workflows, RAG evidence, agent routing, vision meal analysis, AI usage metering and quota governance. RAG is used for recall and explanation only; tenant authorization, price, inventory, sold-out state, serving windows and allergen constraints always come from relational SQL data.
 servers:
   - url: /api
 security:
@@ -54,14 +54,19 @@ components:
         provider: { type: string, enum: [local, s3], description: local when S3_BUCKET is unset; s3 when S3_BUCKET and S3 client are configured. }
     AgentRequest:
       type: object
+      description: Agent input. The assistant routes to dish_search, meal_recommendation, knowledge_qa, order_status, operations or general_canteen and executes only the tools required by the resolved intent.
       properties:
         question: { type: string }
         query: { type: string }
         profile: { type: object }
+        profileOverride: { type: object, description: Temporary constraints for this request; they are not persisted to the health profile. }
+        context: { type: object }
+        options: { type: object }
+        sessionId: { type: string }
     AiSettings:
       type: object
       properties:
-        apiKey: { type: string, description: Full key accepted on write; reads return a mask only. }
+        apiKey: { type: string, description: Full key accepted on write; reads return a mask only. On PUT, an empty value or the returned mask preserves the stored key; only DELETE clears it. }
         baseUrl: { type: string }
         embeddingModel: { type: string }
         chatModel: { type: string }
@@ -73,10 +78,10 @@ components:
       properties:
         id: { type: string }
         name: { type: string }
-        status: { type: string, enum: [active, disabled] }
+        status: { type: string, enum: [active, disabled], description: disabled 表示租户已暂停或停用。 }
         plan: { type: string }
-        aiQuota: { type: integer }
-        storageQuotaMb: { type: integer }
+        aiQuota: { type: integer, minimum: 0, description: 每月 AI 调用额度；0 表示不限额。 }
+        storageQuotaMb: { type: integer, minimum: 0 }
         createdAt: { type: string }
         updatedAt: { type: string }
     TenantInput:
@@ -85,10 +90,10 @@ components:
       properties:
         id: { type: string }
         name: { type: string }
-        status: { type: string, enum: [active, disabled] }
+        status: { type: string, enum: [active, disabled], description: disabled 表示租户已暂停或停用。 }
         plan: { type: string }
-        aiQuota: { type: integer }
-        storageQuotaMb: { type: integer }
+        aiQuota: { type: integer, minimum: 0, description: 每月 AI 调用额度；0 表示不限额。 }
+        storageQuotaMb: { type: integer, minimum: 0 }
     MenuItemInput:
       type: object
       required: [dishId]
@@ -205,6 +210,7 @@ components:
             updated: { type: integer }
     ContextualRecommendation:
       type: object
+      description: Compatibility response used by GET /recommend. New clients should consume RecommendationResponse from POST /recommend. ranked and plan are derived from the same recommendations array.
       properties:
         ranked:
           type: array
@@ -230,6 +236,11 @@ components:
               why:
                 type: array
                 items: { type: string }
+        dishes:
+          type: array
+          description: Legacy alias of ranked.
+          items: { $ref: '#/components/schemas/RecommendationItem' }
+        totals: { type: object, description: Legacy alias of plan.totals. }
         plan: { type: object }
         context:
           type: object
@@ -239,6 +250,327 @@ components:
             profile: { type: object }
         source: { type: string }
         menu: { type: object }
+        recommendations:
+          type: array
+          items: { $ref: '#/components/schemas/RecommendationItem' }
+        mealPlan: { $ref: '#/components/schemas/MealPlan' }
+        evidence: { $ref: '#/components/schemas/RetrievalEvidence' }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/RetrievalWarning' }
+        suggestedRelaxations:
+          type: array
+          items: { $ref: '#/components/schemas/SuggestedRelaxation' }
+        meta: { $ref: '#/components/schemas/RetrievalMeta' }
+    DishSearchFilters:
+      type: object
+      description: Structured hard filters. keyword/maxPrice are accepted compatibility aliases for query/budgetMax. Safety filters are never automatically relaxed.
+      properties:
+        keyword: { type: string }
+        maxPrice: { type: number, minimum: 0 }
+        budgetMin: { type: number, minimum: 0 }
+        budgetMax: { type: number, minimum: 0 }
+        mealType: { type: string, enum: [breakfast, lunch, dinner] }
+        primaryCanteenId: { type: string }
+        canteenId: { type: string }
+        canteenName: { type: string }
+        stallId: { type: string }
+        stallName: { type: string }
+        halalOnly: { type: boolean }
+        taste: { type: string }
+        tags: { type: array, items: { type: string } }
+        includeIngredients: { type: array, items: { type: string } }
+        avoidIngredients: { type: array, items: { type: string } }
+        allergens: { type: array, items: { type: string } }
+        dietaryPattern: { type: string, enum: [balanced, vegetarian, vegan] }
+        minProtein: { type: number, minimum: 0 }
+        minFiber: { type: number, minimum: 0 }
+        maxCalories: { type: number, minimum: 0 }
+        maxFat: { type: number, minimum: 0 }
+        maxCarbs: { type: number, minimum: 0 }
+        maxSodium: { type: number, minimum: 0 }
+        maxSugar: { type: number, minimum: 0 }
+        orderableOnly: { type: boolean }
+    RetrievalContext:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        time: { type: string, pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' }
+        mealType: { type: string, enum: [breakfast, lunch, dinner] }
+        timeOfDay: { type: string, enum: [breakfast, lunch, dinner] }
+        environment: { type: object }
+        preferences: { type: array, items: { type: object } }
+    DishSearchRequest:
+      type: object
+      properties:
+        query: { type: string, maxLength: 500, description: Natural-language dish query. Rule extraction runs before optional semantic retrieval. }
+        filters: { $ref: '#/components/schemas/DishSearchFilters' }
+        sort: { type: string, enum: [relevance, price_asc, price_desc, rating, sales], default: relevance }
+        limit: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        offset: { type: integer, minimum: 0, default: 0 }
+        context: { $ref: '#/components/schemas/RetrievalContext' }
+    DishAvailability:
+      type: object
+      required: [orderable, status, price]
+      description: Live availability projected from published menus, menu items, stall state, supply counters and serving windows. It is SQL truth and is never generated by the LLM.
+      properties:
+        orderable: { type: boolean }
+        status: { type: string, enum: [available, limited, sold_out, outside_serving_time, stall_closed, not_on_menu, dish_inactive, unavailable] }
+        reason: { type: string, nullable: true }
+        menuItemId: { type: string, nullable: true }
+        menuId: { type: string, nullable: true }
+        date: { type: string, format: date }
+        mealType: { type: string }
+        price: { type: number, minimum: 0 }
+        supplyLimit: { type: integer, minimum: 0 }
+        supplyCount: { type: integer, minimum: 0 }
+        remaining: { type: integer, minimum: 0, nullable: true }
+        servingStart: { type: string, nullable: true }
+        servingEnd: { type: string, nullable: true }
+    DishSearchItem:
+      type: object
+      required: [id, name, price, availability, matchReasons, retrievalScore]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        price: { type: number }
+        stallId: { type: string, nullable: true }
+        stallName: { type: string, nullable: true }
+        canteenId: { type: string, nullable: true }
+        canteenName: { type: string, nullable: true }
+        canteenLocation: { type: string, nullable: true }
+        taste: { type: string }
+        cuisine: { type: string }
+        ingredients: { type: array, items: { type: string } }
+        allergens: { type: array, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+        halal: { type: boolean }
+        mealTypes: { type: array, items: { type: string } }
+        nutrition: { type: object }
+        rating: { type: number }
+        reviewCount: { type: integer }
+        availability: { $ref: '#/components/schemas/DishAvailability' }
+        matchReasons: { type: array, items: { type: string } }
+        retrievalScore: { type: number }
+    SuggestedRelaxation:
+      type: object
+      required: [filter, message]
+      properties:
+        filter: { type: string }
+        message: { type: string }
+    RetrievalWarning:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, examples: [NO_ORDERABLE_MENU, RETRIEVAL_DEGRADED, NO_COMBINATION_WITHIN_BUDGET] }
+        message: { type: string }
+    RetrievalCitation:
+      type: object
+      required: [sourceId, sourceType, title]
+      properties:
+        id: { type: string }
+        sourceId: { type: string }
+        sourceType: { type: string, enum: [dish, health_knowledge, health, knowledge] }
+        title: { type: string }
+        name: { type: string, description: Compatibility alias of title. }
+        content: { type: string, description: Compatibility full-text evidence. }
+        snippet: { type: string }
+        score: { type: number }
+        metadata: { type: object }
+    RetrievalEvidence:
+      type: object
+      required: [dishes, knowledge]
+      description: Dish facts and health knowledge are deliberately separated so knowledge chunks cannot be returned as dish search results.
+      properties:
+        dishes:
+          type: array
+          items: { $ref: '#/components/schemas/RetrievalCitation' }
+        knowledge:
+          type: array
+          items: { $ref: '#/components/schemas/RetrievalCitation' }
+    RetrievalMeta:
+      type: object
+      properties:
+        tenantId: { type: string }
+        mode: { type: string, enum: [alternatives, combination] }
+        source: { type: string, enum: [menu, catalog_fallback] }
+        orderable: { type: boolean }
+        semanticUsed: { type: boolean }
+        quotaExhausted: { type: boolean, description: True when remote semantic calls were skipped and rules/lexical retrieval were used. }
+        degradedReasons: { type: array, items: { type: string } }
+        retrieval: { type: array, items: { type: string, enum: [exact, lexical, semantic, baseline] } }
+        sourceCandidateCount: { type: integer }
+        filteredCandidateCount: { type: integer }
+        eligibleCandidateCount: { type: integer }
+        date: { type: string, format: date }
+        mealType: { type: string }
+        indexVersion: { type: string, nullable: true }
+        profile: { type: object }
+        interpreted: { type: object }
+    DishSearchResponse:
+      type: object
+      required: [interpreted, items, availability, matchReasons, suggestedRelaxations, page, meta]
+      properties:
+        interpreted: { type: object }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DishSearchItem' }
+        availability:
+          type: object
+          properties:
+            orderableCount: { type: integer }
+            totalCount: { type: integer }
+            date: { type: string, format: date }
+            mealType: { type: string }
+            asOf: { type: string }
+        matchReasons:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        suggestedRelaxations:
+          type: array
+          items: { $ref: '#/components/schemas/SuggestedRelaxation' }
+        page:
+          type: object
+          properties:
+            limit: { type: integer }
+            offset: { type: integer }
+            total: { type: integer }
+            hasMore: { type: boolean }
+        meta: { $ref: '#/components/schemas/RetrievalMeta' }
+    RecommendationRequest:
+      type: object
+      properties:
+        query: { type: string, maxLength: 500 }
+        context: { $ref: '#/components/schemas/RetrievalContext' }
+        profileOverride: { type: object, description: Request-scoped profile changes that are not persisted. }
+        options:
+          type: object
+          properties:
+            mode: { type: string, enum: [alternatives, combination], description: Defaults to alternatives; combination is also inferred from explicit meal-combination wording. }
+            limit: { type: integer, minimum: 1, maximum: 10, default: 3 }
+            combinationSize: { type: integer, minimum: 2, maximum: 3, default: 3 }
+            requireOrderable: { type: boolean, default: true }
+            strictTaste: { type: boolean, default: false }
+    RecommendationItem:
+      allOf:
+        - $ref: '#/components/schemas/DishSearchItem'
+        - type: object
+          required: [recommendationScore, scoreBreakdown, why]
+          properties:
+            recommendationScore: { type: number }
+            scoreBreakdown:
+              type: object
+              additionalProperties: { type: number }
+            why: { type: array, items: { type: string } }
+    MealPlan:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [alternatives, combination] }
+        budgetMax: { type: number }
+        options:
+          type: array
+          items:
+            type: object
+            properties:
+              dishId: { type: string }
+              name: { type: string }
+              price: { type: number }
+              orderable: { type: boolean }
+        dishes:
+          type: array
+          items: { $ref: '#/components/schemas/RecommendationItem' }
+        totals: { type: object }
+    RecommendationResponse:
+      type: object
+      required: [recommendations, mealPlan, evidence, warnings, suggestedRelaxations, meta]
+      description: Personalized recommendation response. Default recommendations are independent alternatives, each within budget. A multi-dish mealPlan is produced only in combination mode and its total price must remain within budget.
+      properties:
+        recommendations:
+          type: array
+          items: { $ref: '#/components/schemas/RecommendationItem' }
+        mealPlan: { $ref: '#/components/schemas/MealPlan' }
+        evidence: { $ref: '#/components/schemas/RetrievalEvidence' }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/RetrievalWarning' }
+        suggestedRelaxations:
+          type: array
+          items: { $ref: '#/components/schemas/SuggestedRelaxation' }
+        meta: { $ref: '#/components/schemas/RetrievalMeta' }
+    AgentIntent:
+      type: string
+      enum: [dish_search, meal_recommendation, knowledge_qa, order_status, operations, general_canteen]
+    AgentToolName:
+      type: string
+      enum: [session.load, memory.long_term, profile.load, menu.today, dish.search, meal.recommend, knowledge.search, rag.meal_advisor, orders.mine, orders.analytics, order.create.propose, session.save]
+    AgentWorkflowResponse:
+      type: object
+      properties:
+        sessionId: { type: string }
+        answer: { type: string }
+        intent: { $ref: '#/components/schemas/AgentIntent' }
+        steps:
+          type: array
+          description: Only tools actually executed during this run are listed.
+          items:
+            type: object
+            properties:
+              tool: { $ref: '#/components/schemas/AgentToolName' }
+              status: { type: string }
+              latencyMs: { type: number }
+        citations:
+          type: array
+          items: { $ref: '#/components/schemas/RetrievalCitation' }
+        evidence: { $ref: '#/components/schemas/RetrievalEvidence' }
+        recommendations:
+          type: array
+          items: { $ref: '#/components/schemas/RecommendationItem' }
+        search: { $ref: '#/components/schemas/DishSearchResponse' }
+        mealPlan: { $ref: '#/components/schemas/MealPlan' }
+        actions: { type: array, items: { type: object }, description: High-risk order actions require explicit confirmation and can only use explicitly named, currently orderable dishes. }
+        plan: { type: object }
+        summary: { type: object }
+    RetrievalIndexStatus:
+      type: object
+      properties:
+        tenantId: { type: string }
+        driver: { type: string, enum: [postgres, sqlite] }
+        ready: { type: boolean }
+        mode: { type: string, enum: [hybrid, lexical_fallback] }
+        indexVersion: { type: string }
+        embeddingDimension: { type: integer, enum: [1536] }
+        documentCount: { type: integer }
+        embeddedCount: { type: integer }
+        sourceCounts: { type: array, items: { type: object } }
+        lastIndexedAt: { type: string, nullable: true }
+        failureCount: { type: integer }
+        latestRun: { type: object, nullable: true }
+        details: { type: object, description: PostgreSQL extension/index readiness details when ready=false. }
+    RetrievalReindexRequest:
+      type: object
+      properties:
+        sourceTypes:
+          type: array
+          items: { type: string, enum: [dish, health_knowledge] }
+        prune: { type: boolean, default: true }
+    RetrievalReindexResponse:
+      type: object
+      properties:
+        runId: { type: string }
+        tenantId: { type: string }
+        sourceTypes: { type: array, items: { type: string } }
+        documentCount: { type: integer }
+        indexedCount: { type: integer }
+        skippedCount: { type: integer }
+        embeddedCount: { type: integer }
+        prunedCount: { type: integer }
+        failureCount: { type: integer }
+        failures: { type: array, items: { type: object } }
+        embeddingModel: { type: string }
+        quotaExhausted: { type: boolean, description: When true, the run still refreshes lexical data but skips new remote embeddings. }
     DishPreference:
       type: object
       properties:
@@ -263,6 +595,7 @@ components:
       properties:
         id: { type: string }
         canteenId: { type: string }
+        parentId: { type: string, nullable: true, description: 'Optional top-level parent stall. Parent and child must belong to the same tenant and canteen; only two levels are allowed.' }
         name: { type: string }
         floor: { type: string }
         category: { type: string }
@@ -287,9 +620,23 @@ paths:
   /recommend:
     get:
       security: []
-      description: Contextual recommendation with server time, DB temperature/weather, budget, crowd, health preferences, interactions and expanded nutrition. Returns full ranked list with per-dish scoreBreakdown and why reasons.
+      deprecated: false
+      description: Backward-compatible deterministic recommendation endpoint. Internally executes the same hard-constraint and unified-ranking workflow as POST /recommend, then adds legacy ranked, plan, context, source and menu fields. New clients should use POST /recommend.
+      parameters:
+        - { name: mealType, in: query, schema: { type: string, enum: [breakfast, lunch, dinner] } }
       responses:
         '200': { description: Ranked dishes with context, content: { application/json: { schema: { $ref: '#/components/schemas/ContextualRecommendation' } } } }
+    post:
+      security: []
+      description: Personalized recommendation workflow. Loads the authenticated user's profile and preferences when available, merges request-scoped overrides, applies allergen, dietary, halal, meal, budget and live availability constraints before ranking, and keeps dish evidence separate from health knowledge. If no orderable menu candidate exists, catalog references are returned with orderable=false and an explicit warning.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecommendationRequest' }
+      responses:
+        '200': { description: Personalized alternatives or a budget-constrained combination, content: { application/json: { schema: { $ref: '#/components/schemas/RecommendationResponse' } } } }
+        '400': { description: Invalid recommendation request, profile override or budget range, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /auth/login:
     post:
       security: []
@@ -330,6 +677,18 @@ paths:
         - { name: taste, in: query, schema: { type: string } }
         - { name: halalOnly, in: query, schema: { type: boolean } }
       responses: { '200': { description: Tenant-scoped dish list } }
+  /dishes/search:
+    post:
+      security: []
+      description: Natural-language and structured dish search. Runs exact field matching, Chinese lexical retrieval and optional pgvector semantic retrieval, fuses rankings with RRF, then attaches current SQL-backed menu price, supply, serving-window and orderability facts. Semantic retrieval never overrides tenant, allergen, price, inventory or permission constraints, and only dish documents may become search items.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DishSearchRequest' }
+      responses:
+        '200': { description: Ranked real dishes with live availability and explainable match reasons, content: { application/json: { schema: { $ref: '#/components/schemas/DishSearchResponse' } } } }
+        '400': { description: Invalid query, filter, pagination or budget range, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /dishes/{id}:
     get:
       security: []
@@ -344,7 +703,7 @@ paths:
   /menus/today:
     get:
       security: []
-      description: Returns today's published, not-sold-out menu dishes for the requested meal type; falls back to dish library when no menu exists.
+      description: Returns today's published menu dishes for the requested meal type, including sold-out items with their supply status; falls back to dish library when no menu exists.
       parameters:
         - { name: mealType, in: query, schema: { type: string } }
         - { name: date, in: query, schema: { type: string, format: date } }
@@ -353,18 +712,60 @@ paths:
   /rag/search:
     get:
       security: []
-      parameters: [{ name: q, in: query, required: true, schema: { type: string } }]
-      responses: { '200': { description: Ranked document citations } }
+      description: Compatibility endpoint for the dish-search workflow. It returns the complete DishSearchResponse and a legacy results array containing only dish citations. Health knowledge documents are never surfaced as dish results.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 8 } }
+      responses:
+        '200':
+          description: Dish search response plus compatibility citation results
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/DishSearchResponse'
+                  - type: object
+                    properties:
+                      results:
+                        type: array
+                        items: { $ref: '#/components/schemas/RetrievalCitation' }
+        '400': { description: Missing query }
   /agent/meal-advisor:
     post:
       security: []
-      description: RAG-grounded meal advisor; LLM text is constrained to citations and picks when AI is enabled. Successful AI calls count against monthly tenant quota.
+      description: Compatibility meal-advisor endpoint backed by the new recommendation workflow. Returns new recommendation fields plus legacy ranked/plan/context fields, a deterministic grounded answer and a dish-only legacy citations list; grouped dish and health evidence remains available under evidence. LLM or RAG text may explain results but cannot alter SQL-backed price, inventory, sold-out, serving-window, allergen or tenant facts. Exhausted AI quota degrades to rules and lexical retrieval instead of blocking the response.
       requestBody:
+        required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/AgentRequest' }
       responses:
-        '200': { description: Answer, citations and recommended plan }
+        '200':
+          description: Compatibility advisor answer and recommendation result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ContextualRecommendation'
+                  - type: object
+                    properties:
+                      answer: { type: string }
+                      answerSource: { type: string, enum: [hybrid_retrieval, deterministic] }
+                      citations:
+                        type: array
+                        items: { $ref: '#/components/schemas/RetrievalCitation' }
+  /agent/assistant:
+    post:
+      description: Intent-routed canteen Agent. Supported intents are dish_search, meal_recommendation, knowledge_qa, order_status, operations and general_canteen. New retrieval tools are dish.search, meal.recommend and knowledge.search. Order queries execute only orders.mine, operations queries execute only authorized analytics tools, and high-risk order creation remains confirmation-gated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentRequest' }
+      responses:
+        '200': { description: Agent result whose steps list contains only tools actually executed, content: { application/json: { schema: { $ref: '#/components/schemas/AgentWorkflowResponse' } } } }
+        '401': { description: Login required }
+        '403': { description: agent:use permission required }
         '429': { description: AI monthly quota exhausted }
   /reviews:
     get:
@@ -466,7 +867,17 @@ paths:
   /admin/tenants:
     get:
       description: List tenants. Requires tenant:manage.
-      responses: { '200': { description: Tenant list, content: { application/json: { schema: { type: object, properties: { tenants: { type: array, items: { $ref: '#/components/schemas/Tenant' } } } } } } }
+      responses:
+        '200':
+          description: Tenant list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenants:
+                    type: array
+                    items: { $ref: '#/components/schemas/Tenant' }
     post:
       description: Create or upsert tenant. Requires tenant:manage.
       requestBody:
@@ -542,14 +953,17 @@ paths:
       responses: { '200': { description: Updated user } }
   /admin/audit-logs:
     get:
-      description: Requires audit:read.
-      responses: { '200': { description: Paginated audit logs } }
+      description: Requires audit:read. Each log exposes parsed metadata, including structured moderation state transitions when applicable.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses: { '200': { description: Paginated audit logs with structured metadata } }
   /admin/ai-settings:
     get:
       description: Requires ai:configure; API key is masked.
       responses: { '200': { description: Safe settings and provider status } }
     put:
-      description: Requires ai:configure; stores OpenAI-compatible AI settings server-side.
+      description: Requires ai:configure; stores OpenAI-compatible AI settings server-side. Leaving apiKey empty preserves the existing key.
       requestBody:
         content:
           application/json:
@@ -568,25 +982,42 @@ paths:
       responses: { '200': { description: Provider test result } }
   /admin/ai-usage:
     get:
-      description: Requires ai:configure; returns tenant AI usage logs, grouped summary and monthly quota status. quota=0 means unlimited; exhausted quota causes AI endpoints to return 429.
+      description: Requires ai:configure; returns tenant AI usage logs, grouped summary and monthly quota status. quota=0 means unlimited. AI-only endpoints may reject exhausted quota, while dish search and meal recommendation degrade to rules and lexical retrieval.
       parameters:
         - { name: limit, in: query, schema: { type: integer, maximum: 200 } }
         - { name: offset, in: query, schema: { type: integer } }
       responses:
         '200': { description: Usage logs, summary and quota, content: { application/json: { schema: { $ref: '#/components/schemas/AiUsageResponse' } } } }
+  /admin/retrieval/status:
+    get:
+      description: Tenant-scoped retrieval index health and statistics. Requires audit:read. PostgreSQL reports ready=false unless vector, pg_trgm, vector(1536), HNSW and trigram indexes are all present; SQLite reports lexical_fallback mode.
+      responses:
+        '200': { description: Index readiness, counts, latest indexing time and failures, content: { application/json: { schema: { $ref: '#/components/schemas/RetrievalIndexStatus' } } } }
+        '403': { description: audit:read permission required }
+  /admin/retrieval/reindex:
+    post:
+      description: Idempotently rebuild tenant-scoped dish and/or health-knowledge documents. Requires dish:write. Reindexing refreshes document content and embeddings; live menu inventory is joined at query time and is not embedded. When AI quota is exhausted, lexical indexing still completes and quotaExhausted is returned.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetrievalReindexRequest' }
+      responses:
+        '200': { description: Reindex run summary, content: { application/json: { schema: { $ref: '#/components/schemas/RetrievalReindexResponse' } } } }
+        '403': { description: dish:write permission required }
+        '500': { description: PostgreSQL retrieval extensions or indexes are not ready }
   /admin/stalls:
     post:
-      description: Create stall. Requires stall:write. canteenId must belong to current tenant.
+      description: Create stall. Requires stall:write. canteenId and parentId must belong to the current tenant; a child stall must use the same canteen as its top-level parent and the hierarchy is limited to two levels.
       requestBody:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/StallInput' }
       responses:
         '201': { description: Full state }
-        '400': { description: Invalid canteen or missing fields }
+        '400': { description: Invalid canteen, parent relationship, hierarchy depth, or missing fields }
   /admin/stalls/{id}:
     put:
-      description: Update stall. Requires stall:write.
+      description: Update stall. Requires stall:write. Parent changes are restricted to a same-tenant, same-canteen top-level stall; a parent with children cannot be demoted or moved to another canteen.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       requestBody:
         content:
@@ -594,12 +1025,14 @@ paths:
             schema: { $ref: '#/components/schemas/StallInput' }
       responses:
         '200': { description: Full state }
+        '400': { description: Invalid parent relationship or hierarchy change }
         '404': { description: Stall not found }
     delete:
       description: Delete stall. Requires stall:delete.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses:
         '200': { description: Full state }
+        '409': { description: Cannot delete a stall while it still has child stalls }
         '404': { description: Stall not found }
   /admin/environment:
     get:
@@ -649,16 +1082,44 @@ paths:
         '200': { description: Updated review status }
         '400': { description: Invalid status }
         '404': { description: Review not found }
+  /admin/reviews:
+    get:
+      description: List reviews for moderation. Requires review:moderate. Without status, only pending reviews are returned, newest first; target filters are applied before pagination.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, all], default: pending } }
+        - { name: targetType, in: query, schema: { type: string, enum: [dish, canteen] } }
+        - { name: canteenId, in: query, schema: { type: string } }
+        - { name: stallId, in: query, schema: { type: string } }
+        - { name: dishId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: Moderation reviews with author and enriched dish, stall, and canteen context }
+        '400': { description: Invalid status or targetType }
+        '403': { description: Permission denied }
   /admin/posts:
     get:
       description: List campus posts for moderation. Requires post:moderate.
       parameters:
-        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected] } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, all] } }
+        - { name: targetType, in: query, schema: { type: string, enum: [dish, canteen] } }
+        - { name: canteenId, in: query, schema: { type: string } }
+        - { name: stallId, in: query, schema: { type: string } }
+        - { name: dishId, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, maximum: 200, default: 50 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
-      responses: { '200': { description: Campus post moderation page }, '403': { description: Permission denied } }
+      responses: { '200': { description: Campus post moderation page with author, target context, and linked review status }, '400': { description: Invalid status or targetType }, '403': { description: Permission denied } }
   /admin/posts/{id}/status:
     patch:
       description: Moderate a campus post. Approving a rated dish post creates or reactivates exactly one linked approved review. Requires post:moderate.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { '200': { description: Updated post with linkedReviewId }, '403': { description: Permission denied }, '404': { description: Post not found } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [pending, approved, rejected] }
+      responses: { '200': { description: Updated post with linkedReviewId }, '400': { description: Invalid moderation status }, '403': { description: Permission denied }, '404': { description: Post not found } }

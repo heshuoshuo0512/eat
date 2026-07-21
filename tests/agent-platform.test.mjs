@@ -33,7 +33,7 @@ async function proposeOrder(token) {
   return await req('/api/agent/assistant', {
     method: 'POST',
     token,
-    body: { query: '来一份番茄鸡蛋盖饭，帮我下单' },
+    body: { query: '午餐来一份番茄鸡蛋盖饭，帮我下单' },
   });
 }
 
@@ -68,8 +68,8 @@ describe('Enterprise agent platform runtime', () => {
         mealType: 'lunch',
         status: 'published',
         items: [
-          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 30, supplyCount: 0, soldOut: false },
-          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 30, supplyCount: 0, soldOut: false },
+          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 30, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
+          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 30, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
         ],
       },
     });
@@ -77,7 +77,7 @@ describe('Enterprise agent platform runtime', () => {
 
   after(() => server.close());
 
-  it('assistant returns platform plan, summary, mealPlan, and high-risk confirmation action', async () => {
+  it('assistant returns dish-search plan, summary, and high-risk confirmation action', async () => {
     const { status, data } = await proposeOrder(studentToken);
     assert.equal(status, 200);
     assert.ok(typeof data.plan?.goal === 'string' && data.plan.goal.length > 0, 'plan has goal');
@@ -86,7 +86,8 @@ describe('Enterprise agent platform runtime', () => {
     assert.equal(data.plan.riskLevel, 'high');
     assert.ok(data.plan.guardrails.includes('高风险动作只生成待确认动作，不直接执行'));
     assert.ok(data.summary?.text.includes('待确认动作 1 个'));
-    assert.ok(data.mealPlan, 'mealPlan is present');
+    assert.ok(data.search?.items?.length, 'dish search result is present');
+    assert.equal(data.mealPlan, null, 'dish-search intent does not execute the recommendation workflow');
     const createAction = data.actions.find((action) => action.type === 'create_order');
     assert.ok(createAction, 'create_order action present');
     assert.equal(createAction.requiresConfirmation, true);
@@ -223,7 +224,7 @@ describe('Enterprise agent platform runtime', () => {
     const res = await fetch(`${baseUrl}/api/agent/stream-run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${studentToken}` },
-      body: JSON.stringify({ query: '来一份鸡腿饭，帮我下单' }),
+      body: JSON.stringify({ query: '午餐来一份番茄鸡蛋盖饭，帮我下单' }),
     });
     const text = await res.text();
     assert.equal(res.status, 200);

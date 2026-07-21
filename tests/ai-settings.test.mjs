@@ -49,6 +49,15 @@ describe('admin AI settings', () => {
     assert.equal(saved.data.status.enabled, true);
     assert.equal(saved.data.status.source, 'admin');
 
+    const preserved = await req('/api/admin/ai-settings', {
+      method: 'PUT',
+      token,
+      body: { apiKey: '', baseUrl: 'https://example.com/v2', embeddingModel: 'emb', chatModel: 'chat', timeoutMs: 3000 }
+    });
+    assert.equal(preserved.status, 200);
+    assert.equal(preserved.data.settings.apiKey, '********');
+    assert.equal(preserved.data.status.enabled, true);
+
     const cleared = await req('/api/admin/ai-settings', { method: 'DELETE', token });
     assert.equal(cleared.status, 200);
     assert.equal(cleared.data.settings.apiKey, '');

@@ -6,13 +6,8 @@
 -- Apply with: psql "$DATABASE_URL" -f migrations/postgres/001_initial_schema.sql
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
--- pgvector extension (optional — silently skipped if not installed)
-DO $$ BEGIN
-  CREATE EXTENSION IF NOT EXISTS vector;
-EXCEPTION WHEN OTHERS THEN
-  NULL;
-END $$;
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Schema migrations tracking
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -173,7 +168,14 @@ CREATE TABLE IF NOT EXISTS rag_documents (
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   metadata_json TEXT NOT NULL DEFAULT '{}',
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   embedding_json TEXT,
+  embedding vector(1536),
+  embedding_model TEXT,
+  content_hash TEXT NOT NULL DEFAULT '',
+  chunk_index INTEGER NOT NULL DEFAULT 0,
+  search_text TEXT NOT NULL DEFAULT '',
+  indexed_at TIMESTAMPTZ,
   search_vector tsvector GENERATED ALWAYS AS (
     setweight(to_tsvector('simple', coalesce(title, '')), 'A') ||
     setweight(to_tsvector('simple', coalesce(content, '')), 'B')
@@ -197,6 +199,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   action TEXT NOT NULL,
   entity TEXT NOT NULL,
   entity_id TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
 
@@ -418,6 +421,7 @@ CREATE INDEX IF NOT EXISTS idx_stalls_tenant_canteen ON stalls(tenant_id, cantee
 CREATE INDEX IF NOT EXISTS idx_stalls_tenant_parent ON stalls(tenant_id, parent_id);
 CREATE INDEX IF NOT EXISTS idx_dishes_tenant_status ON dishes(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_dishes_search ON dishes USING gin(search_vector);
+CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_tenant_target ON reviews(tenant_id, target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_uploads_tenant_owner ON uploads(tenant_id, owner_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_created ON audit_logs(tenant_id, created_at);
@@ -444,12 +448,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_eval_case_runs_case_created ON agent_eval_c
 CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_user ON user_dish_preferences(tenant_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_dish ON user_dish_preferences(tenant_id, dish_id);
 
--- pgvector embedding column (optional — silently skipped if vector extension missing)
-DO $$ BEGIN
-  ALTER TABLE rag_documents ADD COLUMN IF NOT EXISTS embedding vector(128);
-EXCEPTION WHEN OTHERS THEN
-  NULL;
-END $$;
-
-INSERT INTO schema_migrations(version) VALUES ('001_initial_schema')
+-- Runtime migrations 004, 005 and 008 remain separate because this baseline
+-- does not provide their complete schema contract.
+INSERT INTO schema_migrations(version) VALUES
+  ('001_initial_schema'),
+  ('001_enterprise_foundation'),
+  ('002_generic_review_targets'),
+  ('003_contextual_recommendation'),
+  ('006_admin_stall_hierarchy'),
+  ('007_admin_audit_metadata')
 ON CONFLICT (version) DO NOTHING;

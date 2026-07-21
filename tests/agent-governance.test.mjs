@@ -70,8 +70,8 @@ describe('Agent final upgrade governance', () => {
         mealType: 'lunch',
         status: 'published',
         items: [
-          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 30, supplyCount: 0, soldOut: false },
-          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 30, supplyCount: 0, soldOut: false },
+          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 30, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
+          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 30, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
         ],
       },
     });
@@ -166,8 +166,8 @@ describe('Agent final upgrade governance', () => {
       body: {
         name: 'Halal Lunch Recommend',
         query: '推荐清真午餐',
-        expectedIntent: 'meal_planning',
-        requiredTools: ['rag.meal_advisor'],
+        expectedIntent: 'meal_recommendation',
+        requiredTools: ['meal.recommend'],
         forbiddenTools: [],
         expectAction: false,
       },
@@ -176,8 +176,8 @@ describe('Agent final upgrade governance', () => {
     assert.ok(created.data.case, 'case object present');
     assert.equal(created.data.case.name, 'Halal Lunch Recommend');
     assert.equal(created.data.case.query, '推荐清真午餐');
-    assert.equal(created.data.case.expectedIntent, 'meal_planning');
-    assert.deepEqual(created.data.case.requiredTools, ['rag.meal_advisor']);
+    assert.equal(created.data.case.expectedIntent, 'meal_recommendation');
+    assert.deepEqual(created.data.case.requiredTools, ['meal.recommend']);
     assert.equal(created.data.case.enabled, true);
     assert.ok(created.data.case.id, 'case has id');
     assert.ok(created.data.case.createdAt, 'case has createdAt');
@@ -227,8 +227,8 @@ describe('Agent final upgrade governance', () => {
       body: {
         name: 'Menu Query',
         query: '今天午餐吃什么',
-        expectedIntent: 'meal_planning',
-        requiredTools: ['rag.meal_advisor', 'menu.today'],
+        expectedIntent: 'meal_recommendation',
+        requiredTools: ['meal.recommend', 'menu.today'],
         forbiddenTools: [],
       },
     });
@@ -250,7 +250,7 @@ describe('Agent final upgrade governance', () => {
     assert.equal(typeof run.data.run.hasAction, 'boolean', 'hasAction is boolean');
     assert.ok(run.data.run.createdAt, 'run has createdAt');
     assert.equal(run.data.run.caseId, created.data.case.id, 'run linked to case');
-    assert.equal(run.data.run.intent, 'meal_planning', 'run captured intent');
+    assert.equal(run.data.run.intent, 'meal_recommendation', 'run captured intent');
 
     // Student cannot run cases
     const studRun = await req(`/api/agent/eval-cases/${created.data.case.id}/run`, {
@@ -268,7 +268,7 @@ describe('Agent final upgrade governance', () => {
     const agent = await req('/api/agent/assistant', {
       method: 'POST',
       token: studentToken,
-      body: { query: '帮我下单一份番茄鸡蛋盖饭' },
+      body: { query: '帮我下单一份午餐番茄鸡蛋盖饭' },
     });
     assert.equal(agent.status, 200);
     const action = agent.data.actions.find((a) => a.type === 'create_order');
@@ -299,7 +299,7 @@ describe('Agent final upgrade governance', () => {
     const agent = await req('/api/agent/assistant', {
       method: 'POST',
       token: studentToken,
-      body: { query: '帮我下单番茄鸡蛋盖饭' },
+      body: { query: '帮我下单午餐番茄鸡蛋盖饭' },
     });
     const actionId = agent.data.actions.find((a) => a.type === 'create_order')?.id;
     assert.ok(actionId, 'action created');
@@ -338,7 +338,9 @@ describe('Agent final upgrade governance', () => {
   /* ---------------------------------------------------------------- */
 
   it('deployment readiness: endpoint returns agent, runtime, and schema checks without AI keys', async () => {
-    const ready = await req('/api/deployment/readiness');
+    const anonymous = await req('/api/deployment/readiness');
+    assert.equal(anonymous.status, 401, 'readiness requires authentication');
+    const ready = await req('/api/deployment/readiness', { token: adminToken });
     assert.equal(ready.status, 200, 'readiness returns 200');
 
     assert.equal(ready.data.ok, true, 'overall ok is true');

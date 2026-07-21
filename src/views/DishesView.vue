@@ -24,18 +24,13 @@
   />
 
   <section v-if="ragResult" class="card discovery-answer">
-    <div class="answer-heading">
-      <span class="rag-source-badge" :class="ragResult.answerSource === 'llm' ? 'source-llm' : 'source-template'">{{ ragResult.answerSource === 'llm' ? 'AI 检索' : '规则检索' }}</span>
-      <strong>检索结论</strong>
-    </div>
-    <p>{{ ragResult.answer }}</p>
+    <div class="answer-heading"><span class="rag-source-badge" :class="ragResult.meta?.semanticUsed ? 'source-llm' : 'source-template'">{{ ragResult.meta?.semanticUsed ? '语义检索' : '规则检索' }}</span><strong>检索结论</strong></div>
+    <p>{{ ragAnswer }}</p>
     <div v-if="visibleSearchCitations.length" class="compact-citations">
-      <button v-for="cite in visibleSearchCitations" :key="cite.id || cite.name" type="button" @click="jumpToDish(cite.id)">
-        <strong>{{ cite.name || '菜品数据' }}</strong>
-        <small>相关度 {{ formatCitationScore(cite.score) }} · {{ compactCitationSnippet(cite.snippet) }}</small>
-      </button>
+      <button v-for="cite in visibleSearchCitations" :key="cite.id" type="button" @click="jumpToDish(cite.id)"><strong>{{ cite.name }}</strong><small>相关度 {{ formatRetrievalScore(cite.retrievalScore) }} · {{ compactCitationSnippet(dishMatchSnippet(cite)) }}</small></button>
     </div>
-    <button v-if="(ragResult.citations?.length || 0) > 3" class="text-link" type="button" @click="citationsExpanded = !citationsExpanded">{{ citationsExpanded ? '收起引用' : `查看全部 ${ragResult.citations.length} 条引用` }}</button>
+    <button v-if="(ragResult.items?.length || 0) > 3" class="text-link" type="button" @click="citationsExpanded = !citationsExpanded">{{ citationsExpanded ? '收起引用' : `查看全部 ${ragResult.items.length} 条引用` }}</button>
+    <div v-if="ragResult.suggestedRelaxations?.length" class="relaxation-list"><strong>可放宽条件</strong><span v-for="suggestion in ragResult.suggestedRelaxations" :key="relaxationLabel(suggestion)" class="pill">{{ relaxationLabel(suggestion) }}</span></div>
   </section>
   <p v-if="ragError" class="form-message rag-error">{{ ragError }}</p>
 
@@ -45,7 +40,7 @@
   </p>
 
   <div class="result-toolbar">
-    <div><p class="eyebrow">All Active Dishes</p><h2>{{ sortedDishes.length }} 道有效菜品</h2></div>
+    <div><p class="eyebrow">{{ searchResultActive ? 'Semantic Results' : 'All Active Dishes' }}</p><h2>{{ sortedDishes.length }} 道有效菜品</h2></div>
     <div class="sort-bar" role="group" aria-label="菜品评分排序">
       <button class="pill sort-btn" :class="{ active: sortDir === 'desc' }" type="button" @click="sortDir = 'desc'">评分高→低</button>
       <button class="pill sort-btn" :class="{ active: sortDir === 'asc' }" type="button" @click="sortDir = 'asc'">评分低→高</button>
@@ -178,6 +173,23 @@ const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) =>
 const ratingById = computed(() => createRatingMap(store.rankings.dishes));
 
 function supplyState(dish) {
+  if (dish.availability && typeof dish.availability === 'object') {
+    const status = dish.availability.status || (dish.availability.orderable ? 'available' : 'unavailable');
+    const labelMap = {
+      available: '今日可点',
+      limited: '库存紧张',
+      sold_out: '今日售罄',
+      off_menu: '非今日供应',
+      outside_serving_hours: '未到供应时段',
+      unavailable: '当前不可点'
+    };
+    const classMap = { available: 'available', limited: 'limited', sold_out: 'sold-out' };
+    return {
+      label: dish.availability.reason || labelMap[status] || '当前不可点',
+      className: classMap[status] || 'off-menu',
+      canOrder: dish.availability.orderable === true
+    };
+  }
   const menuDish = todayMenuMap.value.get(dish.id);
   if (!menuDish) return { label: '非今日供应', className: 'off-menu', canOrder: false };
   const status = menuDish.supplyStatus || 'available';
@@ -205,7 +217,8 @@ async function markEaten(dishId) {
 }
 
 const filteredDishes = computed(() => {
-  let list = store.dishes.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive');
+  const source = searchResultActive.value ? store.dishSearchResult.items : store.dishes;
+  let list = source.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive');
   if (stallFilter.value) list = list.filter((d) => d.stallId === stallFilter.value);
   return list;
 });
@@ -214,8 +227,19 @@ const sortedDishes = computed(() => sortDishesByRating(filteredDishes.value, rat
 
 const detail = computed(() => {
   store.state;
-  return store.getDishDetail(selectedId.value);
+  const localDetail = store.getDishDetail(selectedId.value);
+  const searchDish = store.dishSearchResult.items.find((dish) => dish.id === selectedId.value);
+  if (!searchDish) return localDetail;
+  return {
+    ...localDetail,
+    ...searchDish,
+    stall: localDetail?.stall,
+    canteen: localDetail?.canteen,
+    reviews: localDetail?.reviews || []
+  };
 });
+
+const searchResultActive = computed(() => Boolean(store.dishSearchResult.query));
 
 // Set default selected on first load
 if (!selectedId.value && sortedDishes.value.length) {
@@ -264,7 +288,7 @@ async function submitReview() {
 
 /* ── RAG search ── */
 const ragQuery = ref('');
-const ragLoading = ref(false);
+const ragLoading = computed(() => store.dishSearchLoading);
 const ragResult = ref(null);
 const ragError = ref('');
 const memoryDraft = ref('');
@@ -273,7 +297,15 @@ const memorySaving = ref(false);
 const memoryOpen = ref(false);
 const citationsExpanded = ref(false);
 const profilePrompts = computed(() => buildProfilePrompts(store.profile, 'search'));
-const visibleSearchCitations = computed(() => visibleCitations(ragResult.value?.citations || [], citationsExpanded.value));
+const visibleSearchCitations = computed(() => visibleCitations(ragResult.value?.items || [], citationsExpanded.value));
+const ragAnswer = computed(() => {
+  if (!ragResult.value) return '';
+  const total = Number(ragResult.value.availability?.totalCount ?? ragResult.value.items?.length ?? 0);
+  const orderable = Number(ragResult.value.availability?.orderableCount ?? ragResult.value.items?.filter((dish) => dish.availability?.orderable).length ?? 0);
+  if (!total) return '没有找到满足全部条件的真实菜品，请参考下方建议放宽条件。';
+  const interpreted = ragResult.value.interpreted?.summary || ragResult.value.interpreted?.query || ragQuery.value;
+  return `按“${interpreted}”找到 ${total} 道菜，其中 ${orderable} 道当前可点。结果可按综合评分切换排序。`;
+});
 
 function askPrompt(query) {
   ragQuery.value = query;
@@ -283,17 +315,46 @@ function askPrompt(query) {
 async function submitRagQuery() {
   const q = ragQuery.value.trim();
   if (!q) return;
-  ragLoading.value = true;
   ragError.value = '';
   ragResult.value = null;
   citationsExpanded.value = false;
   try {
-    ragResult.value = await store.askMealAdvisor({ query: q });
+    ragResult.value = await store.searchDishes({
+      query: q,
+      filters: {
+        budgetMax: store.profile.budgetMax,
+        taste: store.profile.taste !== '不限' ? store.profile.taste : undefined,
+        halalOnly: store.profile.halalOnly,
+        mealType: store.profile.mealType,
+        stallId: stallFilter.value || undefined,
+        avoidIngredients: store.profile.avoid || []
+      },
+      sort: 'relevance',
+      limit: 50,
+      offset: 0
+    });
+    selectedId.value = ragResult.value.items[0]?.id || '';
   } catch (err) {
+    store.clearDishSearch();
     ragError.value = err.message || 'AI 检索失败，请重试。';
-  } finally {
-    ragLoading.value = false;
   }
+}
+
+function dishMatchSnippet(dish) {
+  const reasons = Array.isArray(dish.matchReasons) ? dish.matchReasons : [];
+  if (reasons.length) return reasons.slice(0, 2).join(' · ');
+  return dish.availability?.reason || '来源于当前租户菜品库与实时供应数据';
+}
+
+function formatRetrievalScore(score) {
+  const value = Number(score);
+  if (!Number.isFinite(value)) return '已匹配';
+  return value <= 1 ? `${Math.round(value * 100)}%` : value.toFixed(1);
+}
+
+function relaxationLabel(suggestion) {
+  if (typeof suggestion === 'string') return suggestion;
+  return suggestion?.label || suggestion?.message || suggestion?.field || '调整筛选条件';
 }
 
 async function loadMemory() {
@@ -336,11 +397,6 @@ function jumpToDish(dishId) {
   nextTick(() => {
     selectedId.value = dishId;
   });
-}
-
-function formatCitationScore(value) {
-  const score = Number(value || 0);
-  return `${Math.round((score <= 1 ? score * 100 : score))}%`;
 }
 
 /* ── Location helpers ── */
@@ -443,6 +499,7 @@ onMounted(loadMemory);
 .compact-citations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
 .compact-citations button { min-width: 0; display: grid; gap: 5px; padding: 10px 12px; text-align: left; border: 1px solid rgba(31,122,77,.13); background: #f8fbf7; color: inherit; }
 .compact-citations strong, .compact-citations small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.compact-citations small { color: var(--muted); font-size: 11px; }
+.relaxation-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
 .result-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 28px 0 14px; }.result-toolbar h2 { margin: 0; font-size: 20px; }
 
 .stall-banner { display: flex; align-items: center; gap: 10px; padding: 12px 18px; margin-bottom: 14px; border-radius: 18px; background: linear-gradient(135deg, rgba(31,122,77,.1), rgba(255,255,255,.68)); border: 1px solid rgba(31,122,77,.14); font-size: 14px; }

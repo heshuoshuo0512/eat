@@ -1,3 +1,5 @@
+name: smart-canteen
+
 services:
   api:
     build: .
@@ -10,10 +12,10 @@ services:
       DB_DRIVER: ${DB_DRIVER:-postgres}
       DB_MIGRATE: ${DB_MIGRATE:-1}
       HEALTH_KB_AUTOLOAD: ${HEALTH_KB_AUTOLOAD:-1}
-      HEALTH_KB_DIR: ${HEALTH_KB_DIR:-/app/data/health-knowledge-bases}
+      HEALTH_KB_DIR: ${HEALTH_KB_DIR:-/app/knowledge/health-knowledge-bases}
       HEALTH_KB_CHUNK_SIZE: ${HEALTH_KB_CHUNK_SIZE:-900}
       HEALTH_KB_CHUNK_OVERLAP: ${HEALTH_KB_CHUNK_OVERLAP:-120}
-      DATABASE_URL: ${DATABASE_URL:-postgres://smart_canteen:smart_canteen@postgres:5432/smart_canteen}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgres://${POSTGRES_USER:-smart_canteen}:${POSTGRES_PASSWORD:-smart_canteen}@postgres:5432/${POSTGRES_DB:-smart_canteen}}
       SMART_CANTEEN_DB: /app/data/smart-canteen.sqlite
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       UPLOAD_DIR: /app/uploads
@@ -42,7 +44,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     container_name: smart-canteen-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-smart_canteen}
@@ -51,7 +53,7 @@ services:
     volumes:
       - smart_canteen_pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smart_canteen -d smart_canteen"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 20

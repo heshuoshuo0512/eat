@@ -68,7 +68,7 @@ describe('AI usage governance', () => {
     assert.ok(visionLog.error);
   });
 
-  it('blocks AI calls when tenant monthly quota is exhausted', async () => {
+  it('degrades meal retrieval when tenant monthly quota is exhausted', async () => {
     const studentToken = await login('演示学生', 'student123');
     const adminToken = await login('admin', 'admin123');
 
@@ -76,9 +76,10 @@ describe('AI usage governance', () => {
     assert.equal(usageBefore.status, 200);
     await req('/api/admin/tenants/default', { method: 'PUT', token: adminToken, body: { name: '默认校园', status: 'active', plan: 'enterprise', aiQuota: usageBefore.data.quota.used, storageQuotaMb: 10240 } });
 
-    const blocked = await req('/api/agent/meal-advisor', { method: 'POST', token: studentToken, body: { question: '今天继续推荐午餐' } });
-    assert.equal(blocked.status, 429);
-    assert.match(blocked.data.error, /AI 月额度已用完/);
+    const degraded = await req('/api/agent/meal-advisor', { method: 'POST', token: studentToken, body: { question: '今天继续推荐午餐' } });
+    assert.equal(degraded.status, 200);
+    assert.ok(degraded.data.warnings.some((warning) => warning.code === 'AI_QUOTA_EXHAUSTED'));
+    assert.equal(degraded.data.meta.quotaExhausted, true);
 
     const usageAfter = await req('/api/admin/ai-usage', { token: adminToken });
     assert.equal(usageAfter.data.total, usageBefore.data.total);

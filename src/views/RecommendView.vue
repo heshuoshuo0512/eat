@@ -118,7 +118,12 @@ const profilePrompts = computed(() => buildProfilePrompts(store.profile, 'recomm
 const visibleRecommendationCitations = computed(() => visibleCitations(citations.value, citationsExpanded.value));
 const ratingById = computed(() => createRatingMap(store.rankings.dishes));
 const mealPicks = computed(() => {
-  const rawPicks = result.value?.mealPlan?.picks || result.value?.plan?.picks || [];
+  const rawPicks = result.value?.recommendations
+    || result.value?.mealPlan?.dishes
+    || result.value?.mealPlan?.picks
+    || result.value?.ranked
+    || result.value?.plan?.picks
+    || [];
   const dishById = new Map(store.dishes.map((dish) => [String(dish.id), dish]));
   const hydrated = rawPicks.map((pick) => {
     const id = pick.id || pick.dishId;
@@ -126,6 +131,51 @@ const mealPicks = computed(() => {
   }).filter((dish) => dish.id);
   return sortDishesByRating(hydrated, ratingById.value, sortDir.value);
 });
+
+function deterministicSummary(recommendation) {
+  const picks = recommendation.recommendations || recommendation.ranked || [];
+  if (!picks.length) {
+    const relaxation = recommendation.suggestedRelaxations?.[0];
+    const suggestion = typeof relaxation === 'string' ? relaxation : relaxation?.label || relaxation?.message;
+    return suggestion ? `当前没有满足全部条件且可点的菜品。可以尝试：${suggestion}` : '当前没有满足全部条件且可点的菜品，请稍后刷新今日供应。';
+  }
+  const names = picks.slice(0, 3).map((dish) => dish.name).join('、');
+  const warning = recommendation.warnings?.[0];
+  const warningText = typeof warning === 'string' ? warning : warning?.message;
+  return `已根据健康档案与今日真实供应生成 ${picks.length} 个备选方案：${names}。${warningText ? ` ${warningText}` : ''}`;
+}
+
+function recommendationCitations(recommendation) {
+  const evidence = recommendation.evidence?.dishes || [];
+  if (evidence.length) return evidence;
+  return (recommendation.recommendations || recommendation.ranked || []).map((dish) => ({
+    id: dish.id,
+    sourceId: dish.id,
+    name: dish.name,
+    score: dish.recommendationScore,
+    snippet: Array.isArray(dish.why) && dish.why.length ? dish.why.slice(0, 2).join(' · ') : '来源于当前校园菜品库与已发布菜单。'
+  }));
+}
+
+async function loadInitialRecommendation() {
+  loading.value = true;
+  message.value = '';
+  isError.value = false;
+  citationsExpanded.value = false;
+  try {
+    const response = await store.loadRecommendation();
+    result.value = response;
+    citations.value = recommendationCitations(response);
+    if (response.error) {
+      isError.value = true;
+      message.value = response.error;
+    }
+    conversation.value = [{ role: 'assistant', content: deterministicSummary(response) }];
+  } finally {
+    loading.value = false;
+    await scrollToLatest();
+  }
+}
 
 async function runPrompt(rawText) {
   const text = String(rawText || '').trim();
@@ -138,7 +188,6 @@ async function runPrompt(rawText) {
   loading.value = true;
   message.value = '';
   isError.value = false;
-  citationsExpanded.value = false;
   conversation.value.push({ role: 'user', content: text });
   question.value = '';
   await scrollToLatest();
@@ -229,7 +278,8 @@ async function rejectAction(action) {
 }
 
 function percent(value) {
-  const numeric = Number(value || 0);
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '—';
   const normalized = numeric <= 1 ? numeric * 100 : numeric;
   return `${Math.max(0, Math.min(100, Math.round(normalized)))}%`;
 }
@@ -245,15 +295,16 @@ function citationLink(source) {
 }
 
 onMounted(async () => {
-  await loadMemory();
-  await runPrompt(profilePrompts.value[0]?.query || '请根据我的健康档案和今天的真实供应推荐一顿合适的餐。');
+  await Promise.all([loadMemory(), loadInitialRecommendation()]);
 });
 </script>
 
 <style scoped>
 .recommendation-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
-.trust-status-bar { display: grid; grid-template-columns: repeat(3, minmax(120px, .55fr)) minmax(240px, 1.4fr); align-items: center; gap: 10px; margin: 14px 0; padding: 10px 14px; border: 1px solid rgba(31,122,77,.14); background: #f7fbf5; }
-.trust-status-bar article { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; border-right: 1px solid rgba(31,122,77,.12); font-size: 12px; }.trust-status-bar strong { color: var(--primary-dark); }.trust-status-bar small { color: var(--muted); line-height: 1.45; }
+.trust-status-bar { display: grid; grid-template-columns: repeat(3, minmax(120px, .55fr)) minmax(240px, 1.4fr); align-items: center; gap: 10px; margin: 14px 0; padding: 10px 14px; border: 1px solid rgba(31, 122, 77, .14); background: #f7fbf5; }
+.trust-status-bar article { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; border-right: 1px solid rgba(31, 122, 77, .12); font-size: 12px; }
+.trust-status-bar strong { color: var(--primary-dark); }
+.trust-status-bar small { color: var(--muted); line-height: 1.45; }
 .recommend-results-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, .72fr); gap: 16px; align-items: start; }
 .recommend-workspace { display: grid; grid-template-columns: minmax(210px, .72fr) minmax(420px, 1.55fr) minmax(240px, .82fr); gap: 16px; align-items: start; }
 .workspace-panel { padding: 18px; border-radius: 8px; }
@@ -284,7 +335,10 @@ onMounted(async () => {
 .assistant-thinking span:nth-child(2) { animation-delay: .12s; }.assistant-thinking span:nth-child(3) { animation-delay: .24s; }
 .assistant-thinking p { flex-basis: 100%; text-align: center; }
 .recommendation-strip { display: grid; gap: 9px; }
-.recommend-sort { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }.recommend-sort > div { display: flex; gap: 7px; }.recommend-sort .pill { border: 1px solid rgba(31,122,77,.12); background: #f8fbf7; }.recommend-sort .pill.active { color: #fff; background: var(--primary); }
+.recommend-sort { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+.recommend-sort > div { display: flex; gap: 7px; }
+.recommend-sort .pill { border: 1px solid rgba(31, 122, 77, .12); background: #f8fbf7; }
+.recommend-sort .pill.active { color: #fff; background: var(--primary); }
 .recommend-dish { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px; border: 1px solid rgba(31, 122, 77, .12); border-radius: 8px; animation: dish-in .32s ease both; animation-delay: var(--delay); }
 .recommend-dish-media { width: 58px; aspect-ratio: 1; overflow: hidden; border-radius: 6px; background: #edf6e9; display: grid; place-items: center; }
 .recommend-dish-media img { width: 100%; height: 100%; object-fit: cover; }
@@ -311,7 +365,8 @@ onMounted(async () => {
 @keyframes dish-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
 @media (max-width: 1180px) {
   .recommend-results-grid { grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr); }
-  .trust-status-bar { grid-template-columns: repeat(3, 1fr); }.trust-status-bar small { grid-column: 1 / 4; }
+  .trust-status-bar { grid-template-columns: repeat(3, 1fr); }
+  .trust-status-bar small { grid-column: 1 / 4; }
 }
 @media (max-width: 760px) {
   .recommendation-heading { align-items: stretch; flex-direction: column; }
@@ -319,7 +374,9 @@ onMounted(async () => {
   .recommend-results-grid { grid-template-columns: 1fr; }
   .quick-panel, .workspace-side { position: static; }
   .workspace-side { grid-column: auto; grid-template-columns: 1fr; }
-  .trust-status-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); }.trust-status-bar article { align-items: flex-start; flex-direction: column; }.trust-status-bar small { grid-column: 1 / 4; }
+  .trust-status-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .trust-status-bar article { align-items: flex-start; flex-direction: column; }
+  .trust-status-bar small { grid-column: 1 / 4; }
   .quick-prompts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conversation-panel { min-height: 600px; }
   .message { max-width: 94%; }
@@ -328,8 +385,11 @@ onMounted(async () => {
   .quick-prompts { grid-template-columns: 1fr; }
   .recommend-dish { grid-template-columns: 52px minmax(0, 1fr); }
   .recommend-dish .button-link { grid-column: 1 / 3; width: 100%; justify-content: center; }
-  .recommend-sort { align-items: stretch; flex-direction: column; }.recommend-sort > div { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .trust-status-bar { grid-template-columns: 1fr; }.trust-status-bar article { align-items: center; flex-direction: row; padding: 0 0 8px; border-right: 0; border-bottom: 1px solid rgba(31,122,77,.1); }.trust-status-bar small { grid-column: auto; }
+  .recommend-sort { align-items: stretch; flex-direction: column; }
+  .recommend-sort > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trust-status-bar { grid-template-columns: 1fr; }
+  .trust-status-bar article { align-items: center; flex-direction: row; padding: 0 0 8px; border-right: 0; border-bottom: 1px solid rgba(31, 122, 77, .1); }
+  .trust-status-bar small { grid-column: auto; }
   .recommend-input { grid-template-columns: minmax(0, 1fr) 44px; }
 }
 @media (prefers-reduced-motion: reduce) {

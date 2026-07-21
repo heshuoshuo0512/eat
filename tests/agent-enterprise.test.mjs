@@ -70,8 +70,8 @@ describe('Enterprise agent: session memory, confirmation-gated actions, tool tra
         mealType: 'lunch',
         status: 'published',
         items: [
-          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 10, supplyCount: 0, soldOut: false },
-          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 8, supplyCount: 0, soldOut: false },
+          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 10, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
+          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 8, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
         ],
       },
     });
@@ -110,7 +110,7 @@ describe('Enterprise agent: session memory, confirmation-gated actions, tool tra
     assert.ok(toolNames.some((n) => n.includes('.')), 'at least one tool uses dotted registry-style naming');
     assert.ok(toolNames.includes('profile.load'), 'steps include profile.load');
     assert.ok(toolNames.includes('menu.today'), 'steps include menu.today');
-    assert.ok(toolNames.includes('rag.meal_advisor'), 'steps include rag.meal_advisor');
+    assert.ok(toolNames.includes('meal.recommend'), 'steps include meal.recommend');
 
     // Serialized response must never contain the raw API key
     const serialized = JSON.stringify(data);
@@ -186,7 +186,7 @@ describe('Enterprise agent: session memory, confirmation-gated actions, tool tra
     const { status, data } = await req('/api/agent/assistant', {
       method: 'POST',
       token: studentToken,
-      body: { query: '来一份番茄鸡蛋盖饭，帮我下单' },
+      body: { query: '午餐来一份番茄鸡蛋盖饭，帮我下单' },
     });
     assert.equal(status, 200, 'agent returns 200');
 
@@ -213,7 +213,7 @@ describe('Enterprise agent: session memory, confirmation-gated actions, tool tra
     const agentRes = await req('/api/agent/assistant', {
       method: 'POST',
       token: studentToken,
-      body: { query: '来一份番茄鸡蛋盖饭，帮我下单' },
+      body: { query: '午餐来一份番茄鸡蛋盖饭，帮我下单' },
     });
     assert.equal(agentRes.status, 200, 'agent returns 200');
     const createAction = agentRes.data.actions.find((a) => a.type === 'create_order');
@@ -255,7 +255,7 @@ describe('Enterprise agent: session memory, confirmation-gated actions, tool tra
     const agentRes = await req('/api/agent/assistant', {
       method: 'POST',
       token: studentToken,
-      body: { query: '来一份番茄鸡蛋盖饭，帮我下单' },
+      body: { query: '午餐来一份番茄鸡蛋盖饭，帮我下单' },
     });
     assert.equal(agentRes.status, 200, 'agent returns 200');
     const createAction = agentRes.data.actions.find((a) => a.type === 'create_order');

@@ -17,6 +17,77 @@ function emptyState() {
   };
 }
 
+function emptyDishSearchResult() {
+  return {
+    query: '',
+    interpreted: null,
+    items: [],
+    availability: { orderableCount: 0, totalCount: 0 },
+    matchReasons: {},
+    suggestedRelaxations: [],
+    page: { limit: 0, offset: 0, total: 0 },
+    meta: null,
+    error: null
+  };
+}
+
+function emptyContextualRecommendation(error = null) {
+  return {
+    recommendations: [],
+    mealPlan: null,
+    evidence: { dishes: [], knowledge: [] },
+    warnings: [],
+    suggestedRelaxations: [],
+    meta: null,
+    ranked: [],
+    plan: null,
+    context: null,
+    source: null,
+    menu: null,
+    goalLabel: null,
+    totals: null,
+    error
+  };
+}
+
+function normalizeRecommendationResult(result = {}) {
+  const mealPlan = result.mealPlan || result.plan || null;
+  const recommendations = result.recommendations
+    || result.dishes
+    || mealPlan?.dishes
+    || mealPlan?.picks
+    || result.ranked
+    || result.picks
+    || [];
+  const plan = result.plan || (mealPlan ? {
+    ...mealPlan,
+    dishes: mealPlan.dishes || recommendations,
+    picks: mealPlan.picks || mealPlan.dishes || recommendations
+  } : null);
+  const meta = result.meta || null;
+  return {
+    ...emptyContextualRecommendation(),
+    ...result,
+    recommendations,
+    mealPlan,
+    evidence: {
+      dishes: result.evidence?.dishes || [],
+      knowledge: result.evidence?.knowledge || []
+    },
+    warnings: result.warnings || [],
+    suggestedRelaxations: result.suggestedRelaxations || [],
+    meta,
+    ranked: recommendations,
+    plan,
+    context: result.context || meta?.context || result.reason || null,
+    source: result.source || meta?.source || null,
+    menu: result.menu || (meta?.date || meta?.mealType ? { date: meta.date, mealType: meta.mealType } : null),
+    goalLabel: result.goalLabel || plan?.goalLabel || null,
+    totals: result.totals || plan?.totals || mealPlan?.totals || null,
+    error: null
+  };
+}
+
 function filterDishes(dishes, filters = {}) {
   const keyword = String(filters.keyword || '').trim().toLowerCase();
   const maxPrice = Number(filters.maxPrice || 999);
@@ -45,7 +116,12 @@ export const useCanteenStore = defineStore('canteen', () => {
   const agentEvalCases = ref([]);
   const agentEvalRuns = ref([]);
   const deploymentReadiness = ref(null);
-  const contextualRecommendation = ref({ ranked: [], plan: null, context: null, source: null, menu: null, error: null });
+  const retrievalIndexStatus = ref(null);
+  const retrievalReindexResult = ref(null);
+  const dishSearchResult = ref(emptyDishSearchResult());
+  const dishSearchLoading = ref(false);
+  const recommendationLoading = ref(false);
+  const contextualRecommendation = ref(emptyContextualRecommendation());
   const healthPlan = ref(null);
   const adminEnvironment = ref(null);
 
@@ -120,32 +196,61 @@ export const useCanteenStore = defineStore('canteen', () => {
   const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
 
   async function loadRecommendation() {
+    recommendationLoading.value = true;
     try {
       const result = await apiClient.loadRecommendation();
-      contextualRecommendation.value = {
-        ranked: result.dishes || result.ranked || result.picks || [],
-        plan: result.plan || { goalLabel: result.goalLabel, totals: result.totals, reason: result.reason },
-        context: result.context || result.reason || null,
-        source: result.source || null,
-        menu: result.menu || null,
-        goalLabel: result.goalLabel || result.plan?.goalLabel || null,
-        totals: result.totals || result.plan?.totals || null,
-        error: null
-      };
+      contextualRecommendation.value = normalizeRecommendationResult(result);
       return contextualRecommendation.value;
     } catch (error) {
-      contextualRecommendation.value = {
-        ranked: [],
-        plan: null,
-        context: null,
-        source: null,
-        menu: null,
-        goalLabel: null,
-        totals: null,
-        error: error?.message || '推荐请求失败，请稍后重试。'
-      };
+      contextualRecommendation.value = emptyContextualRecommendation(error?.message || '推荐请求失败，请稍后重试。');
       return contextualRecommendation.value;
+    } finally {
+      recommendationLoading.value = false;
     }
+  }
+
+  async function requestRecommendation(payload = {}) {
+    recommendationLoading.value = true;
+    try {
+      const result = await apiClient.recommend(payload);
+      contextualRecommendation.value = normalizeRecommendationResult(result);
+      return contextualRecommendation.value;
+    } catch (error) {
+      contextualRecommendation.value = emptyContextualRecommendation(error?.message || '推荐请求失败，请稍后重试。');
+      throw error;
+    } finally {
+      recommendationLoading.value = false;
+    }
+  }
+
+  async function searchDishes(payload) {
+    dishSearchLoading.value = true;
+    dishSearchResult.value = { ...emptyDishSearchResult(), query: String(payload?.query || '').trim() };
+    try {
+      const result = await apiClient.dishesSearch(payload);
+      dishSearchResult.value = {
+        ...emptyDishSearchResult(),
+        ...result,
+        query: String(payload?.query || '').trim(),
+        items: Array.isArray(result.items) ? result.items : [],
+        suggestedRelaxations: Array.isArray(result.suggestedRelaxations) ? result.suggestedRelaxations : [],
+        error: null
+      };
+      return dishSearchResult.value;
+    } catch (error) {
+      dishSearchResult.value = {
+        ...emptyDishSearchResult(),
+        query: String(payload?.query || '').trim(),
+        error: error?.message || '菜品检索失败，请稍后重试。'
+      };
+      throw error;
+    } finally {
+      dishSearchLoading.value = false;
+    }
+  }
+
+  function clearDishSearch() {
+    dishSearchResult.value = emptyDishSearchResult();
   }
   async function loadHealthPlan(days = 1) {
     healthPlan.value = await apiClient.healthPlan(days);
@@ -331,6 +436,18 @@ export const useCanteenStore = defineStore('canteen', () => {
   async function loadDeploymentReadiness() {
     const result = await apiClient.deploymentReadiness();
     deploymentReadiness.value = result;
+    return result;
+  }
+
+  async function loadRetrievalIndexStatus() {
+    const result = await apiClient.getRetrievalIndexStatus();
+    retrievalIndexStatus.value = result;
+    return result;
+  }
+
+  async function rebuildRetrievalIndex(payload = {}) {
+    const result = await apiClient.rebuildRetrievalIndex(payload);
+    retrievalReindexResult.value = result;
     return result;
   }
 
@@ -582,16 +699,18 @@ export const useCanteenStore = defineStore('canteen', () => {
     return result;
   }
 
-  async function approveReviewAdmin(id) {
-    const result = await apiClient.updateReviewStatus(id, 'approved');
-    adminReviews.value = adminReviews.value.map((r) => r.id === id ? { ...r, status: 'approved' } : r);
+  async function updateReviewStatusAdmin(id, status) {
+    const result = await apiClient.updateReviewStatus(id, status);
+    adminReviews.value = adminReviews.value.map((review) => review.id === id ? { ...review, status } : review);
     return result;
   }
 
+  async function approveReviewAdmin(id) {
+    return updateReviewStatusAdmin(id, 'approved');
+  }
+
   async function rejectReviewAdmin(id) {
-    const result = await apiClient.updateReviewStatus(id, 'rejected');
-    adminReviews.value = adminReviews.value.map((r) => r.id === id ? { ...r, status: 'rejected' } : r);
-    return result;
+    return updateReviewStatusAdmin(id, 'rejected');
   }
 
   async function toggleFavorite(dishId) {
@@ -656,6 +775,11 @@ export const useCanteenStore = defineStore('canteen', () => {
     agentEvalCases,
     agentEvalRuns,
     deploymentReadiness,
+    retrievalIndexStatus,
+    retrievalReindexResult,
+    dishSearchResult,
+    dishSearchLoading,
+    recommendationLoading,
     contextualRecommendation,
     adminEnvironment,
     load,
@@ -697,7 +821,12 @@ export const useCanteenStore = defineStore('canteen', () => {
     deleteAgentEvalCase,
     runAgentEvalCase,
     loadDeploymentReadiness,
+    loadRetrievalIndexStatus,
+    rebuildRetrievalIndex,
+    searchDishes,
+    clearDishSearch,
     loadRecommendation,
+    requestRecommendation,
     healthPlan,
     loadHealthPlan,
     fetchRecommendation,
@@ -762,6 +891,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadDatabaseOverview,
     loadReviewsAdmin,
     deleteReviewAdmin,
+    updateReviewStatusAdmin,
     approveReviewAdmin,
     rejectReviewAdmin,
     loadReviewAnalytics,

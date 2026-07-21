@@ -48,8 +48,8 @@ describe('Today menu recommendation loop', () => {
         mealType: 'lunch',
         status: 'published',
         items: [
-          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 80, soldOut: false },
-          { dishId: 'd-beef-noodle', price: 18, supplyLimit: 20, soldOut: true }
+          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 80, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
+          { dishId: 'd-beef-noodle', price: 18, supplyLimit: 20, soldOut: true, servingStart: '00:00', servingEnd: '23:59' }
         ]
       }
     });

@@ -1,0 +1,2 @@
+ALTER TABLE audit_logs
+  ADD COLUMN IF NOT EXISTS metadata_json TEXT NOT NULL DEFAULT '{}';

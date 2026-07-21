@@ -177,6 +177,7 @@ function migrate(db) {
       action TEXT NOT NULL,
       entity TEXT NOT NULL,
       entity_id TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL
     );
 
@@ -375,6 +376,7 @@ function migrate(db) {
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN expires_at TEXT"); } catch {}
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN payload_hash TEXT NOT NULL DEFAULT ''"); } catch {}
   try { db.exec('ALTER TABLE stalls ADD COLUMN parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT'); } catch {}
+  try { db.exec("ALTER TABLE audit_logs ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
   for (const [table, column] of [
     ['users', "tenant_id TEXT NOT NULL DEFAULT 'default'"],
     ['canteens', "tenant_id TEXT NOT NULL DEFAULT 'default'"],
@@ -700,12 +702,14 @@ export function rowToDish(row) {
 
 
 export function rowToReview(row) {
+  const user = row.nickname || row.username || '匿名用户';
   return {
     id: row.id,
     targetType: row.target_type,
     targetId: row.target_id,
     userId: row.user_id,
-    user: row.nickname || row.username || '匿名用户',
+    user,
+    author: { id: row.user_id, name: user, username: row.username || null, nickname: row.nickname || null },
     rating: row.rating,
     content: row.content,
     status: row.status || 'approved',
@@ -714,17 +718,20 @@ export function rowToReview(row) {
 }
 
 export function rowToPost(row) {
+  const user = row.nickname || row.username || '匿名用户';
   return {
     id: row.id,
     targetType: row.target_type,
     targetId: row.target_id,
     userId: row.user_id,
-    user: row.nickname || row.username || '匿名用户',
+    user,
+    author: { id: row.user_id, name: user, username: row.username || null, nickname: row.nickname || null },
     content: row.content,
     imageUrl: row.image_url || '',
     rating: row.rating == null ? null : Number(row.rating),
     status: row.status || 'pending',
     linkedReviewId: row.linked_review_id || null,
+    linkedReviewStatus: row.linked_review_status || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -839,6 +846,7 @@ export function rowToAuditLog(row) {
     action: row.action,
     entity: row.entity,
     entityId: row.entity_id,
+    metadata: parseJson(row.metadata_json, {}),
     createdAt: row.created_at
   };
 }
@@ -892,23 +900,42 @@ function sqliteToPg(sql) {
  * When the caller is SQLite's `StatementSync`, the return value is a plain
  * JS value; `await plainValue` is a no-op, so both backends are transparent.
  */
-class PgDatabase {
-  constructor(pool) {
+export class PgDatabase {
+  constructor(pool, queryable = pool) {
     this.pool = pool;
+    this.queryable = queryable;
   }
 
   prepare(sql) {
     const pgSql = sqliteToPg(sql);
-    const pool = this.pool;
+    const queryable = this.queryable;
     return {
-      all:  (...params) => pool.query(pgSql, params).then(r => r.rows),
-      get:  (...params) => pool.query(pgSql, params).then(r => r.rows[0] ?? undefined),
-      run:  (...params) => pool.query(pgSql, params).then(r => ({ changes: r.rowCount })),
+      all:  (...params) => queryable.query(pgSql, params).then(r => r.rows),
+      get:  (...params) => queryable.query(pgSql, params).then(r => r.rows[0] ?? undefined),
+      run:  (...params) => queryable.query(pgSql, params).then(r => ({ changes: r.rowCount })),
     };
   }
 
   exec(sql) {
-    return this.pool.query(sql);
+    return this.queryable.query(sql);
+  }
+
+  async transaction(operation) {
+    const client = await this.pool.connect();
+    const transactionDb = new PgDatabase(this.pool, client);
+    let began = false;
+    try {
+      await client.query('BEGIN');
+      began = true;
+      const result = await operation(transactionDb);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      if (began) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   close() {

@@ -62,12 +62,27 @@ describe('Enterprise tenant and menu operations', () => {
     const updated = await req('/api/admin/tenants/tenant-campus-a', {
       method: 'PUT',
       token,
-      body: { name: '未来校园 A+', status: 'disabled', plan: 'trial', aiQuota: 100, storageQuotaMb: 512 },
+      body: { name: '未来校园 A+', status: 'disabled', plan: 'trial', aiQuota: 0, storageQuotaMb: 0 },
     });
     assert.equal(updated.status, 200);
     const tenant = updated.data.tenants.find((item) => item.id === 'tenant-campus-a');
     assert.equal(tenant.status, 'disabled');
-    assert.equal(tenant.aiQuota, 100);
+    assert.equal(tenant.aiQuota, 0);
+    assert.equal(tenant.storageQuotaMb, 0);
+  });
+
+  it('rejects unknown tenant status instead of silently activating it', async () => {
+    const token = await adminToken();
+    const created = await req('/api/admin/tenants', {
+      method: 'POST',
+      token,
+      body: { id: 'tenant-bad-status', name: '状态异常租户', status: 'suspended', aiQuota: 0, storageQuotaMb: 0 },
+    });
+    assert.equal(created.status, 400);
+    assert.match(created.data.error, /租户状态/);
+
+    const tenants = await req('/api/admin/tenants', { token });
+    assert.ok(!tenants.data.tenants.some((tenant) => tenant.id === 'tenant-bad-status'));
   });
 
   it('rejects unsafe tenant ids', async () => {

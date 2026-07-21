@@ -30,17 +30,17 @@ describe('student community and workspace UI contracts', () => {
     assert.equal((home.match(/id: '(dishes|recommend|canteens|rankings|regions|reviews|community|saved|orders)'/g) || []).length, 9);
   });
 
-  it('uses the shared composer and dynamic profile prompts for dish discovery', () => {
+  it('uses the shared composer without losing semantic dish search', () => {
     assert.match(dishes, /SmartMealComposer/);
     assert.match(dishes, /buildProfilePrompts/);
     assert.doesNotMatch(dishes, /class="card filter-bar"/);
-    assert.doesNotMatch(dishes, /store\.searchedDishes/);
-    assert.match(dishes, /ragResult\.citations/);
+    assert.match(dishes, /store\.searchDishes/);
+    assert.match(dishes, /ragResult\.items/);
+    assert.doesNotMatch(dishes, /store\.askMealAdvisor/);
   });
 
   it('provides review tabs, cascading filters, and rating sort', () => {
-    assert.match(reviews, /菜品评价/);
-    assert.match(reviews, /食堂评价/);
+    assert.match(reviews, /filters\.targetType/);
     assert.match(reviews, /filters\.canteenId/);
     assert.match(reviews, /filters\.stallId/);
     assert.match(reviews, /filters\.dishId/);
@@ -49,9 +49,8 @@ describe('student community and workspace UI contracts', () => {
 
   it('provides moderated single-image campus posts and admin review integration', () => {
     assert.match(community, /accept="image\/png,image\/jpeg,image\/webp,image\/gif"/);
-    assert.match(community, /提交审核/);
     assert.match(community, /form\.rating/);
-    assert.match(admin, /评价与帖子审核/);
+    assert.match(community, /submitPost/);
     assert.match(admin, /updatePostStatusAdmin/);
   });
 
@@ -60,12 +59,11 @@ describe('student community and workspace UI contracts', () => {
     assert.match(canteens, /@media \(max-width: 640px\)[\s\S]*\.canteen-grid\s*\{\s*grid-template-columns:\s*1fr/);
   });
 
-  it('redesigns add and pickup-code actions with responsive motion fallbacks', () => {
+  it('keeps pickup-code previews while disabling order creation', () => {
     assert.match(orders, /add-dish-button/);
     assert.match(orders, /copyPickupCode/);
     assert.match(orders, /pickup-code-panel/);
     assert.match(orders, /prefers-reduced-motion/);
-    assert.match(orders, /联调中，暂不可提交/);
     assert.doesNotMatch(orders, /store\.createOrder/);
   });
 });

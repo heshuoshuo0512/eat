@@ -11,6 +11,7 @@ let otherToken;
 let adminToken;
 let dishId;
 let canteenId;
+let stallId;
 
 async function req(path, { method = 'GET', token, body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -47,6 +48,7 @@ describe('student review overview and campus post moderation', () => {
     const bootstrap = await req('/api/bootstrap');
     dishId = bootstrap.data.dishes[0].id;
     const stall = bootstrap.data.stalls.find((item) => item.id === bootstrap.data.dishes[0].stallId);
+    stallId = stall.id;
     canteenId = stall.canteenId;
   });
 
@@ -57,6 +59,13 @@ describe('student review overview and campus post moderation', () => {
     const secondContent = '聚合评价二星测试';
     await req('/api/reviews', { method: 'POST', token: studentToken, body: { targetType: 'dish', targetId: dishId, rating: 5, content: firstContent } });
     await req('/api/reviews', { method: 'POST', token: studentToken, body: { targetType: 'dish', targetId: dishId, rating: 2, content: secondContent } });
+    const moderation = await req(`/api/admin/reviews?targetType=dish&canteenId=${encodeURIComponent(canteenId)}&stallId=${encodeURIComponent(stallId)}&dishId=${encodeURIComponent(dishId)}`, { token: adminToken });
+    assert.equal(moderation.status, 200);
+    assert.ok(moderation.data.reviews.some((item) => item.content === firstContent));
+    assert.equal(moderation.data.reviews[0].dish.id, dishId);
+    assert.equal(moderation.data.reviews[0].stall.id, stallId);
+    assert.equal(moderation.data.reviews[0].canteen.id, canteenId);
+    assert.ok(moderation.data.reviews[0].author.id);
     await approveReviewByContent(firstContent);
     await approveReviewByContent(secondContent);
 
@@ -83,6 +92,8 @@ describe('student review overview and campus post moderation', () => {
     assert.ok(mine.data.posts.some((post) => post.id === created.data.post.id && post.status === 'pending'));
     const other = await req('/api/posts', { token: otherToken });
     assert.ok(!other.data.posts.some((post) => post.id === created.data.post.id));
+    const moderation = await req(`/api/admin/posts?status=pending&targetType=dish&canteenId=${encodeURIComponent(canteenId)}&stallId=${encodeURIComponent(stallId)}&dishId=${encodeURIComponent(dishId)}`, { token: adminToken });
+    assert.ok(moderation.data.posts.some((post) => post.id === created.data.post.id));
   });
 
   it('syncs an approved rated dish post into one formal review without duplicates', async () => {
@@ -99,6 +110,16 @@ describe('student review overview and campus post moderation', () => {
     const approve = await req(`/api/admin/posts/${postId}/status`, { method: 'PATCH', token: adminToken, body: { status: 'approved' } });
     assert.equal(approve.status, 200);
     assert.ok(approve.data.post.linkedReviewId);
+    assert.equal(approve.data.post.linkedReviewStatus, 'approved');
+    const audits = await req('/api/admin/audit-logs?limit=100', { token: adminToken });
+    const moderationAudit = audits.data.logs.find((entry) => entry.action === 'MODERATE_POST' && entry.entityId === postId);
+    assert.deepEqual(moderationAudit.metadata, {
+      fromStatus: 'pending',
+      toStatus: 'approved',
+      linkedReviewId: approve.data.post.linkedReviewId,
+      targetType: 'dish',
+      targetId: dishId
+    });
 
     const publicFeed = await req('/api/posts', { token: otherToken });
     assert.ok(publicFeed.data.posts.some((post) => post.id === postId && post.status === 'approved'));

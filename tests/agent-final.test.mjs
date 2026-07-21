@@ -37,7 +37,7 @@ async function proposeOrder(token) {
   return await req('/api/agent/assistant', {
     method: 'POST',
     token,
-    body: { query: '来一份番茄鸡蛋盖饭，帮我下单' },
+    body: { query: '午餐来一份番茄鸡蛋盖饭，帮我下单' },
   });
 }
 
@@ -76,8 +76,8 @@ describe('Agent final upgrade: function-call metadata, permission denial, memory
         mealType: 'lunch',
         status: 'published',
         items: [
-          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 30, supplyCount: 0, soldOut: false },
-          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 30, supplyCount: 0, soldOut: false },
+          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 30, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
+          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 30, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
         ],
       },
     });

@@ -133,14 +133,14 @@ describe('POST /api/agent/assistant', () => {
     assert.ok(Array.isArray(data.actions), 'actions is array');
   });
 
-  /* ── Meal-planning intent for menu query ──────────────────────── */
-  it('menu/nutrition query produces meal_planning intent with todayMenu tool result', async () => {
+  /* ── Meal recommendation intent for menu query ───────────────── */
+  it('menu/nutrition query produces meal_recommendation intent with todayMenu tool result', async () => {
     const { data } = await req('/api/agent/assistant', {
       method: 'POST',
       token: studentToken,
       body: { query: '今天午餐有什么好吃的推荐？' },
     });
-    assert.equal(data.intent, 'meal_planning', 'intent should be meal_planning');
+    assert.equal(data.intent, 'meal_recommendation', 'intent should be meal_recommendation');
     assert.ok(data.toolResults.todayMenu, 'toolResults includes todayMenu');
     assert.ok(typeof data.toolResults.todayMenu.dishCount === 'number', 'todayMenu has dishCount');
     assert.ok(data.toolResults.profile, 'toolResults includes profile');

@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 const runtimeConfig = {
   apiKey: '',
   baseUrl: '',
@@ -6,6 +8,7 @@ const runtimeConfig = {
   visionModel: '',
   timeoutMs: 0
 };
+const aiRuntimeContext = new AsyncLocalStorage();
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small';
@@ -19,31 +22,44 @@ function env(name, fallback = '') {
   return process.env[name] || fallback;
 }
 
-function providerConfig() {
-  const apiKey = runtimeConfig.apiKey || env('AI_API_KEY') || env('OPENAI_API_KEY');
+function normalizedRuntimeConfig(settings = {}) {
+  return {
+    apiKey: String(settings.apiKey || '').trim(),
+    baseUrl: String(settings.baseUrl || '').trim(),
+    embeddingModel: String(settings.embeddingModel || '').trim(),
+    chatModel: String(settings.chatModel || '').trim(),
+    visionModel: String(settings.visionModel || '').trim(),
+    timeoutMs: Number(settings.timeoutMs || 0) || 0,
+  };
+}
+
+function providerConfig(settings) {
+  const activeConfig = settings === undefined
+    ? (aiRuntimeContext.getStore() || runtimeConfig)
+    : normalizedRuntimeConfig(settings);
+  const apiKey = activeConfig.apiKey || env('AI_API_KEY') || env('OPENAI_API_KEY');
   return {
     enabled: Boolean(apiKey),
-    source: runtimeConfig.apiKey ? 'admin' : (apiKey ? 'env' : 'none'),
+    source: activeConfig.apiKey ? 'admin' : (apiKey ? 'env' : 'none'),
     apiKey,
-    baseUrl: (runtimeConfig.baseUrl || env('AI_BASE_URL', env('OPENAI_BASE_URL', DEFAULT_OPENAI_BASE_URL))).replace(/\/$/, ''),
-    embeddingModel: runtimeConfig.embeddingModel || env('AI_EMBEDDING_MODEL', env('OPENAI_EMBEDDING_MODEL', DEFAULT_OPENAI_EMBEDDING_MODEL)),
-    chatModel: runtimeConfig.chatModel || env('AI_CHAT_MODEL', env('OPENAI_CHAT_MODEL', DEFAULT_OPENAI_CHAT_MODEL)),
-    visionModel: runtimeConfig.visionModel || env('AI_VISION_MODEL', env('OPENAI_VISION_MODEL', runtimeConfig.chatModel || env('AI_CHAT_MODEL', env('OPENAI_CHAT_MODEL', DEFAULT_OPENAI_VISION_MODEL)))),
-    timeoutMs: Number(runtimeConfig.timeoutMs || env('AI_TIMEOUT_MS', DEFAULT_TIMEOUT_MS)) || DEFAULT_TIMEOUT_MS
+    baseUrl: (activeConfig.baseUrl || env('AI_BASE_URL', env('OPENAI_BASE_URL', DEFAULT_OPENAI_BASE_URL))).replace(/\/$/, ''),
+    embeddingModel: activeConfig.embeddingModel || env('AI_EMBEDDING_MODEL', env('OPENAI_EMBEDDING_MODEL', DEFAULT_OPENAI_EMBEDDING_MODEL)),
+    chatModel: activeConfig.chatModel || env('AI_CHAT_MODEL', env('OPENAI_CHAT_MODEL', DEFAULT_OPENAI_CHAT_MODEL)),
+    visionModel: activeConfig.visionModel || env('AI_VISION_MODEL', env('OPENAI_VISION_MODEL', activeConfig.chatModel || env('AI_CHAT_MODEL', env('OPENAI_CHAT_MODEL', DEFAULT_OPENAI_VISION_MODEL)))),
+    timeoutMs: Number(activeConfig.timeoutMs || env('AI_TIMEOUT_MS', DEFAULT_TIMEOUT_MS)) || DEFAULT_TIMEOUT_MS
   };
 }
 
 export function setAiRuntimeConfig(settings = {}) {
-  runtimeConfig.apiKey = String(settings.apiKey || '').trim();
-  runtimeConfig.baseUrl = String(settings.baseUrl || '').trim();
-  runtimeConfig.embeddingModel = String(settings.embeddingModel || '').trim();
-  runtimeConfig.chatModel = String(settings.chatModel || '').trim();
-  runtimeConfig.visionModel = String(settings.visionModel || '').trim();
-  runtimeConfig.timeoutMs = Number(settings.timeoutMs || 0) || 0;
+  Object.assign(runtimeConfig, normalizedRuntimeConfig(settings));
 }
 
-export function getAiProviderStatus() {
-  const config = providerConfig();
+export function withAiRuntimeConfig(settings, operation) {
+  return aiRuntimeContext.run(normalizedRuntimeConfig(settings), operation);
+}
+
+export function getAiProviderStatus(settings) {
+  const config = providerConfig(settings);
   return {
     enabled: config.enabled,
     source: config.source,
@@ -74,7 +90,8 @@ function configFromSettings(settings = {}) {
 export async function testAiProviderConnection(settings = {}) {
   const config = configFromSettings(settings);
   if (!config.apiKey) throw Object.assign(new Error('请先填写 API Key'), { status: 400 });
-  const data = await postJson(`${config.baseUrl}/chat/completions`, {
+  const startedAt = Date.now();
+  await postJson(`${config.baseUrl}/chat/completions`, {
     model: config.chatModel,
     temperature: 0,
     max_tokens: 8,
@@ -85,9 +102,9 @@ export async function testAiProviderConnection(settings = {}) {
   }, config);
   return {
     ok: true,
+    status: 'success',
     model: config.chatModel,
-    baseUrl: config.baseUrl,
-    sample: data.choices?.[0]?.message?.content?.trim() || 'OK'
+    durationMs: Date.now() - startedAt
   };
 }
 
@@ -292,4 +309,54 @@ export async function generateAgentToolCalls({ query, tools = [] } = {}) {
     name: String(call.function?.name || '').replace(/__/g, '.'),
     arguments: parseJsonObject(call.function?.arguments || '{}')
   })).filter((call) => call.name);
+}
+
+/** Ask the model for optional, bounded search filters only after deterministic retrieval misses. */
+export async function generateDishSearchFilterSupplement({ query } = {}) {
+  const config = providerConfig();
+  if (!config.enabled || !String(query || '').trim()) return null;
+  const data = await postJson(`${config.baseUrl}/chat/completions`, {
+    model: config.chatModel,
+    temperature: 0,
+    max_tokens: 180,
+    tools: [{
+      type: 'function',
+      function: {
+        name: 'supplement_dish_search_filters',
+        description: '从模糊菜品查询中提取可验证的检索过滤条件，不要猜测菜名或返回菜品。',
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            mealType: { type: 'string', enum: ['breakfast', 'lunch', 'dinner'] },
+            budgetMin: { type: 'number', minimum: 0, maximum: 10000 },
+            budgetMax: { type: 'number', minimum: 0, maximum: 10000 },
+            canteenName: { type: 'string', maxLength: 80 },
+            stallName: { type: 'string', maxLength: 80 },
+            taste: { type: 'string', maxLength: 80 },
+            halalOnly: { type: 'boolean' },
+            dietaryPattern: { type: 'string', enum: ['balanced', 'vegetarian', 'vegan'] },
+            tags: { type: 'array', items: { type: 'string', maxLength: 30 }, maxItems: 10 },
+            includeIngredients: { type: 'array', items: { type: 'string', maxLength: 30 }, maxItems: 10 },
+            avoidIngredients: { type: 'array', items: { type: 'string', maxLength: 30 }, maxItems: 10 },
+            allergens: { type: 'array', items: { type: 'string', maxLength: 30 }, maxItems: 10 },
+            minProtein: { type: 'number', minimum: 0, maximum: 1000 },
+            minFiber: { type: 'number', minimum: 0, maximum: 1000 },
+            maxCalories: { type: 'number', minimum: 0, maximum: 10000 },
+            maxFat: { type: 'number', minimum: 0, maximum: 1000 },
+            maxCarbs: { type: 'number', minimum: 0, maximum: 2000 },
+            maxSodium: { type: 'number', minimum: 0, maximum: 100000 },
+            maxSugar: { type: 'number', minimum: 0, maximum: 1000 }
+          }
+        }
+      }
+    }],
+    tool_choice: { type: 'function', function: { name: 'supplement_dish_search_filters' } },
+    messages: [
+      { role: 'system', content: '只提取用户明确表达或可直接判断的过滤条件；无法确定就留空。不要输出菜品、价格、库存或推荐。' },
+      { role: 'user', content: String(query).slice(0, 1000) }
+    ]
+  }, config);
+  const call = data.choices?.[0]?.message?.tool_calls?.find((item) => item.function?.name === 'supplement_dish_search_filters');
+  return call ? parseJsonObject(call.function.arguments || '{}') : {};
 }

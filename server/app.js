@@ -1,14 +1,22 @@
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
-import { buildHealthPlan, buildMealPlan, calculateRanking, contextualRankDishes, normalizeProfile } from '../src/domain/recommendation.js';
+import { buildHealthPlan, calculateRanking, normalizeProfile } from '../src/domain/recommendation.js';
 import { openDatabase, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToEnvironment, rowToMenu, rowToMenuItem, rowToPost, rowToPreference, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
 import { assignableRoles, hasPermission, requirePermission } from './rbac.js';
 import { createToken, decryptSecret, encryptSecret, hashPassword, publicUser, verifyPassword, verifyToken } from './security.js';
 import { storeUpload } from './storage.js';
-import { generateAgentToolCalls, getAiProviderStatus, identifyDishFromImage, setAiRuntimeConfig, testAiProviderConnection } from './aiProvider.js';
-import { answerMealQuestion, buildDishDocuments, searchDocuments } from './rag.js';
+import { generateAgentToolCalls, generateDishSearchFilterSupplement, getAiProviderStatus, identifyDishFromImage, testAiProviderConnection, withAiRuntimeConfig } from './aiProvider.js';
 import { createCache, rankingCacheKey } from './cache.js';
 import { buildStudentMealAnalysis } from './mealVision.js';
+import { buildKnowledgeAnswer, runDishSearchWorkflow, runMealRecommendationWorkflow } from './retrievalService.js';
+import {
+  RETRIEVAL_INDEX_VERSION,
+  deleteRetrievalSource,
+  getRetrievalIndexStatus,
+  reindexRetrieval,
+  searchRetrievalIndex,
+  syncDishRetrievalDocument
+} from './retrievalIndex.js';
 
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_IMPORT_BODY_BYTES = 2 * 1024 * 1024;
@@ -57,12 +65,12 @@ function tenantIdFor(user) {
 const DATABASE_ENTITIES = {
   users: { label: '用户', table: 'users', capability: 'user:read', writeCapability: 'user:write', key: 'id', columns: ['id', 'username', 'nickname', 'role', 'created_at', 'updated_at'], writable: ['nickname', 'role'], search: ['username', 'nickname', 'role'] },
   canteens: { label: '食堂', table: 'canteens', capability: 'canteen:write', writeCapability: 'canteen:write', deleteCapability: 'canteen:delete', key: 'id', columns: ['id', 'name', 'location', 'hours', 'crowd_level', 'tags_json', 'description', 'created_at', 'updated_at'], writable: ['name', 'location', 'hours', 'crowd_level', 'tags_json', 'description'], search: ['name', 'location'] },
-  stalls: { label: '档口', table: 'stalls', capability: 'stall:write', writeCapability: 'stall:write', deleteCapability: 'stall:delete', key: 'id', columns: ['id', 'canteen_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description', 'created_at', 'updated_at'], writable: ['canteen_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description'], search: ['name', 'category'] },
+  stalls: { label: '档口', table: 'stalls', capability: 'stall:write', writeCapability: 'stall:write', deleteCapability: 'stall:delete', key: 'id', columns: ['id', 'canteen_id', 'parent_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description', 'created_at', 'updated_at'], writable: ['canteen_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description'], search: ['name', 'category'] },
   dishes: { label: '菜品与营养', table: 'dishes', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:delete', key: 'id', columns: ['id', 'stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'created_at', 'updated_at'], writable: ['stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status'], search: ['name', 'taste', 'cuisine'] },
   menus: { label: '菜单运营', table: 'menus', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:write', key: 'id', columns: ['id', 'tenant_id', 'canteen_id', 'date', 'meal_type', 'status', 'created_at', 'updated_at'], writable: ['canteen_id', 'date', 'meal_type', 'status'], search: ['date', 'meal_type', 'status'] },
   menu_items: { label: '菜单明细', table: 'menu_items', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:write', key: 'id', columns: ['id', 'tenant_id', 'menu_id', 'dish_id', 'price', 'supply_limit', 'supply_count', 'sold_out', 'serving_start', 'serving_end', 'created_at', 'updated_at'], writable: ['menu_id', 'dish_id', 'price', 'supply_limit', 'supply_count', 'sold_out', 'serving_start', 'serving_end'], search: ['menu_id', 'dish_id', 'sold_out'] },
   reviews: { label: '评价', table: 'reviews', capability: 'review:moderate', writeCapability: 'review:moderate', key: 'id', columns: ['id', 'tenant_id', 'user_id', 'target_type', 'target_id', 'rating', 'content', 'status', 'created_at'], writable: ['status'], search: ['content', 'status', 'target_id'] },
-  audit_logs: { label: '审计日志', table: 'audit_logs', capability: 'audit:read', key: 'id', columns: ['id', 'tenant_id', 'user_id', 'action', 'entity', 'entity_id', 'created_at'], writable: [], search: ['action', 'entity', 'entity_id'] }
+  audit_logs: { label: '审计日志', table: 'audit_logs', capability: 'audit:read', key: 'id', columns: ['id', 'tenant_id', 'user_id', 'action', 'entity', 'entity_id', 'metadata_json', 'created_at'], writable: [], search: ['action', 'entity', 'entity_id'] }
 };
 
 function databaseEntity(name) {
@@ -193,9 +201,9 @@ async function requireCapability(db, req, permission) {
   return requirePermission(await requireUser(db, req), permission);
 }
 
-async function audit(db, user, action, entity, entityId) {
-  await db.prepare('INSERT INTO audit_logs (id, tenant_id, user_id, action, entity, entity_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(randomUUID(), tenantIdFor(user), user?.id || null, action, entity, entityId || null, now());
+async function audit(db, user, action, entity, entityId, metadata = {}) {
+  await db.prepare('INSERT INTO audit_logs (id, tenant_id, user_id, action, entity, entity_id, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(randomUUID(), tenantIdFor(user), user?.id || null, action, entity, entityId || null, serializeJson(metadata), now());
 }
 
 function estimateTokens(value) {
@@ -275,12 +283,14 @@ async function recordAiUsage(db, user, details) {
 async function listAiUsage(db, tenantId = 'default', limit = 50, offset = 0) {
   const rows = await db.prepare('SELECT * FROM ai_usage_logs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(tenantId, limit, offset);
   const totalRow = await db.prepare('SELECT COUNT(*) AS count FROM ai_usage_logs WHERE tenant_id = ?').get(tenantId);
+  const period = currentMonthPrefix();
   const summaryRows = await db.prepare(`SELECT feature, status, COUNT(*) AS count, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(image_count) AS image_count, SUM(estimated_cost) AS estimated_cost, AVG(latency_ms) AS avg_latency_ms
-    FROM ai_usage_logs WHERE tenant_id = ? GROUP BY feature, status`).all(tenantId);
+    FROM ai_usage_logs WHERE tenant_id = ? AND created_at >= ? GROUP BY feature, status`).all(tenantId, `${period}-01`);
   const quota = await aiQuotaStatus(db, tenantId);
   return {
     logs: rows.map(rowToAiUsageLog),
     total: totalRow.count,
+    period,
     quota,
     summary: summaryRows.map((row) => ({
       feature: row.feature,
@@ -318,6 +328,29 @@ async function validateStallParent(db, { tenantId, stallId, canteenId, parentId,
   if (parent.canteen_id !== canteenId) throw Object.assign(new Error('子档口必须与父档口属于同一食堂'), { status: 400 });
 }
 
+async function validateDatabaseStallWrite(db, { tenantId, stallId, payload, creating = false }) {
+  const existing = creating
+    ? null
+    : await db.prepare('SELECT id, canteen_id, parent_id FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantId, stallId);
+  if (!creating && !existing) throw Object.assign(new Error('记录不存在'), { status: 404 });
+  const canteenId = payload.canteen_id !== undefined ? String(payload.canteen_id || '').trim() : existing?.canteen_id;
+  const parentId = payload.parent_id !== undefined ? normalizeStallParentId(payload.parent_id) : (existing?.parent_id || null);
+  const canteen = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
+  if (!canteen) throw Object.assign(new Error('所属食堂不存在或不属于当前租户'), { status: 400 });
+  const childCount = creating ? 0 : Number((await db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ? AND parent_id = ?').get(tenantId, stallId))?.count || 0);
+  if (childCount > 0 && canteenId !== existing.canteen_id) throw Object.assign(new Error('存在子档口的一级档口不能直接更换所属食堂'), { status: 400 });
+  await validateStallParent(db, { tenantId, stallId, canteenId, parentId, hasChildren: childCount > 0 });
+  if (payload.canteen_id !== undefined) payload.canteen_id = canteenId;
+  if (payload.parent_id !== undefined) payload.parent_id = parentId;
+}
+
+function rejectDatabaseStallParentWrite(entityName, body) {
+  if (entityName !== 'stalls') return;
+  if (Object.prototype.hasOwnProperty.call(body, 'parent_id') || Object.prototype.hasOwnProperty.call(body, 'parentId')) {
+    throw Object.assign(new Error('档口父级请使用层级化档口接口维护'), { status: 400 });
+  }
+}
+
 async function listDishes(db, params = new URLSearchParams(), tenantId = 'default') {
   const rows = (await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND status = 'active' ORDER BY name").all(tenantId)).map(rowToDish);
   const keyword = String(params.get('keyword') || '').trim().toLowerCase();
@@ -340,11 +373,14 @@ async function listReviews(db, targetId, tenantId = 'default', { includeAll = fa
 }
 
 async function reviewCatalog(db, tenantId) {
-  const [dishes, stalls, canteens] = await Promise.all([
-    listDishes(db, new URLSearchParams(), tenantId),
-    listStalls(db, tenantId),
-    listCanteens(db, tenantId)
+  const [dishRows, stallRows, canteenRows] = await Promise.all([
+    db.prepare('SELECT * FROM dishes WHERE tenant_id = ? ORDER BY name').all(tenantId),
+    db.prepare('SELECT * FROM stalls WHERE tenant_id = ? ORDER BY canteen_id, floor, name').all(tenantId),
+    db.prepare('SELECT * FROM canteens WHERE tenant_id = ? ORDER BY name').all(tenantId)
   ]);
+  const dishes = dishRows.map(rowToDish);
+  const stalls = stallRows.map(rowToStall);
+  const canteens = canteenRows.map(rowToCanteen);
   return {
     dishes: new Map(dishes.map((item) => [item.id, item])),
     stalls: new Map(stalls.map((item) => [item.id, item])),
@@ -444,6 +480,8 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, updated_at=excluded.updated_at`)
     .run(id, tenantId, body.stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, Number(body.rating || 4.5), Number(body.reviewCount || 0), Number(body.sales || 0), body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', serializeJson(splitList(body.allergens || [])), now(), now());
+  const quota = await aiQuotaStatus(db, tenantId);
+  await syncDishRetrievalDocument(db, { tenantId, dishId: id, ...(quota.quota > 0 && quota.remaining <= 0 ? { embeddingProvider: null } : {}) });
   return id;
 }
 
@@ -565,18 +603,22 @@ async function listTenants(db) {
 async function upsertTenant(db, body, id = body.id || `tenant-${randomUUID()}`) {
   requireFields(body, ['name']);
   if (!isValidTenantId(id)) throw Object.assign(new Error('租户 ID 只能包含字母、数字、下划线和短横线，长度 2-63 位'), { status: 400 });
-  const status = ['active', 'disabled'].includes(body.status) ? body.status : 'active';
+  const status = body.status ?? 'active';
+  if (!['active', 'disabled'].includes(status)) {
+    throw Object.assign(new Error('租户状态必须为 active 或 disabled'), { status: 400 });
+  }
   const plan = String(body.plan || 'starter').trim() || 'starter';
   await db.prepare(`INSERT INTO tenants (id, name, status, plan, ai_quota, storage_quota_mb, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET name=excluded.name, status=excluded.status, plan=excluded.plan, ai_quota=excluded.ai_quota, storage_quota_mb=excluded.storage_quota_mb, updated_at=excluded.updated_at`)
-    .run(id, String(body.name).trim(), status, plan, Number(body.aiQuota || 1000), Number(body.storageQuotaMb || 10240), now(), now());
+    .run(id, String(body.name).trim(), status, plan, Number(body.aiQuota ?? 1000), Number(body.storageQuotaMb ?? 10240), now(), now());
   return id;
 }
 
 async function withTransaction(db, operation) {
+  if (typeof db.transaction === 'function') return db.transaction(operation);
   await db.exec('BEGIN');
   try {
-    const result = await operation();
+    const result = await operation(db);
     await db.exec('COMMIT');
     return result;
   } catch (error) {
@@ -649,6 +691,199 @@ async function todayMenuBundle(db, tenantId = 'default', mealType = 'lunch', dat
       return { ...dish, price: Number(item?.price || dish.price), menuItem: item, supplyStatus: item?.supplyStatus || 'available' };
     });
   return { date, mealType, menus, dishes, source: 'menu' };
+}
+
+function recommendationGoalLabel(goal) {
+  return ({ fatLoss: '减脂控卡', muscleGain: '增肌高蛋白', maintain: '均衡维持', healthy: '健康均衡' })[goal] || '健康均衡';
+}
+
+async function retrievalIndexQuery(db, user, { query, tenantId, limit, candidateIds, sourceType, sourceTypes }) {
+  await getAiSettings(db, user).catch(() => {});
+  const quota = await aiQuotaStatus(db, tenantId);
+  const quotaExhausted = quota.quota > 0 && quota.remaining <= 0;
+  const requestedTypes = sourceTypes || (sourceType ? [sourceType] : undefined);
+  const normalizedTypes = requestedTypes?.flatMap((type) => ['health', 'knowledge'].includes(type) ? ['health_knowledge'] : [type]);
+  const result = await searchRetrievalIndex(db, query, {
+    tenantId,
+    sourceTypes: normalizedTypes,
+    limit,
+    ...(quotaExhausted ? { embeddingProvider: null } : {})
+  });
+  const allowed = candidateIds?.length ? new Set(candidateIds) : null;
+  const items = allowed ? result.items.filter((item) => allowed.has(item.sourceId || item.metadata?.dishId || item.id)) : result.items;
+  const warnings = quotaExhausted
+    ? [{ code: 'AI_QUOTA_EXHAUSTED', message: 'AI 额度已用完，已降级为词法检索。', fallback: 'lexical' }, ...result.warnings]
+    : result.warnings;
+  return { ...result, items, warnings, meta: { ...result.meta, quotaExhausted } };
+}
+
+function retrievalWorkflowDependencies(db, user) {
+  return {
+    db,
+    indexVersion: RETRIEVAL_INDEX_VERSION,
+    semanticSearch: (request) => retrievalIndexQuery(db, user, request),
+    knowledgeSearch: (request) => retrievalIndexQuery(db, user, request),
+    interpretQuery: async ({ query, tenantId }) => {
+      const quota = await aiQuotaStatus(db, tenantId);
+      if (quota.quota > 0 && quota.remaining <= 0) return { filters: {}, warning: { code: 'AI_QUOTA_EXHAUSTED', message: 'AI 额度已用完，跳过语义补充。' } };
+      if (!getAiProviderStatus().enabled) return null;
+      const startedAt = Date.now();
+      const status = getAiProviderStatus();
+      try {
+        const filters = await generateDishSearchFilterSupplement({ query });
+        await recordAiUsage(db, user, {
+          feature: 'dish-search-interpretation',
+          provider: status.source,
+          model: status.chatModel,
+          status: 'success',
+          inputTokens: estimateTokens(query),
+          latencyMs: Date.now() - startedAt
+        });
+        return filters || {};
+      } catch (error) {
+        await recordAiUsage(db, user, {
+          feature: 'dish-search-interpretation',
+          provider: status.source,
+          model: status.chatModel,
+          status: 'failure',
+          inputTokens: estimateTokens(query),
+          latencyMs: Date.now() - startedAt,
+          error: error.message
+        });
+        throw error;
+      }
+    }
+  };
+}
+
+async function recommendationRuntimeInput(db, user, body = {}) {
+  const tenantId = tenantIdFor(user);
+  const [storedProfile, environmentRow, preferences, memory] = await Promise.all([
+    user ? getProfile(db, user.id, tenantId) : Promise.resolve(normalizeProfile(body.profile || {})),
+    db.prepare('SELECT * FROM campus_environment WHERE tenant_id = ?').get(tenantId),
+    user ? db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ?').all(tenantId, user.id) : Promise.resolve([]),
+    user ? loadAgentMemory(db, user) : Promise.resolve({ preferences: {} })
+  ]);
+  const hour = new Date().getHours();
+  const timeOfDay = hour < 10 ? 'breakfast' : hour < 17 ? 'lunch' : 'dinner';
+  return {
+    tenantId,
+    userId: user?.id,
+    query: String(body.query || body.question || '').trim(),
+    profile: { ...storedProfile, ...(memory.preferences || {}) },
+    profileOverride: { ...(body.profile || {}), ...(body.profileOverride || {}) },
+    context: {
+      ...(body.context || {}),
+      environment: environmentRow ? rowToEnvironment(environmentRow) : { temperature: 25, weatherLabel: '晴' },
+      preferences: preferences.map(rowToPreference),
+      timeOfDay
+    },
+    options: body.options || {}
+  };
+}
+
+function legacyRecommendationDish(dish) {
+  return {
+    ...dish,
+    price: Number(dish.availability?.price ?? dish.price ?? 0),
+    contextualScore: Number(dish.contextualScore ?? dish.recommendationScore ?? 0)
+  };
+}
+
+function compatibleRecommendationResponse(result) {
+  const profile = result.meta?.profile || {};
+  const picks = (result.recommendations || []).map(legacyRecommendationDish);
+  const totals = picks.reduce((sum, dish) => ({
+    calories: sum.calories + Number(dish.nutrition?.calories || 0),
+    protein: sum.protein + Number(dish.nutrition?.protein || 0),
+    fat: sum.fat + Number(dish.nutrition?.fat || 0),
+    carbs: sum.carbs + Number(dish.nutrition?.carbs || 0),
+    price: sum.price + Number(dish.availability?.price ?? dish.price ?? 0)
+  }), { calories: 0, protein: 0, fat: 0, carbs: 0, price: 0 });
+  const plan = {
+    ...result.mealPlan,
+    goal: profile.goal || 'healthy',
+    goalLabel: recommendationGoalLabel(profile.goal),
+    reason: picks.length ? '候选来自同一套硬约束与统一排序结果。' : '当前没有满足全部条件的候选。',
+    dishes: picks,
+    picks,
+    totals: result.mealPlan?.totals || totals
+  };
+  return {
+    ...result,
+    ranked: picks,
+    dishes: picks,
+    totals: plan.totals,
+    plan,
+    context: {
+      environment: result.meta?.environment,
+      timeOfDay: result.meta?.timeOfDay,
+      profile
+    },
+    source: result.meta?.menus?.length ? 'menu' : 'fallback',
+    menu: { date: result.meta?.date, mealType: result.meta?.mealType, menus: result.meta?.menus || [] }
+  };
+}
+
+function recommendationAnswer(result) {
+  const names = (result.recommendations || []).map((dish) => dish.name).filter(Boolean);
+  if (!names.length) {
+    const suggestion = result.suggestedRelaxations?.[0]?.message;
+    return suggestion ? `当前没有满足全部条件的菜品。${suggestion}` : '当前没有满足全部条件的菜品，系统不会编造可点结果。';
+  }
+  const orderable = result.meta?.orderable !== false;
+  return `${orderable ? '根据当前已发布菜单' : '当前无可点菜单，以下仅作菜品库参考'}，为你筛选出：${names.join('、')}。价格、库存、供应时段和过敏原均以实时数据库结果为准。`;
+}
+
+function dishEvidenceFromSearch(result) {
+  return (result.items || []).map((dish) => ({
+    id: `dish:${dish.id}`,
+    sourceId: dish.id,
+    sourceType: 'dish',
+    title: dish.name,
+    name: dish.name,
+    content: [
+      dish.name,
+      dish.description,
+      ...(dish.ingredients || []),
+      ...(dish.tags || []),
+      dish.halal ? '清真' : '',
+      [dish.canteenName, dish.stallName].filter(Boolean).join(' > '),
+      `${dish.nutrition?.calories || 0} kcal，蛋白质 ${dish.nutrition?.protein || 0} g`
+    ].filter(Boolean).join('；'),
+    snippet: `${dish.canteenName || '食堂'} · ${dish.stallName || '档口'} · ¥${dish.availability?.price ?? dish.price}`,
+    score: dish.retrievalScore,
+    metadata: { orderable: dish.availability?.orderable, menuItemId: dish.availability?.menuItemId || null }
+  }));
+}
+
+async function executeDishSearch(db, user, body = {}) {
+  return runDishSearchWorkflow({ ...body, tenantId: tenantIdFor(user) }, retrievalWorkflowDependencies(db, user));
+}
+
+async function executeLegacyDishList(db, user, params = new URLSearchParams()) {
+  const keyword = String(params.get('keyword') || '').trim();
+  const filters = {};
+  if (params.has('maxPrice')) filters.maxPrice = params.get('maxPrice');
+  if (params.get('taste') && params.get('taste') !== '不限') filters.taste = params.get('taste');
+  if (params.get('halalOnly') === 'true') filters.halalOnly = true;
+  const result = await executeDishSearch(db, user, {
+    query: keyword,
+    filters,
+    sort: 'relevance',
+    limit: 50,
+    offset: 0
+  });
+  return result.items;
+}
+
+async function executeMealRecommendation(db, user, body = {}) {
+  const input = await recommendationRuntimeInput(db, user, body);
+  const result = await runMealRecommendationWorkflow(input, retrievalWorkflowDependencies(db, user));
+  result.meta.environment = input.context.environment;
+  result.meta.timeOfDay = input.context.timeOfDay;
+  result.meta.menus = (await listMenus(db, input.tenantId, { date: result.meta.date, mealType: result.meta.mealType, status: 'published', limit: 200, offset: 0 })).menus;
+  return result;
 }
 function rowToOrder(row, items = [], payments = []) {
   return {
@@ -760,15 +995,15 @@ async function createOrder(db, user, body) {
   }
   const id = `order-${randomUUID()}`;
   const createdAt = now();
-  await withTransaction(db, async () => {
-    await db.prepare('INSERT INTO orders (id, tenant_id, user_id, status, payment_status, total_amount, pickup_code, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  await withTransaction(db, async (tx) => {
+    await tx.prepare('INSERT INTO orders (id, tenant_id, user_id, status, payment_status, total_amount, pickup_code, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, tenantId, user.id, 'pending', 'unpaid', Number(totalAmount.toFixed(2)), pickupCode(), String(body.note || '').trim().slice(0, 120), createdAt, createdAt);
     for (const item of orderItems) {
-      await db.prepare('INSERT INTO order_items (id, tenant_id, order_id, dish_id, menu_item_id, dish_name, unit_price, quantity, line_total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      await tx.prepare('INSERT INTO order_items (id, tenant_id, order_id, dish_id, menu_item_id, dish_name, unit_price, quantity, line_total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(`order-item-${randomUUID()}`, tenantId, id, item.dish.id, item.menuItem.id, item.dish.name, item.unitPrice, item.quantity, item.lineTotal, createdAt);
-      await db.prepare('UPDATE menu_items SET supply_count = supply_count + ?, sold_out = CASE WHEN supply_limit > 0 AND supply_count + ? >= supply_limit THEN 1 ELSE sold_out END, updated_at = ? WHERE tenant_id = ? AND id = ?')
+      await tx.prepare('UPDATE menu_items SET supply_count = supply_count + ?, sold_out = CASE WHEN supply_limit > 0 AND supply_count + ? >= supply_limit THEN 1 ELSE sold_out END, updated_at = ? WHERE tenant_id = ? AND id = ?')
         .run(item.quantity, item.quantity, createdAt, tenantId, item.menuItem.id);
-      await db.prepare('UPDATE dishes SET sales = sales + ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(item.quantity, createdAt, tenantId, item.dish.id);
+      await tx.prepare('UPDATE dishes SET sales = sales + ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(item.quantity, createdAt, tenantId, item.dish.id);
     }
   });
   const [order] = await hydrateOrders(db, [await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND id = ?').get(tenantId, id)], tenantId);
@@ -780,14 +1015,14 @@ async function rollbackOrderInventory(db, tenantId, orderId, timestamp) {
   for (const item of items) {
     if (item.menu_item_id) {
       await db.prepare(`UPDATE menu_items
-        SET supply_count = MAX(0, supply_count - ?),
-            sold_out = CASE WHEN supply_limit > 0 AND MAX(0, supply_count - ?) >= supply_limit THEN 1 ELSE 0 END,
+        SET supply_count = CASE WHEN supply_count - ? < 0 THEN 0 ELSE supply_count - ? END,
+            sold_out = CASE WHEN supply_limit > 0 AND (CASE WHEN supply_count - ? < 0 THEN 0 ELSE supply_count - ? END) >= supply_limit THEN 1 ELSE 0 END,
             updated_at = ?
         WHERE tenant_id = ? AND id = ?`)
-        .run(item.quantity, item.quantity, timestamp, tenantId, item.menu_item_id);
+        .run(item.quantity, item.quantity, item.quantity, item.quantity, timestamp, tenantId, item.menu_item_id);
     }
-    await db.prepare('UPDATE dishes SET sales = MAX(0, sales - ?), updated_at = ? WHERE tenant_id = ? AND id = ?')
-      .run(item.quantity, timestamp, tenantId, item.dish_id);
+    await db.prepare('UPDATE dishes SET sales = CASE WHEN sales - ? < 0 THEN 0 ELSE sales - ? END, updated_at = ? WHERE tenant_id = ? AND id = ?')
+      .run(item.quantity, item.quantity, timestamp, tenantId, item.dish_id);
   }
 }
 
@@ -798,9 +1033,9 @@ async function cancelOrder(db, user, orderId) {
   if (order.user_id !== user.id) throw Object.assign(new Error('不能取消他人订单'), { status: 403 });
   if (!['pending', 'preparing'].includes(order.status) || order.payment_status === 'paid') throw Object.assign(new Error('当前订单不能取消'), { status: 400 });
   const timestamp = now();
-  await withTransaction(db, async () => {
-    await rollbackOrderInventory(db, tenantId, orderId, timestamp);
-    await db.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run('cancelled', timestamp, tenantId, orderId);
+  await withTransaction(db, async (tx) => {
+    await rollbackOrderInventory(tx, tenantId, orderId, timestamp);
+    await tx.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run('cancelled', timestamp, tenantId, orderId);
   });
   const [updated] = await hydrateOrders(db, [await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND id = ?').get(tenantId, orderId)], tenantId);
   return updated;
@@ -814,10 +1049,10 @@ async function payOrder(db, user, orderId, body = {}) {
   if (order.status === 'cancelled') throw Object.assign(new Error('已取消订单不能支付'), { status: 400 });
   if (order.payment_status === 'paid') throw Object.assign(new Error('订单已支付'), { status: 400 });
   const timestamp = now();
-  await withTransaction(db, async () => {
-    await db.prepare('INSERT INTO payments (id, tenant_id, order_id, user_id, amount, channel, status, transaction_no, paid_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  await withTransaction(db, async (tx) => {
+    await tx.prepare('INSERT INTO payments (id, tenant_id, order_id, user_id, amount, channel, status, transaction_no, paid_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(`payment-${randomUUID()}`, tenantId, orderId, user.id, Number(order.total_amount || 0), String(body.channel || 'mock').slice(0, 32), 'paid', `mock-${randomUUID()}`, timestamp, timestamp);
-    await db.prepare('UPDATE orders SET payment_status = ?, paid_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run('paid', timestamp, timestamp, tenantId, orderId);
+    await tx.prepare('UPDATE orders SET payment_status = ?, paid_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run('paid', timestamp, timestamp, tenantId, orderId);
   });
   const [updated] = await hydrateOrders(db, [await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND id = ?').get(tenantId, orderId)], tenantId);
   return updated;
@@ -865,9 +1100,12 @@ async function updateOrderStatus(db, user, orderId, nextStatus) {
 
 function inferAgentIntent(query) {
   const text = String(query || '');
+  if (/下单|点一份|来一份|购买|要一份|帮我点/.test(text)) return 'dish_search';
   if (/订单|取餐|支付|取消|状态|取餐码/.test(text)) return 'order_status';
-  if (/营业|收入|销售|热销|售罄|看板/.test(text)) return 'operations';
-  if (/减脂|增肌|高蛋白|低脂|清真|推荐|吃|菜|午餐|晚餐|早餐/.test(text)) return 'meal_planning';
+  if (/营业|收入|销售|热销|看板|售罄统计|售罄数量/.test(text)) return 'operations';
+  if (/推荐|怎么吃|吃什么|帮我搭配|套餐|配餐|减脂|增肌|健康档案/.test(text)) return 'meal_recommendation';
+  if (/为什么|是什么|怎么判断|营养知识|饮食原则|过敏原知识|摄入建议|健康知识/.test(text)) return 'knowledge_qa';
+  if (/找|查|搜索|有没有|哪里|多少钱|价格|库存|可售|菜品|档口|食堂|早餐|午餐|晚餐/.test(text)) return 'dish_search';
   return 'general_canteen';
 }
 
@@ -909,22 +1147,8 @@ async function recentAgentMessages(db, user, sessionId) {
 function inferCreateOrderItems(query, dishes) {
   if (!/下单|点一份|来一份|购买|要一份|帮我点/.test(String(query || ''))) return [];
   const text = String(query || '');
-  const aliases = new Map([
-    ['鸡腿饭', 'd-chicken-bowl'],
-    ['鸡肉饭', 'd-chicken-bowl'],
-    ['鸡腿', 'd-chicken-bowl'],
-    ['番茄炒蛋', 'd-egg-tomato'],
-    ['西红柿炒蛋', 'd-egg-tomato']
-  ]);
-  const explicit = dishes.filter((dish) => text.includes(dish.name));
-  for (const [alias, dishId] of aliases) {
-    if (text.includes(alias)) {
-      const dish = dishes.find((item) => item.id === dishId);
-      if (dish && !explicit.some((item) => item.id === dish.id)) explicit.push(dish);
-    }
-  }
-  const selected = explicit.length ? explicit : dishes.slice(0, 1);
-  return selected.slice(0, 3).map((dish) => ({ dishId: dish.id, quantity: 1 }));
+  const explicit = dishes.filter((dish) => dish.availability?.orderable === true && dish.name && text.includes(dish.name));
+  return explicit.slice(0, 3).map((dish) => ({ dishId: dish.id, quantity: 1 }));
 }
 
 const AGENT_OPERATION_ROLES = ['admin', 'super_admin', 'tenant_admin', 'canteen_admin', 'stall_admin', 'operator', 'finance', 'auditor'];
@@ -935,7 +1159,10 @@ function agentToolRegistry() {
     'memory.long_term': { name: 'memory.long_term', title: '读取长期偏好记忆', category: 'memory', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: {} } },
     'profile.load': { name: 'profile.load', title: '读取用户营养档案', category: 'context', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: {} } },
     'menu.today': { name: 'menu.today', title: '读取今日已发布菜单', category: 'canteen', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { mealType: { type: 'string' }, date: { type: 'string' } } } },
-    'rag.meal_advisor': { name: 'rag.meal_advisor', title: '检索菜品知识并生成建议', category: 'knowledge', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+    'dish.search': { name: 'dish.search', title: '查询真实菜品与实时供应', category: 'retrieval', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' }, filters: { type: 'object' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['query'] } },
+    'meal.recommend': { name: 'meal.recommend', title: '根据档案和实时菜单生成推荐', category: 'recommendation', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' }, profileOverride: { type: 'object' }, options: { type: 'object' } }, required: ['query'] } },
+    'knowledge.search': { name: 'knowledge.search', title: '检索健康与饮食知识', category: 'knowledge', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['query'] } },
+    'rag.meal_advisor': { name: 'rag.meal_advisor', title: '兼容旧版膳食顾问工具', category: 'compatibility', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
     'orders.mine': { name: 'orders.mine', title: '查询本人订单', category: 'order', riskLevel: 'medium', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 20 } } } },
     'orders.analytics': { name: 'orders.analytics', title: '查询营业分析', category: 'analytics', riskLevel: 'medium', permission: 'agent:use', requiresConfirmation: false, roles: AGENT_OPERATION_ROLES, parameters: { type: 'object', properties: { date: { type: 'string' } } } },
     'order.create.propose': { name: 'order.create.propose', title: '生成待确认下单动作', category: 'action', riskLevel: 'high', permission: 'agent:use', requiresConfirmation: true, actionType: 'create_order', parameters: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { dishId: { type: 'string' }, quantity: { type: 'integer', minimum: 1 } }, required: ['dishId', 'quantity'] } } }, required: ['items'] } },
@@ -1077,7 +1304,9 @@ function rowToAgentAction(row) {
 
 function agentPersonasFor(intent, user) {
   const personas = [{ name: 'planner', title: '任务规划员', responsibility: '拆解目标并选择工具' }];
-  if (intent === 'meal_planning') personas.push({ name: 'nutritionist', title: '营养顾问', responsibility: '结合档案、菜单和知识库给出建议' });
+  if (intent === 'dish_search') personas.push({ name: 'dish_retriever', title: '菜品检索员', responsibility: '按数据库真值查询菜品、价格和供应状态' });
+  if (intent === 'meal_recommendation') personas.push({ name: 'nutritionist', title: '营养顾问', responsibility: '结合档案、实时菜单和健康证据给出建议' });
+  if (intent === 'knowledge_qa') personas.push({ name: 'knowledge_retriever', title: '知识检索员', responsibility: '只基于可引用健康知识回答问题' });
   if (intent === 'order_status') personas.push({ name: 'order_operator', title: '订单专员', responsibility: '只查询当前用户订单并解释状态' });
   if (intent === 'operations' && AGENT_OPERATION_ROLES.includes(user.role)) personas.push({ name: 'ops_analyst', title: '运营分析师', responsibility: '分析订单收入、热销和售罄数据' });
   personas.push({ name: 'safety_reviewer', title: '安全审查员', responsibility: '阻止越权和高风险自动执行' });
@@ -1230,7 +1459,30 @@ async function agentSessionEvents(db, user, sessionId) {
   return { session: { id: session.id, title: session.title, summary: session.summary, updatedAt: session.updated_at }, messages, actions: actions.map(rowToAgentAction), events };
 }
 
-function buildAgentAnswer({ intent, query, mealAdvice, orders, analytics }) {
+const AGENT_TOOL_INTENTS = {
+  'dish.search': 'dish_search',
+  'meal.recommend': 'meal_recommendation',
+  'rag.meal_advisor': 'meal_recommendation',
+  'knowledge.search': 'knowledge_qa',
+  'orders.mine': 'order_status',
+  'orders.analytics': 'operations'
+};
+
+function routedToolArguments(toolRouting, names) {
+  const accepted = Array.isArray(names) ? names : [names];
+  return toolRouting.calls?.find((call) => accepted.includes(call.name))?.arguments || {};
+}
+
+function resolvedAgentIntent(deterministicIntent, toolRouting, user) {
+  if (['order_status', 'operations'].includes(deterministicIntent)) return deterministicIntent;
+  const call = toolRouting.calls?.find((item) => AGENT_TOOL_INTENTS[item.name]);
+  if (!call) return deterministicIntent;
+  const routed = AGENT_TOOL_INTENTS[call.name];
+  if (routed === 'operations' && !AGENT_OPERATION_ROLES.includes(user.role)) return deterministicIntent;
+  return routed;
+}
+
+function buildAgentAnswer({ intent, query, dishSearch, recommendation, knowledge, orders, analytics }) {
   if (intent === 'order_status') {
     if (!orders.length) return '你当前没有订单。可以先到“点餐取餐”页从今日菜单下单，提交后会生成取餐码。';
     const latest = orders[0];
@@ -1241,21 +1493,30 @@ function buildAgentAnswer({ intent, query, mealAdvice, orders, analytics }) {
     const top = analytics.topDishes?.[0];
     return `今日订单 ${analytics.todayOrders} 单，已支付收入 ¥${analytics.todayRevenue.toFixed(2)}。${top ? `当前热销菜品是 ${top.dishName}，销量 ${top.totalQuantity} 份。` : '暂无热销菜品数据。'}售罄菜品 ${analytics.soldOutItems.length} 个。`;
   }
-  if (mealAdvice?.answer) return mealAdvice.answer;
+  if (intent === 'operations') return '当前角色不能读取营业分析数据。';
+  if (intent === 'dish_search') {
+    const names = (dishSearch?.items || []).slice(0, 5).map((item) => `${item.name}${item.availability?.orderable ? '' : '（当前不可点）'}`);
+    if (names.length) return `查到 ${dishSearch.page.total} 道匹配菜品：${names.join('、')}。价格和供应状态来自当前菜单与库存。`;
+    const relaxation = dishSearch?.suggestedRelaxations?.[0]?.message;
+    return relaxation ? `没有找到满足全部条件的菜品。${relaxation}` : '没有找到匹配菜品，系统不会编造结果。';
+  }
+  if (intent === 'meal_recommendation' && recommendation) return recommendationAnswer(recommendation);
+  if (intent === 'knowledge_qa' && knowledge?.answer) return knowledge.answer;
   return `我已根据当前食堂数据处理你的问题：“${String(query).slice(0, 80)}”。你可以询问今日推荐、订单状态、支付、取餐码或营业数据。`;
 }
 
-function buildAgentPlan({ intent, registry, user, includeCreateOrder = false }) {
-  const goals = { meal_planning: '为用户推荐合适的餐品', order_status: '查询用户订单状态', operations: '分析食堂运营数据', general_canteen: '回答用户咨询' };
-  const toolNames = ['session.load', 'memory.long_term', 'profile.load', 'menu.today', 'rag.meal_advisor'];
-  if (intent === 'order_status') toolNames.push('orders.mine');
-  if (intent === 'operations' && AGENT_OPERATION_ROLES.includes(user.role)) toolNames.push('orders.analytics');
-  if (includeCreateOrder) toolNames.push('order.create.propose');
-  toolNames.push('session.save');
+function buildAgentPlan({ intent, steps, user, includeCreateOrder = false }) {
+  const goals = { dish_search: '查询真实菜品与供应状态', meal_recommendation: '为用户推荐合适的餐品', knowledge_qa: '检索健康知识并回答', order_status: '查询用户订单状态', operations: '分析食堂运营数据', general_canteen: '回答用户咨询' };
   const riskLevel = includeCreateOrder ? 'high' : (intent === 'operations' || intent === 'order_status' ? 'medium' : 'low');
   const guardrails = ['仅使用当前用户权限内的数据', '高风险动作只生成待确认动作，不直接执行'];
   if (intent === 'operations' && !AGENT_OPERATION_ROLES.includes(user.role)) guardrails.push('当前角色不能读取营业分析工具');
-  return { goal: goals[intent] || goals.general_canteen, intent, riskLevel, steps: toolNames.map((name) => ({ tool: name, title: registry[name].title, reason: registry[name].title, required: true })), guardrails };
+  return {
+    goal: goals[intent] || goals.general_canteen,
+    intent,
+    riskLevel,
+    steps: steps.map((step) => ({ tool: step.tool, title: step.title, reason: step.title, required: true, status: step.status })),
+    guardrails
+  };
 }
 
 function summarizeAgentRun({ plan, steps, actions }) {
@@ -1271,63 +1532,103 @@ async function runCanteenAgent(db, user, body) {
   const memory = await recentAgentMessages(db, user, session.id);
   const memoryText = memory.map((item) => item.content).join('\n');
   const effectiveQuery = /继续|刚才|这个|那个|一样|它|那/.test(query) && memoryText ? `${memoryText}\n${query}` : query;
-  const intent = inferAgentIntent(effectiveQuery);
+  const deterministicIntent = inferAgentIntent(effectiveQuery);
   const steps = [];
   const toolResults = {};
   const registry = agentToolRegistry();
   const toolRouting = await selectAgentToolCalls({ query: effectiveQuery, registry, user });
+  const intent = resolvedAgentIntent(deterministicIntent, toolRouting, user);
   steps.push(agentStep(registry, 'session.load', 'success', { latencyMs: 0 }));
   toolResults['session.load'] = { sessionId: session.id, memoryCount: memory.length };
-  const longMemory = await runAgentTool(registry, 'memory.long_term', user, steps, toolResults, async () => await loadAgentMemory(db, user));
-
   await appendAgentMessage(db, user, session.id, 'user', query, { intent });
-  const profile = await runAgentTool(registry, 'profile.load', user, steps, toolResults, async () => {
-    const loaded = await getProfile(db, user.id, tenantId);
-    return { goal: loaded.goal, mealType: loaded.mealType, taste: loaded.taste, halalOnly: loaded.halalOnly, raw: loaded };
-  });
-  const menu = await runAgentTool(registry, 'menu.today', user, steps, toolResults, async () => {
-    const loaded = await todayMenuBundle(db, tenantId, profile.raw.mealType, now().slice(0, 10));
-    return { ...loaded, dishCount: loaded.dishes.length };
-  });
-  const mealAdvice = await runAgentTool(registry, 'rag.meal_advisor', user, steps, toolResults, async () => await answerMealQuestion({ query: effectiveQuery, profile: profile.raw, dishes: menu.dishes.length ? menu.dishes : await listDishes(db, new URLSearchParams(), tenantId), stalls: await listStalls(db, tenantId), canteens: await listCanteens(db, tenantId), db, tenantId }));
-
+  let longMemory = { summary: '', preferences: {} };
+  let dishSearch = null;
+  let recommendation = null;
+  let knowledge = null;
   let orders = [];
   let analytics = null;
-  if (intent === 'order_status') orders = await runAgentTool(registry, 'orders.mine', user, steps, toolResults, async () => (await listOrdersForUser(db, user, 5, 0)).map(compactOrder));
-  if (intent === 'operations' && AGENT_OPERATION_ROLES.includes(user.role)) analytics = await runAgentTool(registry, 'orders.analytics', user, steps, toolResults, async () => await orderAnalytics(db, tenantId));
+
+  if (intent === 'order_status') {
+    const args = routedToolArguments(toolRouting, 'orders.mine');
+    orders = await runAgentTool(registry, 'orders.mine', user, steps, toolResults, async () => (await listOrdersForUser(db, user, args.limit || 5, 0)).map(compactOrder));
+  } else if (intent === 'operations' && AGENT_OPERATION_ROLES.includes(user.role)) {
+    const args = routedToolArguments(toolRouting, 'orders.analytics');
+    analytics = await runAgentTool(registry, 'orders.analytics', user, steps, toolResults, async () => await orderAnalytics(db, tenantId, args.date || now().slice(0, 10)));
+  } else if (intent === 'dish_search') {
+    const args = routedToolArguments(toolRouting, 'dish.search');
+    dishSearch = await runAgentTool(registry, 'dish.search', user, steps, toolResults, async () => executeDishSearch(db, user, {
+      query: args.query || effectiveQuery,
+      filters: args.filters || {},
+      limit: args.limit || 8
+    }));
+  } else if (intent === 'meal_recommendation') {
+    longMemory = await runAgentTool(registry, 'memory.long_term', user, steps, toolResults, async () => await loadAgentMemory(db, user));
+    const profile = await runAgentTool(registry, 'profile.load', user, steps, toolResults, async () => {
+      const loaded = await getProfile(db, user.id, tenantId);
+      return { goal: loaded.goal, mealType: loaded.mealType, taste: loaded.taste, halalOnly: loaded.halalOnly, raw: loaded };
+    });
+    await runAgentTool(registry, 'menu.today', user, steps, toolResults, async () => {
+      const loaded = await todayMenuBundle(db, tenantId, profile.raw.mealType, now().slice(0, 10));
+      return { ...loaded, dishCount: loaded.dishes.length };
+    });
+    const args = routedToolArguments(toolRouting, ['meal.recommend', 'rag.meal_advisor']);
+    recommendation = await runAgentTool(registry, 'meal.recommend', user, steps, toolResults, async () => executeMealRecommendation(db, user, {
+      query: args.query || effectiveQuery,
+      profileOverride: args.profileOverride || {},
+      options: args.options || {}
+    }));
+    toolResults['rag.meal_advisor'] = toolResults['meal.recommend'];
+  } else if (intent === 'knowledge_qa') {
+    const args = routedToolArguments(toolRouting, 'knowledge.search');
+    const search = await runAgentTool(registry, 'knowledge.search', user, steps, toolResults, async () => retrievalIndexQuery(db, user, {
+      query: args.query || effectiveQuery,
+      tenantId,
+      limit: args.limit || 5,
+      sourceTypes: ['health_knowledge']
+    }));
+    knowledge = buildKnowledgeAnswer({ query: effectiveQuery, results: search.items });
+    toolResults['knowledge.search'] = { ...search, answer: knowledge.answer };
+  }
 
   const actions = [];
-  const orderItems = inferCreateOrderItems(effectiveQuery, menu.dishes || []);
+  const orderableCandidates = dishSearch?.items || recommendation?.recommendations || [];
+  const orderItems = ['dish_search', 'meal_recommendation'].includes(intent) ? inferCreateOrderItems(effectiveQuery, orderableCandidates) : [];
   if (orderItems.length) {
     actions.push(await createAgentAction(db, user, session.id, 'create_order', { items: orderItems, note: '由智能体建议，用户确认后下单' }));
     steps.push(agentStep(registry, 'order.create.propose', 'success', { latencyMs: 0 }));
     toolResults['order.create.propose'] = { itemCount: orderItems.length };
   }
-  if (intent === 'meal_planning') actions.push({ type: 'navigate', label: '去点餐取餐', to: '/orders' });
+  if (intent === 'meal_recommendation' || intent === 'dish_search') actions.push({ type: 'navigate', label: '去点餐取餐', to: '/orders' });
   if (intent === 'order_status') actions.push({ type: 'navigate', label: '查看我的订单', to: '/orders' });
   if (intent === 'operations' && analytics) actions.push({ type: 'navigate', label: '查看营业看板', to: '/order-analytics' });
 
-  const answer = buildAgentAnswer({ intent, query: effectiveQuery, mealAdvice, orders, analytics });
-  steps.push(agentStep(registry, 'session.save', 'success', { latencyMs: 0 }));
-  const plan = buildAgentPlan({ intent, query, effectiveQuery, registry, memoryCount: memory.length, user, includeCreateOrder: Boolean(orderItems.length) });
-  plan.picks = mealAdvice.plan?.picks || [];
-  plan.citations = mealAdvice.citations || [];
+  const answer = buildAgentAnswer({ intent, query: effectiveQuery, dishSearch, recommendation, knowledge, orders, analytics });
+  await runAgentTool(registry, 'session.save', user, steps, toolResults, async () => {
+    await appendAgentMessage(db, user, session.id, 'assistant', answer, { intent });
+    return { sessionId: session.id, saved: true };
+  });
+  const plan = buildAgentPlan({ intent, steps, user, includeCreateOrder: Boolean(orderItems.length) });
+  plan.picks = recommendation?.recommendations || dishSearch?.items || [];
+  const evidence = recommendation?.evidence || { dishes: dishSearch ? dishEvidenceFromSearch(dishSearch) : [], knowledge: knowledge?.citations || [] };
+  const citations = [...(evidence.dishes || []), ...(evidence.knowledge || [])];
+  plan.citations = citations;
+  plan.indexVersion = recommendation?.meta?.indexVersion || dishSearch?.meta?.indexVersion || RETRIEVAL_INDEX_VERSION;
+  plan.degradedReasons = recommendation?.meta?.degradedReasons || dishSearch?.meta?.degradedReasons || [];
   const summary = summarizeAgentRun({ plan, steps, actions });
   toolResults.profile = toolResults['profile.load'] ? { goal: toolResults['profile.load'].goal, mealType: toolResults['profile.load'].mealType, taste: toolResults['profile.load'].taste, halalOnly: toolResults['profile.load'].halalOnly } : undefined;
   toolResults.todayMenu = toolResults['menu.today'] ? { date: toolResults['menu.today'].date, mealType: toolResults['menu.today'].mealType, source: toolResults['menu.today'].source, dishCount: toolResults['menu.today'].dishCount } : undefined;
-  toolResults.recommendation = toolResults['rag.meal_advisor'] ? { answerSource: toolResults['rag.meal_advisor'].answerSource, citationCount: toolResults['rag.meal_advisor'].citations.length, pickCount: toolResults['rag.meal_advisor'].plan?.picks?.length || 0 } : undefined;
+  toolResults.recommendation = recommendation ? { source: recommendation.meta.source, citationCount: citations.length, pickCount: recommendation.recommendations.length, orderable: recommendation.meta.orderable } : undefined;
   toolResults.orders = orders;
   toolResults.analytics = analytics;
   toolResults.registry = steps.map((step) => ({ tool: step.tool, title: step.title, category: step.category, riskLevel: step.riskLevel, status: step.status, latencyMs: step.latencyMs }));
   toolResults.catalog = agentToolCatalog();
   toolResults.personas = agentPersonasFor(intent, user);
-  toolResults.toolRouting = toolRouting;
+  toolResults.toolRouting = { ...toolRouting, deterministicIntent, resolvedIntent: intent, executedCalls: steps.map((step) => step.tool) };
   toolResults.functions = agentToolFunctions(user);
-  const result = { sessionId: session.id, answer, intent, steps, toolResults, citations: mealAdvice.citations, plan, mealPlan: mealAdvice.plan, summary, actions, memory: longMemory, personas: toolResults.personas };
+  const result = { sessionId: session.id, answer, intent, steps, toolResults, citations, evidence, plan, mealPlan: recommendation?.mealPlan || null, recommendations: recommendation?.recommendations || [], search: dishSearch, summary, actions, memory: longMemory, personas: toolResults.personas };
   const evalMetrics = await recordAgentEvalRun(db, user, session.id, result, steps.reduce((total, step) => total + (step.latencyMs || 0), 0));
   result.eval = evalMetrics;
-  result.memory = await updateAgentMemory(db, user, query);
-  await appendAgentMessage(db, user, session.id, 'assistant', answer, { intent, plan: { goal: plan.goal, riskLevel: plan.riskLevel }, summary, eval: evalMetrics, actions: actions.map((action) => ({ id: action.id, type: action.type, status: action.status })) });
+  if (intent === 'meal_recommendation') result.memory = await updateAgentMemory(db, user, query);
   return result;
 }
 
@@ -1346,16 +1647,16 @@ async function upsertMenu(db, body, id = body.id || `menu-${randomUUID()}`, tena
   requireFields(body, ['canteenId', 'date', 'mealType']);
   await validateMenuOwnership(db, body, tenantId);
   const status = ['draft', 'published', 'archived'].includes(body.status) ? body.status : 'draft';
-  return withTransaction(db, async () => {
-    await db.prepare(`INSERT INTO menus (id, tenant_id, canteen_id, date, meal_type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  return withTransaction(db, async (tx) => {
+    await tx.prepare(`INSERT INTO menus (id, tenant_id, canteen_id, date, meal_type, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET canteen_id=excluded.canteen_id, date=excluded.date, meal_type=excluded.meal_type, status=excluded.status, updated_at=excluded.updated_at`)
       .run(id, tenantId, body.canteenId, String(body.date).trim(), String(body.mealType).trim(), status, now(), now());
     if (Array.isArray(body.items)) {
-      await db.prepare('DELETE FROM menu_items WHERE tenant_id = ? AND menu_id = ?').run(tenantId, id);
+      await tx.prepare('DELETE FROM menu_items WHERE tenant_id = ? AND menu_id = ?').run(tenantId, id);
       for (const item of body.items) {
         if (!item.dishId) continue;
         const itemId = item.id || `menu-item-${randomUUID()}`;
-        await db.prepare('INSERT INTO menu_items (id, tenant_id, menu_id, dish_id, price, supply_limit, supply_count, sold_out, serving_start, serving_end, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        await tx.prepare('INSERT INTO menu_items (id, tenant_id, menu_id, dish_id, price, supply_limit, supply_count, sold_out, serving_start, serving_end, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
           .run(itemId, tenantId, id, item.dishId, Number(item.price || 0), Number(item.supplyLimit || 0), Number(item.supplyCount || 0), item.soldOut ? 1 : 0, item.servingStart || '11:00', item.servingEnd || '13:30', now(), now());
       }
     }
@@ -1377,14 +1678,15 @@ function safeAiSettings(settings = {}) {
 async function getAiSettings(db, user = null) {
   const row = await db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get(scopedSettingKey(user, 'ai_provider'));
   const stored = row ? JSON.parse(row.value_json) : {};
-  const settings = { ...stored, apiKey: decryptSecret(stored.apiKey) };
-  setAiRuntimeConfig(settings);
-  return settings;
+  return { ...stored, apiKey: decryptSecret(stored.apiKey) };
 }
 
 async function saveAiSettings(db, settings, user = null) {
+  const existing = await getAiSettings(db, user);
+  const submittedKey = String(settings.apiKey || '').trim();
+  const apiKey = submittedKey && submittedKey !== '********' ? submittedKey : existing.apiKey || '';
   const normalized = {
-    apiKey: String(settings.apiKey || '').trim(),
+    apiKey,
     baseUrl: String(settings.baseUrl || 'https://api.openai.com/v1').trim().replace(/\/$/, ''),
     embeddingModel: String(settings.embeddingModel || 'text-embedding-3-small').trim(),
     chatModel: String(settings.chatModel || 'gpt-4o-mini').trim(),
@@ -1395,16 +1697,13 @@ async function saveAiSettings(db, settings, user = null) {
   await db.prepare(`INSERT INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`)
     .run(scopedSettingKey(user, 'ai_provider'), serializeJson(stored), now());
-  setAiRuntimeConfig(normalized);
   return normalized;
 }
 
 async function clearAiSettings(db, user = null) {
   await db.prepare('DELETE FROM app_settings WHERE key = ?').run(scopedSettingKey(user, 'ai_provider'));
-  setAiRuntimeConfig({});
 }
 export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
-  getAiSettings(db).catch(() => {});
   async function rankings() {
     const cached = await cache.get(rankingCacheKey);
     if (cached) return cached;
@@ -1424,7 +1723,9 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
       const url = new URL(req.url, 'http://localhost');
       const method = req.method || 'GET';
       const user = await getUserFromRequest(db, req);
-      const pathParts = url.pathname.split('/').filter(Boolean);
+      const aiSettings = await getAiSettings(db, user).catch(() => ({}));
+      return await withAiRuntimeConfig(aiSettings, async () => {
+        const pathParts = url.pathname.split('/').filter(Boolean);
 
       if (method === 'GET' && url.pathname === '/api/health') return send(res, 200, { ok: true }, { 'X-Request-Id': requestId });
       if (method === 'GET' && url.pathname === '/api/bootstrap') return send(res, 200, await snapshot(db, user), { 'X-Request-Id': requestId });
@@ -1469,7 +1770,11 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
 
       if (method === 'GET' && url.pathname === '/api/canteens') return send(res, 200, await listCanteens(db, tenantIdFor(user)));
       if (method === 'GET' && url.pathname === '/api/stalls') return send(res, 200, await listStalls(db, tenantIdFor(user)));
-      if (method === 'GET' && url.pathname === '/api/dishes') return send(res, 200, await listDishes(db, url.searchParams, tenantIdFor(user)));
+      if (method === 'POST' && url.pathname === '/api/dishes/search') {
+        const result = await executeDishSearch(db, user, await readBody(req));
+        return send(res, 200, result);
+      }
+      if (method === 'GET' && url.pathname === '/api/dishes') return send(res, 200, await executeLegacyDishList(db, user, url.searchParams));
       if (method === 'GET' && url.pathname.startsWith('/api/dishes/')) {
         const detail = await dishDetail(db, decodeURIComponent(url.pathname.split('/').pop()), tenantIdFor(user));
         if (!detail) throw Object.assign(new Error('菜品不存在'), { status: 404 });
@@ -1485,30 +1790,16 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
       }
       if (method === 'GET' && url.pathname === '/api/recommend') {
         const activeUser = user || null;
-        const tenantId = tenantIdFor(activeUser);
-        const profile = activeUser ? await getProfile(db, activeUser.id, tenantId) : normalizeProfile({ mealType: url.searchParams.get('mealType') || 'lunch' });
-        const pool = await recommendationDishPool(db, tenantId, profile);
-        // Determine server time of day
-        const hour = new Date().getHours();
-        const timeOfDay = hour < 10 ? 'breakfast' : hour < 14 ? 'lunch' : hour < 17 ? 'lunch' : 'dinner';
-        // Get environment from DB
-        const envRow = await db.prepare('SELECT * FROM campus_environment WHERE tenant_id = ?').get(tenantId);
-        const environment = envRow ? rowToEnvironment(envRow) : { temperature: 25, weatherLabel: '晴' };
-        // Get user preferences
-        const preferences = activeUser ? (await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ?').all(tenantId, activeUser.id)).map(rowToPreference) : [];
-        // Contextual ranking
-        const canteens = await listCanteens(db, tenantId);
-        const stalls = await listStalls(db, tenantId);
-        const context = { profile, environment, canteens, stalls, preferences, timeOfDay };
-        const ranked = contextualRankDishes(pool.dishes, context);
-        const plan = buildMealPlan(pool.dishes, profile);
-        return send(res, 200, {
-          ranked,
-          plan,
-          context: { environment, timeOfDay, profile },
-          source: pool.source,
-          menu: { date: pool.date, mealType: pool.mealType, menus: pool.menus }
+        const result = await executeMealRecommendation(db, activeUser, {
+          query: '',
+          profileOverride: url.searchParams.get('mealType') ? { mealType: url.searchParams.get('mealType') } : {},
+          options: { mode: 'alternatives', limit: 10 }
         });
+        return send(res, 200, compatibleRecommendationResponse(result));
+      }
+      if (method === 'POST' && url.pathname === '/api/recommend') {
+        const result = await executeMealRecommendation(db, user || null, await readBody(req));
+        return send(res, 200, result);
       }
       if (method === 'POST' && url.pathname === '/api/recommend/plan') {
         const activeUser = await requireUser(db, req);
@@ -1567,8 +1858,8 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
       if (method === 'GET' && url.pathname === '/api/rag/search') {
         const query = String(url.searchParams.get('q') || '').trim();
         if (!query) throw Object.assign(new Error('请输入检索问题'), { status: 400 });
-        const results = searchDocuments(query, buildDishDocuments(await listDishes(db, new URLSearchParams(), tenantIdFor(user)), await listStalls(db, tenantIdFor(user)), await listCanteens(db, tenantIdFor(user))));
-        return send(res, 200, { results });
+        const result = await executeDishSearch(db, user, { query, limit: Number(url.searchParams.get('limit') || 8) });
+        return send(res, 200, { ...result, results: dishEvidenceFromSearch(result) });
       }
 
       if (method === 'POST' && url.pathname === '/api/agent/assistant') {
@@ -1653,14 +1944,24 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const body = await readBody(req);
         const query = body.query || body.question;
         if (!String(query || '').trim()) throw Object.assign(new Error('请输入咨询问题'), { status: 400 });
-        const tenantId = tenantIdFor(activeUser);
-        const profile = activeUser ? await getProfile(db, activeUser.id, tenantId) : body.profile;
         const status = getAiProviderStatus();
-        await assertAiQuota(db, activeUser);
+        const quota = await aiQuotaStatus(db, tenantIdFor(activeUser));
+        const quotaExhausted = quota.quota > 0 && quota.remaining <= 0;
         try {
-          const answer = await answerMealQuestion({ query, profile, dishes: await listDishes(db, new URLSearchParams(), tenantId), stalls: await listStalls(db, tenantId), canteens: await listCanteens(db, tenantId), db, tenantId });
-          await recordAiUsage(db, activeUser, { feature: 'meal-advisor', provider: status.source, model: status.chatModel, status: 'success', inputTokens: estimateTokens(query), outputTokens: estimateTokens(answer.answer), latencyMs: Date.now() - startedAt });
-          return send(res, 200, answer);
+          const result = await executeMealRecommendation(db, activeUser, body);
+          const response = compatibleRecommendationResponse(result);
+          response.answer = recommendationAnswer(result);
+          response.answerSource = result.meta.semanticUsed ? 'hybrid_retrieval' : 'deterministic';
+          response.citations = result.evidence.dishes.map((citation) => ({
+            ...citation,
+            id: citation.sourceId,
+            name: citation.title,
+            content: citation.snippet
+          }));
+          if (!quotaExhausted) {
+            await recordAiUsage(db, activeUser, { feature: 'meal-advisor', provider: status.source, model: status.embeddingModel, status: 'success', inputTokens: estimateTokens(query), outputTokens: 0, latencyMs: Date.now() - startedAt });
+          }
+          return send(res, 200, response);
         } catch (error) {
           await recordAiUsage(db, activeUser, { feature: 'meal-advisor', provider: status.source, model: status.chatModel, status: 'failure', inputTokens: estimateTokens(query), latencyMs: Date.now() - startedAt, error: error.message });
           throw error;
@@ -1833,8 +2134,8 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           ON CONFLICT(user_id) DO UPDATE SET tenant_id=excluded.tenant_id, goal=excluded.goal, budget_max=excluded.budget_max, meal_type=excluded.meal_type, taste=excluded.taste, halal_only=excluded.halal_only, avoid_json=excluded.avoid_json, dietary_pattern=excluded.dietary_pattern, spice_level=excluded.spice_level, nutrition_focus_json=excluded.nutrition_focus_json, prefer_low_crowd=excluded.prefer_low_crowd, favorite_tags_json=excluded.favorite_tags_json, updated_at=excluded.updated_at`)
           .run(activeUser.id, tenantIdFor(activeUser), profile.goal, profile.budgetMax, profile.mealType, profile.taste, profile.halalOnly ? 1 : 0, serializeJson(profile.avoid), profile.dietaryPattern, profile.spiceLevel, serializeJson(profile.nutritionFocus), profile.preferLowCrowd ? 1 : 0, serializeJson(profile.favoriteTags), now());
         await audit(db, activeUser, 'UPSERT', 'health_profile', activeUser.id);
-        const pool = await recommendationDishPool(db, tenantIdFor(activeUser), profile);
-        return send(res, 200, { profile, recommendation: { ...buildMealPlan(pool.dishes, profile), source: pool.source, menu: { date: pool.date, mealType: pool.mealType, menus: pool.menus } }, state: await snapshot(db, activeUser) });
+        const recommendation = compatibleRecommendationResponse(await executeMealRecommendation(db, activeUser, { query: '', options: { mode: 'alternatives', limit: 3 } }));
+        return send(res, 200, { profile, recommendation, state: await snapshot(db, activeUser) });
       }
 
       if (method === 'POST' && url.pathname === '/api/admin/canteens') {
@@ -1906,6 +2207,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (!existing) throw Object.assign(new Error('菜品不存在'), { status: 404 });
         if (method === 'DELETE') {
           await db.prepare("UPDATE dishes SET status = 'hidden', updated_at = ? WHERE tenant_id = ? AND id = ?").run(now(), tenantIdFor(activeUser), id);
+          await deleteRetrievalSource(db, { tenantId: tenantIdFor(activeUser), sourceType: 'dish', sourceId: id });
           await audit(db, activeUser, 'DELETE', 'dish', id);
           await invalidateRankings();
           return send(res, 200, await snapshot(db, activeUser));
@@ -1977,9 +2279,9 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (!['publish', 'archive'].includes(action)) throw Object.assign(new Error('action 必须是 publish 或 archive'), { status: 400 });
         const status = action === 'publish' ? 'published' : 'archived';
         let updated = 0;
-        await withTransaction(db, async () => {
+        await withTransaction(db, async (tx) => {
           for (const id of ids) {
-            const result = await db.prepare('UPDATE menus SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(status, now(), tenantIdFor(activeUser), id);
+            const result = await tx.prepare('UPDATE menus SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(status, now(), tenantIdFor(activeUser), id);
             updated += Number(result.changes || 0);
           }
         });
@@ -1990,20 +2292,36 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
       // ── Admin review moderation ──────────────────────────────────
       if (method === 'GET' && url.pathname === '/api/admin/reviews') {
         const activeUser = await requireCapability(db, req, 'review:moderate');
+        const tenantId = tenantIdFor(activeUser);
+        const status = String(url.searchParams.get('status') || 'pending').trim() || 'pending';
+        const targetType = String(url.searchParams.get('targetType') || '').trim();
+        const canteenId = String(url.searchParams.get('canteenId') || '').trim();
+        const stallId = String(url.searchParams.get('stallId') || '').trim();
+        const dishId = String(url.searchParams.get('dishId') || '').trim();
+        if (!['pending', 'approved', 'rejected', 'all'].includes(status)) throw Object.assign(new Error('不支持的评价状态'), { status: 400 });
+        if (targetType && !['dish', 'canteen'].includes(targetType)) throw Object.assign(new Error('targetType 必须是 dish 或 canteen'), { status: 400 });
         const whereClauses = ['reviews.tenant_id = ?'];
-        const whereParams = [tenantIdFor(activeUser)];
-        const statusFilter = url.searchParams.get('status');
-        if (statusFilter && ['approved', 'pending', 'rejected'].includes(statusFilter)) {
+        const whereParams = [tenantId];
+        if (status !== 'all') {
           whereClauses.push('reviews.status = ?');
-          whereParams.push(statusFilter);
+          whereParams.push(status);
         }
-        const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
-        const offset = Number(url.searchParams.get('offset')) || 0;
+        if (targetType) {
+          whereClauses.push('reviews.target_type = ?');
+          whereParams.push(targetType);
+        }
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
+        const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
         const where = whereClauses.join(' AND ');
-        const rows = await db.prepare(`SELECT reviews.*, users.nickname, users.username FROM reviews JOIN users ON users.id = reviews.user_id WHERE ${where} ORDER BY reviews.created_at DESC LIMIT ? OFFSET ?`).all(...whereParams, limit, offset);
-        const totalRow = await db.prepare(`SELECT COUNT(*) AS count FROM reviews WHERE ${where}`).get(...whereParams);
-        const reviews = rows.map(rowToReview);
-        return send(res, 200, { reviews, total: totalRow.count });
+        const rows = await db.prepare(`SELECT reviews.*, users.nickname, users.username FROM reviews LEFT JOIN users ON users.id = reviews.user_id WHERE ${where} ORDER BY reviews.created_at DESC, reviews.id DESC`).all(...whereParams);
+        const catalog = await reviewCatalog(db, tenantId);
+        const reviews = rows.map(rowToReview).map((review) => enrichReview(review, catalog)).filter((review) => {
+          if (canteenId && review.canteen?.id !== canteenId) return false;
+          if (stallId && review.stall?.id !== stallId) return false;
+          if (dishId && review.dish?.id !== dishId) return false;
+          return true;
+        });
+        return send(res, 200, { reviews: reviews.slice(offset, offset + limit), total: reviews.length, limit, offset });
       }
 
       if ((method === 'PUT' || method === 'PATCH') && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'reviews' && pathParts[3] && pathParts[4] === 'status') {
@@ -2012,11 +2330,20 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const body = await readBody(req);
         const newStatus = String(body.status || '');
         if (!['approved', 'pending', 'rejected'].includes(newStatus)) throw Object.assign(new Error('status 必须是 approved、pending 或 rejected'), { status: 400 });
-        const existing = await db.prepare('SELECT id FROM reviews WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), reviewId);
-        if (!existing) throw Object.assign(new Error('评价不存在'), { status: 404 });
-        await db.prepare('UPDATE reviews SET status = ? WHERE tenant_id = ? AND id = ?').run(newStatus, tenantIdFor(activeUser), reviewId);
-        await audit(db, activeUser, 'MODERATE_REVIEW', 'review', reviewId);
-        await invalidateRankings();
+        const tenantId = tenantIdFor(activeUser);
+        await withTransaction(db, async (tx) => {
+          const existing = await tx.prepare('SELECT id, status, target_type, target_id FROM reviews WHERE tenant_id = ? AND id = ?').get(tenantId, reviewId);
+          if (!existing) throw Object.assign(new Error('评价不存在'), { status: 404 });
+          await tx.prepare('UPDATE reviews SET status = ? WHERE tenant_id = ? AND id = ?').run(newStatus, tenantId, reviewId);
+          await audit(tx, activeUser, 'MODERATE_REVIEW', 'review', reviewId, {
+            fromStatus: existing.status,
+            toStatus: newStatus,
+            linkedReviewId: null,
+            targetType: existing.target_type,
+            targetId: existing.target_id
+          });
+          await invalidateRankings();
+        });
         return send(res, 200, { id: reviewId, status: newStatus });
       }
 
@@ -2024,15 +2351,27 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const activeUser = await requireCapability(db, req, 'post:moderate');
         const tenantId = tenantIdFor(activeUser);
         const status = String(url.searchParams.get('status') || '').trim();
-        if (status && !['pending', 'approved', 'rejected'].includes(status)) throw Object.assign(new Error('不支持的帖子状态'), { status: 400 });
+        const targetType = String(url.searchParams.get('targetType') || '').trim();
+        const canteenId = String(url.searchParams.get('canteenId') || '').trim();
+        const stallId = String(url.searchParams.get('stallId') || '').trim();
+        const dishId = String(url.searchParams.get('dishId') || '').trim();
+        if (status && !['pending', 'approved', 'rejected', 'all'].includes(status)) throw Object.assign(new Error('不支持的帖子状态'), { status: 400 });
+        if (targetType && !['dish', 'canteen'].includes(targetType)) throw Object.assign(new Error('targetType 必须是 dish 或 canteen'), { status: 400 });
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
-        const where = status ? 'campus_posts.tenant_id = ? AND campus_posts.status = ?' : 'campus_posts.tenant_id = ?';
-        const params = status ? [tenantId, status] : [tenantId];
-        const rows = await db.prepare(`SELECT campus_posts.*, users.nickname, users.username FROM campus_posts JOIN users ON users.id = campus_posts.user_id WHERE ${where} ORDER BY campus_posts.created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
-        const totalRow = await db.prepare(`SELECT COUNT(*) AS count FROM campus_posts WHERE ${status ? 'tenant_id = ? AND status = ?' : 'tenant_id = ?'}`).get(...params);
+        const whereClauses = ['campus_posts.tenant_id = ?'];
+        const params = [tenantId];
+        if (status && status !== 'all') { whereClauses.push('campus_posts.status = ?'); params.push(status); }
+        if (targetType) { whereClauses.push('campus_posts.target_type = ?'); params.push(targetType); }
+        const rows = await db.prepare(`SELECT campus_posts.*, users.nickname, users.username, reviews.status AS linked_review_status FROM campus_posts LEFT JOIN users ON users.id = campus_posts.user_id LEFT JOIN reviews ON reviews.tenant_id = campus_posts.tenant_id AND reviews.id = campus_posts.linked_review_id WHERE ${whereClauses.join(' AND ')} ORDER BY campus_posts.created_at DESC, campus_posts.id DESC`).all(...params);
         const catalog = await reviewCatalog(db, tenantId);
-        return send(res, 200, { posts: rows.map(rowToPost).map((post) => enrichPost(post, catalog)), total: Number(totalRow.count || 0) });
+        const posts = rows.map(rowToPost).map((post) => enrichPost(post, catalog)).filter((post) => {
+          if (canteenId && post.canteen?.id !== canteenId) return false;
+          if (stallId && post.stall?.id !== stallId) return false;
+          if (dishId && post.dish?.id !== dishId) return false;
+          return true;
+        });
+        return send(res, 200, { posts: posts.slice(offset, offset + limit), total: posts.length, limit, offset });
       }
 
       if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'posts' && pathParts[3] && pathParts[4] === 'status') {
@@ -2041,25 +2380,35 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const postId = decodeURIComponent(pathParts[3]);
         const status = String((await readBody(req)).status || '').trim();
         if (!['pending', 'approved', 'rejected'].includes(status)) throw Object.assign(new Error('status 必须是 approved、pending 或 rejected'), { status: 400 });
-        const post = await db.prepare('SELECT * FROM campus_posts WHERE tenant_id = ? AND id = ?').get(tenantId, postId);
-        if (!post) throw Object.assign(new Error('帖子不存在'), { status: 404 });
-        let linkedReviewId = post.linked_review_id || null;
-        if (post.target_type === 'dish' && post.rating != null) {
-          if (status === 'approved') {
-            linkedReviewId ||= `post-review-${post.id}`;
-            await db.prepare(`INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at) VALUES (?, ?, ?, 'dish', ?, ?, ?, 'approved', ?)
-              ON CONFLICT(id) DO UPDATE SET tenant_id=excluded.tenant_id, user_id=excluded.user_id, target_type=excluded.target_type, target_id=excluded.target_id, rating=excluded.rating, content=excluded.content, status='approved'`)
-              .run(linkedReviewId, tenantId, post.user_id, post.target_id, Number(post.rating), post.content, post.created_at);
-          } else if (linkedReviewId) {
-            await db.prepare('UPDATE reviews SET status = ? WHERE tenant_id = ? AND id = ?').run(status, tenantId, linkedReviewId);
+        let updatedRow;
+        await withTransaction(db, async (tx) => {
+          const post = await tx.prepare('SELECT * FROM campus_posts WHERE tenant_id = ? AND id = ?').get(tenantId, postId);
+          if (!post) throw Object.assign(new Error('帖子不存在'), { status: 404 });
+          let linkedReviewId = post.linked_review_id || null;
+          if (post.target_type === 'dish' && post.rating != null) {
+            if (status === 'approved') {
+              linkedReviewId ||= `post-review-${post.id}`;
+              await tx.prepare(`INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at) VALUES (?, ?, ?, 'dish', ?, ?, ?, 'approved', ?)
+                ON CONFLICT(id) DO UPDATE SET tenant_id=excluded.tenant_id, user_id=excluded.user_id, target_type=excluded.target_type, target_id=excluded.target_id, rating=excluded.rating, content=excluded.content, status='approved'`)
+                .run(linkedReviewId, tenantId, post.user_id, post.target_id, Number(post.rating), post.content, post.created_at);
+            } else if (linkedReviewId) {
+              await tx.prepare('UPDATE reviews SET status = ? WHERE tenant_id = ? AND id = ?').run(status, tenantId, linkedReviewId);
+            }
+            await invalidateRankings();
           }
-          await invalidateRankings();
-        }
-        await db.prepare('UPDATE campus_posts SET status = ?, linked_review_id = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
-          .run(status, linkedReviewId, now(), tenantId, postId);
-        await audit(db, activeUser, 'MODERATE_POST', 'campus_post', postId);
+          await tx.prepare('UPDATE campus_posts SET status = ?, linked_review_id = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
+            .run(status, linkedReviewId, now(), tenantId, postId);
+          await audit(tx, activeUser, 'MODERATE_POST', 'campus_post', postId, {
+            fromStatus: post.status,
+            toStatus: status,
+            linkedReviewId,
+            targetType: post.target_type,
+            targetId: post.target_id
+          });
+          updatedRow = await tx.prepare('SELECT campus_posts.*, users.nickname, users.username, reviews.status AS linked_review_status FROM campus_posts LEFT JOIN users ON users.id = campus_posts.user_id LEFT JOIN reviews ON reviews.tenant_id = campus_posts.tenant_id AND reviews.id = campus_posts.linked_review_id WHERE campus_posts.tenant_id = ? AND campus_posts.id = ?').get(tenantId, postId);
+        });
         const catalog = await reviewCatalog(db, tenantId);
-        const updated = rowToPost(await db.prepare('SELECT campus_posts.*, users.nickname, users.username FROM campus_posts JOIN users ON users.id = campus_posts.user_id WHERE campus_posts.tenant_id = ? AND campus_posts.id = ?').get(tenantId, postId));
+        const updated = rowToPost(updatedRow);
         return send(res, 200, { post: enrichPost(updated, catalog) });
       }
 
@@ -2109,28 +2458,30 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
       if (method === 'GET' && url.pathname === '/api/admin/ai-settings') {
         const activeUser = await requireCapability(db, req, 'ai:configure');
         const settings = await getAiSettings(db, activeUser);
-        return send(res, 200, { settings: safeAiSettings(settings), status: getAiProviderStatus() });
+        return send(res, 200, { settings: safeAiSettings(settings), status: getAiProviderStatus(settings) });
       }
 
       if (method === 'PUT' && url.pathname === '/api/admin/ai-settings') {
         const activeUser = await requireCapability(db, req, 'ai:configure');
         const settings = await saveAiSettings(db, await readBody(req), activeUser);
         await audit(db, activeUser, 'UPSERT', 'ai_settings', 'ai_provider');
-        return send(res, 200, { settings: safeAiSettings(settings), status: getAiProviderStatus() });
+        return send(res, 200, { settings: safeAiSettings(settings), status: getAiProviderStatus(settings) });
       }
 
       if (method === 'DELETE' && url.pathname === '/api/admin/ai-settings') {
         const activeUser = await requireCapability(db, req, 'ai:configure');
         await clearAiSettings(db, activeUser);
         await audit(db, activeUser, 'DELETE', 'ai_settings', 'ai_provider');
-        return send(res, 200, { settings: safeAiSettings({}), status: getAiProviderStatus() });
+        return send(res, 200, { settings: safeAiSettings({}), status: getAiProviderStatus({}) });
       }
 
       if (method === 'POST' && url.pathname === '/api/admin/ai-settings/test') {
         const activeUser = await requireCapability(db, req, 'ai:configure');
         const body = await readBody(req);
         const current = await getAiSettings(db, activeUser);
-        const result = await testAiProviderConnection({ ...current, ...body });
+        const submittedKey = String(body.apiKey || '').trim();
+        const apiKey = submittedKey && submittedKey !== '********' ? submittedKey : current.apiKey;
+        const result = await testAiProviderConnection({ ...current, ...body, apiKey });
         return send(res, 200, result);
       }
 
@@ -2194,6 +2545,26 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         return send(res, 200, { driver: process.env.DB_DRIVER === 'postgres' || process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite', tables, quality, workflow: ['食堂', '档口', '菜品', '菜单', '菜单明细', '发布'] });
 
       }
+      if (method === 'GET' && url.pathname === '/api/admin/retrieval/status') {
+        const activeUser = await requireCapability(db, req, 'audit:read');
+        return send(res, 200, await getRetrievalIndexStatus(db, { tenantId: tenantIdFor(activeUser) }));
+      }
+      if (method === 'POST' && url.pathname === '/api/admin/retrieval/reindex') {
+        const activeUser = await requireCapability(db, req, 'dish:write');
+        const tenantId = tenantIdFor(activeUser);
+        const body = await readBody(req);
+        await getAiSettings(db, activeUser).catch(() => {});
+        const quota = await aiQuotaStatus(db, tenantId);
+        const quotaExhausted = quota.quota > 0 && quota.remaining <= 0;
+        const result = await reindexRetrieval(db, {
+          tenantId,
+          sourceTypes: body.sourceTypes,
+          prune: body.prune !== false,
+          ...(quotaExhausted ? { embeddingProvider: null } : {})
+        });
+        await audit(db, activeUser, 'REINDEX', 'retrieval_index', result.runId, { sourceTypes: result.sourceTypes, failureCount: result.failureCount, quotaExhausted });
+        return send(res, 200, { ...result, quotaExhausted });
+      }
       if (method === 'GET' && url.pathname === '/api/admin/database/entities') {
         const activeUser = await requireCapability(db, req, 'audit:read');
         const entities = Object.entries(DATABASE_ENTITIES)
@@ -2215,7 +2586,8 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           const params = [tenantId];
           if (search && entity.search.length) { where.push(`(${entity.search.map((field) => `CAST(${field} AS TEXT) LIKE ?`).join(' OR ')})`); params.push(...entity.search.map(() => `%${search}%`)); }
           const whereSql = where.join(' AND ');
-          const rows = await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE ${whereSql} ORDER BY rowid DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+          const orderColumn = entity.columns.includes('created_at') ? 'created_at' : entity.key;
+          const rows = await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE ${whereSql} ORDER BY ${orderColumn} DESC, ${entity.key} DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
           const total = (await db.prepare(`SELECT COUNT(*) AS count FROM ${entity.table} WHERE ${whereSql}`).get(...params)).count;
           await audit(db, activeUser, 'LIST', `database:${entityName}`, null);
           return send(res, 200, { entity: { name: entityName, label: entity.label, columns: entity.columns, writable: entity.writable }, rows, total, limit, offset });
@@ -2225,18 +2597,27 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           if (method === 'DELETE') {
             const deleter = await requireCapability(db, req, entity.deleteCapability || entity.writeCapability || 'audit:read');
             if (!entity.deleteCapability) throw Object.assign(new Error('该实体不允许删除'), { status: 403 });
+            if (entityName === 'stalls') {
+              const childCount = Number((await db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ? AND parent_id = ?').get(tenantId, id))?.count || 0);
+              if (childCount > 0) throw Object.assign(new Error('请先删除或迁移该档口下的子档口'), { status: 409 });
+            }
             const result = await db.prepare(`DELETE FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).run(tenantId, id);
             if (!result.changes) throw Object.assign(new Error('记录不存在'), { status: 404 });
+            if (entityName === 'dishes') await deleteRetrievalSource(db, { tenantId, sourceType: 'dish', sourceId: id });
             await audit(db, deleter, 'DELETE', `database:${entityName}`, id);
             return send(res, 200, { id, deleted: true });
           }
           if (method === 'PUT' || method === 'PATCH') {
             const writer = await requireCapability(db, req, entity.writeCapability || 'audit:read');
-            const payload = databasePayload(entity, await readBody(req), { partial: method === 'PATCH' });
+            const body = await readBody(req);
+            rejectDatabaseStallParentWrite(entityName, body);
+            const payload = databasePayload(entity, body, { partial: method === 'PATCH' });
+            if (entityName === 'stalls') await validateDatabaseStallWrite(db, { tenantId, stallId: id, payload });
             const fields = Object.keys(payload);
             const values = fields.map((field) => payload[field]);
             const result = await db.prepare(`UPDATE ${entity.table} SET ${fields.map((field) => `${field} = ?`).join(', ')}, updated_at = ? WHERE tenant_id = ? AND ${entity.key} = ?`).run(...values, now(), tenantId, id);
             if (!result.changes) throw Object.assign(new Error('记录不存在'), { status: 404 });
+            if (entityName === 'dishes') await syncDishRetrievalDocument(db, { tenantId, dishId: id });
             await audit(db, writer, 'UPDATE', `database:${entityName}`, id);
             return send(res, 200, { row: await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).get(tenantId, id) });
           }
@@ -2244,11 +2625,14 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (method === 'POST') {
           const writer = await requireCapability(db, req, entity.writeCapability || 'audit:read');
           const body = await readBody(req);
+          rejectDatabaseStallParentWrite(entityName, body);
           const payload = databasePayload(entity, body);
           const id = String(body.id || randomUUID());
+          if (entityName === 'stalls') await validateDatabaseStallWrite(db, { tenantId, stallId: id, payload, creating: true });
           const fields = ['id', 'tenant_id', ...Object.keys(payload), 'created_at', 'updated_at'];
           const values = [id, tenantId, ...Object.keys(payload).map((field) => payload[field]), now(), now()];
           await db.prepare(`INSERT INTO ${entity.table} (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`).run(...values);
+          if (entityName === 'dishes') await syncDishRetrievalDocument(db, { tenantId, dishId: id });
           await audit(db, writer, 'CREATE', `database:${entityName}`, id);
           return send(res, 201, { row: await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).get(tenantId, id) });
         }
@@ -2276,17 +2660,6 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           avgRating: Number((avgRating.avg || 0).toFixed(2)),
           recentDishes
         });
-      }
-
-      if (method === 'GET' && url.pathname === '/api/admin/reviews') {
-        const activeUser = await requireCapability(db, req, 'review:moderate');
-        const tenantId = tenantIdFor(activeUser);
-        const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
-        const offset = Number(url.searchParams.get('offset')) || 0;
-        const rows = await db.prepare(`SELECT reviews.*, users.nickname, users.username FROM reviews LEFT JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? ORDER BY reviews.created_at DESC LIMIT ? OFFSET ?`).all(tenantId, limit, offset);
-        const totalRow = await db.prepare('SELECT COUNT(*) AS count FROM reviews WHERE tenant_id = ?').get(tenantId);
-        const reviews = rows.map(rowToReview);
-        return send(res, 200, { reviews, total: totalRow.count });
       }
 
       if (method === 'DELETE' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'reviews' && pathParts[3]) {
@@ -2421,6 +2794,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
 
       // ── Deployment readiness ────────────────────────────────────
       if (method === 'GET' && url.pathname === '/api/deployment/readiness') {
+        await requireCapability(db, req, 'ai:configure');
         const checks = {
           agent: { status: 'ok', summary: 'agent route handler loaded' },
           runtime: { status: 'ok', node: process.version, platform: process.platform },
@@ -2630,22 +3004,8 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         return send(res, 200, { preference: rowToPreference(updated) });
       }
 
-      // ── Admin review status (PATCH) ──────────────────────────────
-      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'reviews' && pathParts[3] && pathParts[4] === 'status') {
-        const activeUser = await requireCapability(db, req, 'review:moderate');
-        const reviewId = decodeURIComponent(pathParts[3]);
-        const body = await readBody(req);
-        const newStatus = String(body.status || '');
-        if (!['approved', 'pending', 'rejected'].includes(newStatus)) throw Object.assign(new Error('status 必须是 approved、pending 或 rejected'), { status: 400 });
-        const existing = await db.prepare('SELECT id FROM reviews WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), reviewId);
-        if (!existing) throw Object.assign(new Error('评价不存在'), { status: 404 });
-        await db.prepare('UPDATE reviews SET status = ? WHERE tenant_id = ? AND id = ?').run(newStatus, tenantIdFor(activeUser), reviewId);
-        await audit(db, activeUser, 'MODERATE_REVIEW', 'review', reviewId);
-        await invalidateRankings();
-        return send(res, 200, { id: reviewId, status: newStatus });
-      }
-
-      throw Object.assign(new Error('接口不存在'), { status: 404 });
+        throw Object.assign(new Error('接口不存在'), { status: 404 });
+      });
     } catch (error) {
       fail(res, error, requestId);
     }

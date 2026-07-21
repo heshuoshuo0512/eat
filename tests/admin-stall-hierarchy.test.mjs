@@ -112,6 +112,51 @@ describe('admin stall hierarchy', () => {
     assert.equal(forbidden.status, 403);
   });
 
+  it('prevents database workbench writes from bypassing hierarchy rules', async () => {
+    const rawParentUpdate = await req('/api/admin/database/entities/stalls/stall-hierarchy-child', {
+      method: 'PATCH', token: adminToken, body: { parent_id: null }
+    });
+    assert.equal(rawParentUpdate.status, 400);
+
+    const camelParentUpdate = await req('/api/admin/database/entities/stalls/stall-hierarchy-child', {
+      method: 'PATCH', token: adminToken, body: { parentId: rootPayload.id }
+    });
+    assert.equal(camelParentUpdate.status, 400);
+
+    const rawParentCreate = await req('/api/admin/database/entities/stalls', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        id: 'database-child-bypass',
+        canteen_id: 'central',
+        parent_id: rootPayload.id,
+        floor: '1F',
+        name: '工作台绕过档口',
+        category: '测试',
+        rating: 4.5,
+        avg_price: 12,
+        open: 1,
+        description: '不应创建'
+      }
+    });
+    assert.equal(rawParentCreate.status, 400);
+
+    const crossCanteenMove = await req('/api/admin/database/entities/stalls/stall-hierarchy-child', {
+      method: 'PATCH', token: adminToken, body: { canteen_id: 'central' }
+    });
+    assert.equal(crossCanteenMove.status, 400);
+
+    const deleteParent = await req(`/api/admin/database/entities/stalls/${rootPayload.id}`, {
+      method: 'DELETE', token: adminToken
+    });
+    assert.equal(deleteParent.status, 409);
+
+    const state = await req('/api/bootstrap', { token: adminToken });
+    const child = state.data.stalls.find((stall) => stall.id === 'stall-hierarchy-child');
+    assert.equal(child.parentId, rootPayload.id);
+    assert.equal(child.canteenId, rootPayload.canteenId);
+  });
+
   it('ships portable migration contracts for the hierarchy', () => {
     const runtimeMigration = readFileSync('server/migrations/006_admin_stall_hierarchy.sql', 'utf8');
     const postgresBaseline = readFileSync('migrations/postgres/001_initial_schema.sql', 'utf8');

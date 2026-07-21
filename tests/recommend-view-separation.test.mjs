@@ -31,7 +31,7 @@ describe('student health and preference views', () => {
     assert.doesNotMatch(savedVue, /饮食目标/);
   });
 
-  it('recommendation page is a profile-aware agent workspace with sources and confidence', () => {
+  it('loads deterministic recommendations first and reserves the agent for user follow-ups', () => {
     assert.match(recommendVue, /SmartMealComposer/);
     assert.match(recommendVue, /buildProfilePrompts/);
     assert.match(recommendVue, /loadAgentMemory/);
@@ -39,6 +39,8 @@ describe('student health and preference views', () => {
     assert.match(recommendVue, /toolSuccessRate/);
     assert.match(recommendVue, /safetyScore/);
     assert.match(recommendVue, /visibleRecommendationCitations/);
-    assert.match(recommendVue, /onMounted\(async \(\) =>[\s\S]*runPrompt\(profilePrompts\.value/);
+    assert.match(recommendVue, /loadInitialRecommendation[\s\S]*store\.loadRecommendation\(\)/);
+    assert.match(recommendVue, /runPrompt[\s\S]*store\.runAgent/);
+    assert.doesNotMatch(recommendVue, /runPrompt\(profilePrompt\(\)\)/);
   });
 });

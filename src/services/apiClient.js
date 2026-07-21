@@ -100,8 +100,11 @@ export const apiClient = {
     const query = mealType ? `?mealType=${encodeURIComponent(mealType)}` : '';
     return request(`/api/menus/today${query}`);
   },
-  async recommend() {
-    return request('/api/recommend');
+  async dishesSearch(payload) {
+    return request('/api/dishes/search', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
+  },
+  async recommend(payload = {}) {
+    return request('/api/recommend', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
   },
   async healthPlan(days) {
     return request('/api/recommend/plan', { method: 'POST', body: JSON.stringify({ days }) });
@@ -196,6 +199,12 @@ export const apiClient = {
   },
   async deploymentReadiness() {
     return request('/api/deployment/readiness');
+  },
+  async getRetrievalIndexStatus() {
+    return request('/api/admin/retrieval/status');
+  },
+  async rebuildRetrievalIndex(payload = {}) {
+    return request('/api/admin/retrieval/reindex', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 120_000 });
   },
   async analyzeMealImage(payload, options = {}) {
     return request('/api/vision/meal-analyze', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000, ...options });

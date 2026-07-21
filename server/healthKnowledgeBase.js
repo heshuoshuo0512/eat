@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { storeDocumentEmbeddings } from './rag.js';
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = resolve(MODULE_DIR, '../data/health-knowledge-bases');
@@ -83,11 +82,21 @@ export function loadHealthKnowledgeDocuments({ root = process.env.HEALTH_KB_DIR 
   });
 }
 
-/** Load health documents and persist deterministic embeddings into rag_documents. */
+/** Load health documents into the tenant-safe retrieval index. */
 export async function loadHealthKnowledgeBase(db, options = {}) {
   const documents = loadHealthKnowledgeDocuments(options);
-  if (db && documents.length) await storeDocumentEmbeddings(db, documents);
-  return { count: documents.length, documents };
+  let index = null;
+  if (db && documents.length) {
+    const { buildHealthIndexDocuments, upsertRetrievalDocuments } = await import('./retrievalIndex.js');
+    const tenantId = String(options.tenantId || 'default');
+    const indexedDocuments = buildHealthIndexDocuments(documents, tenantId);
+    index = await upsertRetrievalDocuments(db, indexedDocuments, {
+      tenantId,
+      ...(Object.hasOwn(options, 'embeddingProvider') ? { embeddingProvider: options.embeddingProvider } : {}),
+      ...(options.embeddingModel ? { embeddingModel: options.embeddingModel } : {})
+    });
+  }
+  return { count: documents.length, documents, index };
 }
 
 export { DEFAULT_ROOT, chunkText };

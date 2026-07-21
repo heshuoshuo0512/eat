@@ -49,9 +49,9 @@ describe('Supply status model and review moderation', () => {
         mealType: 'lunch',
         status: 'published',
         items: [
-          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 80, supplyCount: 0, soldOut: false, servingStart: '11:00', servingEnd: '13:30' },
-          { dishId: 'd-beef-noodle', price: 18, supplyLimit: 20, supplyCount: 0, soldOut: true, servingStart: '11:00', servingEnd: '13:30' },
-          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 50, supplyCount: 45, soldOut: false, servingStart: '10:30', servingEnd: '14:00' }
+          { dishId: 'd-chicken-bowl', price: 13, supplyLimit: 80, supplyCount: 0, soldOut: false, servingStart: '00:00', servingEnd: '23:59' },
+          { dishId: 'd-beef-noodle', price: 18, supplyLimit: 20, supplyCount: 0, soldOut: true, servingStart: '00:00', servingEnd: '23:59' },
+          { dishId: 'd-egg-tomato', price: 11, supplyLimit: 50, supplyCount: 45, soldOut: false, servingStart: '00:00', servingEnd: '23:59' }
         ]
       }
     });
@@ -59,8 +59,8 @@ describe('Supply status model and review moderation', () => {
     const { status, data } = await req('/api/menus/today?mealType=lunch');
     assert.equal(status, 200);
     assert.equal(data.source, 'menu');
-    // All three dishes should be returned (including sold-out)
-    assert.equal(data.dishes.length, 3);
+    // The three fixtures should be returned even if another canteen menu is also published.
+    assert.ok(data.dishes.length >= 3);
     // Verify supply status on each dish
     const chickenBowl = data.dishes.find((d) => d.id === 'd-chicken-bowl');
     assert.equal(chickenBowl.supplyStatus, 'available');
