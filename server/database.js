@@ -103,6 +103,7 @@ function migrate(db) {
       image_url TEXT,
       description TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
+      regional_taste TEXT NOT NULL DEFAULT '' CHECK(regional_taste IN ('', '北方口味', '南方口味')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -115,6 +116,22 @@ function migrate(db) {
       rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
       content TEXT NOT NULL,
       created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS dish_review_summary (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      average_rating REAL NOT NULL DEFAULT 0,
+      review_count INTEGER NOT NULL DEFAULT 0,
+      rating_5_count INTEGER NOT NULL DEFAULT 0,
+      rating_4_count INTEGER NOT NULL DEFAULT 0,
+      rating_3_count INTEGER NOT NULL DEFAULT 0,
+      rating_2_count INTEGER NOT NULL DEFAULT 0,
+      rating_1_count INTEGER NOT NULL DEFAULT 0,
+      latest_review_at TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, dish_id)
     );
 
     CREATE TABLE IF NOT EXISTS health_profiles (
@@ -374,6 +391,8 @@ function migrate(db) {
   try { db.exec('ALTER TABLE menu_items ADD COLUMN supply_count INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec("ALTER TABLE menu_items ADD COLUMN serving_start TEXT NOT NULL DEFAULT '11:00'"); } catch {}
   try { db.exec("ALTER TABLE menu_items ADD COLUMN serving_end TEXT NOT NULL DEFAULT '13:30'"); } catch {}
+  // Dish regional taste (north/south)
+  try { db.exec("ALTER TABLE dishes ADD COLUMN regional_taste TEXT NOT NULL DEFAULT ''"); } catch {}
   // Dish allergen info
   try { db.exec("ALTER TABLE dishes ADD COLUMN allergens_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   // Review moderation status
@@ -453,6 +472,22 @@ function migrate(db) {
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS forum_posts (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT '食堂反馈' CHECK(category IN ('食堂反馈', '菜品讨论', '校园生活', '营养交流', '其他')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'published', 'hidden', 'deleted')),
+      likes_count INTEGER NOT NULL DEFAULT 0,
+      views_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL AND wechat_openid != '';
     CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
     CREATE INDEX IF NOT EXISTS idx_canteens_tenant ON canteens(tenant_id);
@@ -482,6 +517,10 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_user ON user_dish_preferences(tenant_id, user_id);
     CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_dish ON user_dish_preferences(tenant_id, dish_id);
     CREATE INDEX IF NOT EXISTS idx_canteens_parent ON canteens(tenant_id, parent_id);
+    CREATE INDEX IF NOT EXISTS idx_dish_review_summary_tenant ON dish_review_summary(tenant_id, dish_id);
+    CREATE INDEX IF NOT EXISTS idx_forum_posts_tenant_created ON forum_posts(tenant_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_forum_posts_tenant_category ON forum_posts(tenant_id, category);
+    CREATE INDEX IF NOT EXISTS idx_forum_posts_user ON forum_posts(tenant_id, user_id);
   `);
 }
 
@@ -533,11 +572,11 @@ function seed(db) {
   }
 
   if (db.prepare("SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = 'default'").get().count === 0) {
-    const insert = db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insert = db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, regional_taste, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const item of seedDishes) {
       const en = item.expandedNutrition || {};
-      insert.run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+      insert.run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, item.regionalTaste || '', now, now);
     }
   } else {
     // Backfill new dishes and expanded nutrition for existing databases
@@ -545,9 +584,9 @@ function seed(db) {
       const exists = db.prepare('SELECT id FROM dishes WHERE id = ?').get(item.id);
       if (!exists) {
         const en = item.expandedNutrition || {};
-        db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+        db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, regional_taste, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, item.regionalTaste || '', now, now);
       }
     }
   }
@@ -667,6 +706,7 @@ export function rowToDish(row) {
     calcium: row.calcium || 0,
     iron: row.iron || 0,
     allergens: parseJson(row.allergens_json, []),
+    regionalTaste: row.regional_taste || '',
     rating: row.rating,
     reviewCount: row.review_count,
     sales: row.sales,
@@ -831,6 +871,51 @@ export function rowToEnvironment(row) {
   };
 }
 
+
+export function rowToDishReviewSummary(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id || 'default',
+    dishId: row.dish_id,
+    averageRating: Number(row.average_rating || 0),
+    reviewCount: Number(row.review_count || 0),
+    ratingDistribution: {
+      5: Number(row.rating_5_count || 0),
+      4: Number(row.rating_4_count || 0),
+      3: Number(row.rating_3_count || 0),
+      2: Number(row.rating_2_count || 0),
+      1: Number(row.rating_1_count || 0)
+    },
+    latestReviewAt: row.latest_review_at || null,
+    updatedAt: row.updated_at
+  };
+}
+
+export function refreshDishReviewSummary(db, tenantId = 'default') {
+  const rows = db.prepare(`SELECT r.target_id AS dish_id, COUNT(*) AS review_count, ROUND(AVG(r.rating), 1) AS average_rating, SUM(CASE WHEN r.rating = 5 THEN 1 ELSE 0 END) AS rating_5_count, SUM(CASE WHEN r.rating = 4 THEN 1 ELSE 0 END) AS rating_4_count, SUM(CASE WHEN r.rating = 3 THEN 1 ELSE 0 END) AS rating_3_count, SUM(CASE WHEN r.rating = 2 THEN 1 ELSE 0 END) AS rating_2_count, SUM(CASE WHEN r.rating = 1 THEN 1 ELSE 0 END) AS rating_1_count, MAX(r.created_at) AS latest_review_at FROM reviews r WHERE r.tenant_id = ? AND r.target_type = 'dish' AND r.status = 'approved' GROUP BY r.target_id`).all(tenantId);
+  const now = new Date().toISOString();
+  for (const row of rows) {
+    db.prepare(`INSERT INTO dish_review_summary (id, tenant_id, dish_id, average_rating, review_count, rating_5_count, rating_4_count, rating_3_count, rating_2_count, rating_1_count, latest_review_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, dish_id) DO UPDATE SET average_rating=excluded.average_rating, review_count=excluded.review_count, rating_5_count=excluded.rating_5_count, rating_4_count=excluded.rating_4_count, rating_3_count=excluded.rating_3_count, rating_2_count=excluded.rating_2_count, rating_1_count=excluded.rating_1_count, latest_review_at=excluded.latest_review_at, updated_at=excluded.updated_at`)
+      .run(`drs-${tenantId}-${row.dish_id}`, tenantId, row.dish_id, row.average_rating, row.review_count, row.rating_5_count, row.rating_4_count, row.rating_3_count, row.rating_2_count, row.rating_1_count, row.latest_review_at, now);
+  }
+  return rows.length;
+}
+
+export function rowToForumPost(row) {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id || 'default',
+    userId: row.user_id,
+    title: row.title,
+    content: row.content,
+    category: row.category,
+    status: row.status,
+    likesCount: Number(row.likes_count || 0),
+    viewsCount: Number(row.views_count || 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
 
 export function serializeJson(value) {
   return json(value);

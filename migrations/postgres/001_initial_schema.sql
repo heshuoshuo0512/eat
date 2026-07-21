@@ -408,6 +408,40 @@ CREATE TABLE IF NOT EXISTS campus_environment (
   UNIQUE(tenant_id)
 );
 
+create or replace function is_student(p_user_id TEXT) returns boolean as $$
+  select exists(select 1 from users where id = p_user_id and role = 'student')
+$$ language sql stable;
+
+CREATE OR REPLACE FUNCTION cleanup_reviews_on_target_delete()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'canteens' THEN
+      -- 食堂走硬删除，DELETE 触发
+      DELETE FROM reviews WHERE target_type = 'canteen' AND target_id = OLD.id;
+
+    ELSIF TG_TABLE_NAME = 'dishes' AND TG_OP = 'UPDATE' THEN
+      -- 菜品走软删除，status 变为 hidden 时触发
+      IF NEW.status = 'hidden' AND OLD.status <> 'hidden' THEN
+        DELETE FROM reviews WHERE target_type = 'dish' AND target_id = OLD.id;
+      END IF;
+    END IF;
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_canteens_delete_reviews ON canteens;
+CREATE TRIGGER trg_canteens_delete_reviews
+  AFTER DELETE ON canteens
+  FOR EACH ROW
+  EXECUTE FUNCTION cleanup_reviews_on_target_delete();
+
+DROP TRIGGER IF EXISTS trg_dishes_soft_delete_reviews ON dishes;
+CREATE TRIGGER trg_dishes_soft_delete_reviews
+  AFTER UPDATE ON dishes
+  FOR EACH ROW
+  EXECUTE FUNCTION cleanup_reviews_on_target_delete();
+
 -- Indexes
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL AND wechat_openid != '';
 CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
