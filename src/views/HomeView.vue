@@ -580,6 +580,27 @@ onMounted(async () => {
 }
 
 @media (max-width: 560px) {
-  .region-preview-grid { grid-template-columns: 1fr; }
+  .region-preview { gap: .75rem; }
+  .region-preview-grid { grid-template-columns: 1fr; gap: .75rem; }
+  .region-preview-card {
+    grid-template-columns: 5rem minmax(0, 1fr);
+    gap: .875rem;
+    min-height: 6.25rem;
+    padding: .625rem;
+    border-radius: 1rem;
+  }
+  .region-preview-card img,
+  .region-preview-card > .emoji {
+    width: 5rem;
+    height: 5rem;
+    border-radius: .75rem;
+  }
+  .region-preview-card:active { transform: scale(.985); }
+}
+
+@media (max-width: 360px) {
+  .region-preview-card { grid-template-columns: 4.5rem minmax(0, 1fr); min-height: 5.75rem; }
+  .region-preview-card img,
+  .region-preview-card > .emoji { width: 4.5rem; height: 4.5rem; }
 }
 </style>
