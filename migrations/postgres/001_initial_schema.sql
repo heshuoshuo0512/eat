@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS stalls (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
   canteen_id TEXT NOT NULL REFERENCES canteens(id) ON DELETE CASCADE,
+  parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT,
   floor TEXT NOT NULL,
   name TEXT NOT NULL,
   category TEXT NOT NULL,
@@ -414,6 +415,7 @@ CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, usernam
 CREATE INDEX IF NOT EXISTS idx_canteens_tenant ON canteens(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_canteens_parent ON canteens(tenant_id, parent_id);
 CREATE INDEX IF NOT EXISTS idx_stalls_tenant_canteen ON stalls(tenant_id, canteen_id);
+CREATE INDEX IF NOT EXISTS idx_stalls_tenant_parent ON stalls(tenant_id, parent_id);
 CREATE INDEX IF NOT EXISTS idx_dishes_tenant_status ON dishes(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_dishes_search ON dishes USING gin(search_vector);
 CREATE INDEX IF NOT EXISTS idx_reviews_tenant_target ON reviews(tenant_id, target_type, target_id);

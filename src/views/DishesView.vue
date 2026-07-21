@@ -60,56 +60,49 @@
   </section>
 
   <!-- RAG 帮我找菜 -->
-  <section class="card rag-section">
-    <div class="rag-header">
-      <h3>🤖 帮我找菜</h3>
-      <small class="muted">用自然语言描述需求，AI 从菜品库中为你检索推荐</small>
-    </div>
-    <form class="rag-form" @submit.prevent="submitRagQuery">
-      <input v-model="ragQuery" placeholder="例如：低卡高蛋白的午餐推荐、适合减脂期吃的面食…" maxlength="200" />
-      <button class="primary" type="submit" :disabled="ragLoading || !ragQuery.trim()">
-        {{ ragLoading ? '检索中…' : '找一找' }}
-      </button>
-    </form>
-    <div v-if="ragResult" class="rag-result">
-      <div class="rag-answer">
-        <span class="rag-source-badge" :class="ragResult.answerSource === 'llm' ? 'source-llm' : 'source-template'">
-          {{ ragResult.answerSource === 'llm' ? 'AI 回答' : '模板回答' }}
-        </span>
-        <p>{{ ragResult.answer }}</p>
+  <section class="dish-assistant-workspace">
+    <aside class="card dish-assistant-rail">
+      <div class="section-title"><p class="eyebrow">Quick Ask</p><h3>快捷提问</h3></div>
+      <button v-for="prompt in dishPrompts" :key="prompt" class="assistant-prompt" type="button" :disabled="ragLoading" @click="askPrompt(prompt)">{{ prompt }}</button>
+      <div class="dish-memory">
+        <div class="section-title"><p class="eyebrow">Memory</p><h3>检索记忆</h3></div>
+        <textarea v-model="memoryDraft" maxlength="500" placeholder="记录常吃口味、预算或不喜欢的食材" />
+        <div><button class="secondary" type="button" :disabled="memorySaving" @click="saveMemory">保存</button><button class="ghost" type="button" :disabled="memorySaving" @click="clearMemory">清除</button></div>
       </div>
-      <div v-if="ragResult.citations?.length" class="rag-citations">
-        <h4>引用菜品</h4>
-        <div class="citation-list">
-          <button
-            v-for="cite in ragResult.citations"
-            :key="cite.id"
-            class="citation-chip"
-            type="button"
-            @click="jumpToDish(cite.id)"
-          >
-            {{ cite.name }}
-            <small v-if="cite.score">相关度 {{ (cite.score * 100).toFixed(0) }}%</small>
-          </button>
+    </aside>
+
+    <section class="card rag-section">
+      <div class="rag-header">
+        <h3>帮我找菜</h3>
+        <small class="muted">用自然语言描述需求，AI 从真实菜品库中检索并标注引用</small>
+      </div>
+      <form class="rag-form" @submit.prevent="submitRagQuery">
+        <input v-model="ragQuery" placeholder="例如：低卡高蛋白的午餐推荐、适合减脂期吃的面食…" maxlength="200" />
+        <button class="primary" type="submit" :disabled="ragLoading || !ragQuery.trim()">{{ ragLoading ? '检索中…' : '找一找' }}</button>
+      </form>
+      <div v-if="ragResult" class="rag-result">
+        <div class="rag-answer">
+          <span class="rag-source-badge" :class="ragResult.answerSource === 'llm' ? 'source-llm' : 'source-template'">{{ ragResult.answerSource === 'llm' ? 'AI 回答' : '规则回答' }}</span>
+          <p>{{ ragResult.answer }}</p>
+        </div>
+        <div v-if="ragResult.citations?.length" class="rag-citations">
+          <h4>引用来源</h4>
+          <div class="citation-list">
+            <button v-for="cite in ragResult.citations" :key="cite.id" class="citation-chip" type="button" @click="jumpToDish(cite.id)">
+              <span><strong>{{ cite.name }}</strong><small v-if="cite.snippet">{{ cite.snippet }}</small></span>
+              <small v-if="cite.score">相关度 {{ (cite.score * 100).toFixed(0) }}%</small>
+            </button>
+          </div>
+        </div>
+        <div v-if="ragResult.plan?.picks?.length" class="rag-picks">
+          <h4>推荐菜品</h4>
+          <div class="pick-list">
+            <button v-for="pick in ragResult.plan.picks" :key="pick.id" class="pick-chip" type="button" @click="jumpToDish(pick.id)">{{ pick.name }}<small>¥{{ pick.price }}</small></button>
+          </div>
         </div>
       </div>
-      <div v-if="ragResult.plan?.picks?.length" class="rag-picks">
-        <h4>推荐菜品</h4>
-        <div class="pick-list">
-          <button
-            v-for="pick in ragResult.plan.picks"
-            :key="pick.id"
-            class="pick-chip"
-            type="button"
-            @click="jumpToDish(pick.id)"
-          >
-            {{ pick.name }}
-            <small>¥{{ pick.price }}</small>
-          </button>
-        </div>
-      </div>
-    </div>
-    <p v-if="ragError" class="form-message rag-error">{{ ragError }}</p>
+      <p v-if="ragError" class="form-message rag-error">{{ ragError }}</p>
+    </section>
   </section>
 
   <p v-if="stallFilter" class="stall-banner">
@@ -225,7 +218,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, reactive, ref, watch, watchEffect } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref, watch, watchEffect } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { validateReviewForm } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
@@ -390,7 +383,7 @@ async function submitReview() {
   try {
     await store.addReview({ targetId: selectedId.value, rating: review.rating, content: review.content });
     review.content = '';
-    message.value = '评价已保存，排行榜会同步更新。';
+    message.value = '评价已提交审核，通过后会同步到评价总览和排行榜。';
   } catch (error) {
     message.value = error.message;
   }
@@ -401,6 +394,15 @@ const ragQuery = ref('');
 const ragLoading = ref(false);
 const ragResult = ref(null);
 const ragError = ref('');
+const memoryDraft = ref('');
+const memoryPreferences = ref({});
+const memorySaving = ref(false);
+const dishPrompts = ['15 元以内高蛋白', '清淡低脂午餐', '不排队的今日供应', '适合减脂的面食'];
+
+function askPrompt(prompt) {
+  ragQuery.value = prompt;
+  submitRagQuery();
+}
 
 async function submitRagQuery() {
   const q = ragQuery.value.trim();
@@ -414,6 +416,40 @@ async function submitRagQuery() {
     ragError.value = err.message || 'AI 检索失败，请重试。';
   } finally {
     ragLoading.value = false;
+  }
+}
+
+async function loadMemory() {
+  try {
+    const memory = await store.loadAgentMemory();
+    memoryDraft.value = memory.summary || '';
+    memoryPreferences.value = memory.preferences || {};
+  } catch { /* dish search remains available */ }
+}
+
+async function saveMemory() {
+  memorySaving.value = true;
+  try {
+    await store.saveAgentMemory({ summary: memoryDraft.value.trim(), preferences: memoryPreferences.value });
+    ragError.value = '检索记忆已保存。';
+  } catch (error) {
+    ragError.value = error.message || '记忆保存失败';
+  } finally {
+    memorySaving.value = false;
+  }
+}
+
+async function clearMemory() {
+  memorySaving.value = true;
+  try {
+    await store.clearAgentMemory();
+    memoryDraft.value = '';
+    memoryPreferences.value = {};
+    ragError.value = '检索记忆已清除。';
+  } catch (error) {
+    ragError.value = error.message || '记忆清除失败';
+  } finally {
+    memorySaving.value = false;
   }
 }
 
@@ -453,6 +489,8 @@ function detailLocationFull(detail) {
   if (parent) return `${parent.name} · ${canteen.name} · ${stall.name}`;
   return `${canteen.name} · ${stall.name}`;
 }
+
+onMounted(loadMemory);
 </script>
 
 <style scoped>
@@ -486,7 +524,13 @@ function detailLocationFull(detail) {
   align-items: flex-end;
 }
 
-.rag-section { margin-bottom: 0; }
+.dish-assistant-workspace { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.dish-assistant-rail { display: grid; align-content: start; gap: 9px; padding: 16px; }
+.assistant-prompt { min-height: 42px; text-align: left; border: 1px solid rgba(31,122,77,.14); background: #f5faf2; color: var(--text); }
+.assistant-prompt:hover { transform: translateX(3px); border-color: var(--primary); }
+.dish-memory { display: grid; gap: 9px; margin-top: 10px; padding-top: 14px; border-top: 1px solid rgba(31,122,77,.12); }
+.dish-memory textarea { min-height: 94px; resize: vertical; }.dish-memory > div:last-child { display: flex; gap: 7px; }.dish-memory button { flex: 1; }
+.rag-section { margin-bottom: 0; min-width: 0; }
 .rag-header { margin-bottom: 12px; }
 .rag-header h3 { margin: 0 0 4px; }
 .rag-form { display: flex; gap: 10px; }
@@ -498,7 +542,8 @@ function detailLocationFull(detail) {
 .source-llm { background: rgba(31,122,77,.15); color: var(--primary-dark, #155f3b); }
 .source-template { background: rgba(100,100,100,.1); color: #666; }
 .rag-citations h4, .rag-picks h4 { margin: 0 0 8px; font-size: 13px; }
-.citation-list, .pick-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.citation-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.pick-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .citation-chip, .pick-chip {
   display: inline-flex;
   align-items: center;
@@ -511,6 +556,8 @@ function detailLocationFull(detail) {
   font-size: 13px;
   transition: background .15s;
 }
+.citation-chip { justify-content: space-between; text-align: left; border-radius: 8px; padding: 9px 11px; }
+.citation-chip > span { display: grid; gap: 3px; min-width: 0; }.citation-chip > span small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .citation-chip:hover, .pick-chip:hover { background: rgba(31,122,77,.08); }
 .citation-chip small, .pick-chip small { color: var(--text-secondary, #888); }
 .rag-error { margin-top: 8px; }
@@ -536,6 +583,8 @@ function detailLocationFull(detail) {
 @media (max-width: 640px) {
   .filter-controls { flex-direction: column; }
   .rag-form { flex-direction: column; }
+  .dish-assistant-workspace { grid-template-columns: 1fr; }
+  .citation-list { grid-template-columns: 1fr; }
   .dish-layout { flex-direction: column; }
   .detail-panel { width: 100%; }
 .filter-controls { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
@@ -545,5 +594,8 @@ function detailLocationFull(detail) {
 .supply-badge.sold-out { color: #fff; background: var(--danger); }
 .supply-badge.off-menu { color: var(--muted); background: rgba(100,112,95,.1); }
 .detail-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-prompt, .citation-chip, .pick-chip, .chip, .sort-btn { transition: none; }
 }
 </style>

@@ -397,6 +397,13 @@ export const useCanteenStore = defineStore('canteen', () => {
   const adminReviews = ref([]);
   const adminReviewTotal = ref(0);
   const adminReviewAnalytics = ref({ total: 0, averageRating: 0, statusDistribution: { approved: 0, pending: 0, rejected: 0 }, ratingDistribution: {} });
+  const studentReviews = ref([]);
+  const studentReviewTotal = ref(0);
+  const studentReviewSummary = ref({ averageRating: 0, dishReviews: 0, canteenReviews: 0 });
+  const communityPosts = ref([]);
+  const communityPostTotal = ref(0);
+  const adminPosts = ref([]);
+  const adminPostTotal = ref(0);
 
 
 
@@ -520,8 +527,8 @@ export const useCanteenStore = defineStore('canteen', () => {
   async function updateDatabaseRow(entity, id, payload) { return apiClient.updateDatabaseRow(entity, id, payload); }
   async function deleteDatabaseRow(entity, id) { return apiClient.deleteDatabaseRow(entity, id); }
 
-  async function loadReviewsAdmin(limit = 50, offset = 0, status = '') {
-    const result = await apiClient.listReviewsAdmin(limit, offset, status);
+  async function loadReviewsAdmin(limit = 50, offset = 0, status = '', filters = {}) {
+    const result = await apiClient.listReviewsAdmin(limit, offset, status, filters);
     adminReviews.value = result.reviews;
     adminReviewTotal.value = result.total;
     return result;
@@ -531,6 +538,41 @@ export const useCanteenStore = defineStore('canteen', () => {
     const result = await apiClient.listReviewAnalytics();
     adminReviewAnalytics.value = result;
     return result;
+  }
+
+  async function loadStudentReviews(params = {}) {
+    const result = await apiClient.listReviews(params);
+    studentReviews.value = result.reviews || [];
+    studentReviewTotal.value = Number(result.total || 0);
+    studentReviewSummary.value = result.summary || { averageRating: 0, dishReviews: 0, canteenReviews: 0 };
+    return result;
+  }
+
+  async function loadCommunityPosts(params = {}) {
+    const result = await apiClient.listPosts(params);
+    communityPosts.value = result.posts || [];
+    communityPostTotal.value = Number(result.total || 0);
+    return result;
+  }
+
+  async function createCommunityPost(payload) {
+    const result = await apiClient.createPost(payload);
+    communityPosts.value = [result.post, ...communityPosts.value.filter((post) => post.id !== result.post.id)];
+    communityPostTotal.value += 1;
+    return result.post;
+  }
+
+  async function loadPostsAdmin(limit = 50, offset = 0, status = '', filters = {}) {
+    const result = await apiClient.listAdminPosts(limit, offset, status, filters);
+    adminPosts.value = result.posts || [];
+    adminPostTotal.value = Number(result.total || 0);
+    return result;
+  }
+
+  async function updatePostStatusAdmin(id, status) {
+    const result = await apiClient.updatePostStatus(id, status);
+    adminPosts.value = adminPosts.value.map((post) => post.id === id ? result.post : post);
+    return result.post;
   }
 
   async function deleteReviewAdmin(id) {
@@ -686,6 +728,13 @@ export const useCanteenStore = defineStore('canteen', () => {
     adminReviews,
     adminReviewTotal,
     adminReviewAnalytics,
+    studentReviews,
+    studentReviewTotal,
+    studentReviewSummary,
+    communityPosts,
+    communityPostTotal,
+    adminPosts,
+    adminPostTotal,
     loadUsers,
     updateUserRole,
     loadAuditLogs,
@@ -715,6 +764,11 @@ export const useCanteenStore = defineStore('canteen', () => {
     deleteReviewAdmin,
     approveReviewAdmin,
     rejectReviewAdmin,
-    loadReviewAnalytics
+    loadReviewAnalytics,
+    loadStudentReviews,
+    loadCommunityPosts,
+    createCommunityPost,
+    loadPostsAdmin,
+    updatePostStatusAdmin
   };
 });

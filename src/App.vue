@@ -119,8 +119,8 @@ const roleFeatures = {
   operator: new Set(['data_input', 'agent']),
   stall_admin: new Set(['data_input', 'agent']),
   canteen_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'agent']),
-  auditor: new Set(['data_manage', 'agent']),
-  finance: new Set(['agent']),
+  auditor: new Set(['data_manage']),
+  finance: new Set(),
   tenant_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent']),
   admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent']),
   super_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent'])
@@ -132,13 +132,16 @@ const navItems = [
   { to: '/dishes', label: '菜品检索', feature: 'student', group: '发现与点餐' },
   { to: '/rankings', label: '排行榜', feature: 'student', group: '发现与点餐' },
   { to: '/regions', label: '区域推荐', feature: 'student', group: '发现与点餐' },
-  { to: '/recommend', label: '健康推荐', feature: 'student', group: '健康与计划' },
-  { to: '/recommend?panel=favorites', label: '收藏与吃过', feature: 'student', group: '个人记录' },
-  { to: '/admin?panel=reviews', label: '评价管理', feature: 'reviews', group: '数据中心' },
+  { to: '/recommend', label: '智能推荐', feature: 'student', group: '智能与健康', featured: true },
+  { to: '/health-profile', label: '健康档案', feature: 'student', group: '智能与健康' },
+  { to: '/saved', label: '收藏与吃过', feature: 'student', group: '个人记录' },
+  { to: '/reviews', label: '菜品评价', feature: 'student', group: '校园互动' },
+  { to: '/community', label: '校园帖子', feature: 'student', group: '校园互动', featured: true },
+  { to: '/admin?panel=reviews&tab=reviews', label: '内容审核', feature: 'reviews', group: '数据中心' },
   { to: '/admin?panel=data', label: '数据管理', feature: 'data_manage', group: '数据中心' },
   { to: '/admin/input', label: '数据录入', feature: 'data_input', group: '数据中心' },
-  { to: '/agent', label: '智能体实验室', feature: 'agent', group: '智能与配置' },
-  { to: '/admin/ai', label: 'AI 配置（含租户管理）', feature: 'ai_config', group: '智能与配置' }
+  { to: '/agent', label: '运营智能体', feature: 'agent', group: '智能与配置' },
+  { to: '/admin/ai', label: 'AI 配置', feature: 'ai_config', group: '智能与配置' }
 ];
 const visibleNavGroups = computed(() => {
   const features = roleFeatures[store.user?.role] || roleFeatures.student;
@@ -161,7 +164,6 @@ function isNavActive(item) {
   const [path, queryString] = item.to.split('?');
   if (route.path !== path && !(path !== '/' && route.path.startsWith(`${path}/`))) return false;
   if (!queryString) {
-    if (item.to === '/recommend') return route.path === path && route.query.panel !== 'favorites';
     return route.path === path || (path !== '/' && route.path.startsWith(`${path}/`));
   }
   const params = new URLSearchParams(queryString);

@@ -1,1256 +1,334 @@
 <template>
-  <section class="page-heading">
-    <p class="eyebrow">{{ isFavoritesPanel ? '推荐结果 · 收藏 · 吃过' : '健康与计划' }}</p>
-    <h1>{{ isFavoritesPanel ? '收藏与吃过' : '健康档案' }}</h1>
-    <p>{{ isFavoritesPanel ? '查看为你生成的推荐结果，并集中管理收藏与吃过记录。' : '调整偏好后保存，推荐结果自动刷新。' }}</p>
-  </section>
-
-  <!-- ── Server Context Banner ────────────────────────────── -->
-  <section v-if="isFavoritesPanel && serverContext" class="card context-banner" aria-label="推荐上下文">
-    <div class="context-chips">
-      <span class="ctx-chip">
-        <span class="ctx-icon" aria-hidden="true">🕐</span>
-        {{ timeLabel }}
-      </span>
-      <span v-if="serverContext.environment" class="ctx-chip">
-        <span class="ctx-icon" aria-hidden="true">{{ weatherIcon }}</span>
-        {{ serverContext.environment.weatherLabel }}{{ serverContext.environment.temperature != null ? ` ${serverContext.environment.temperature}°C` : '' }}
-      </span>
-      <span class="ctx-chip">
-        <span class="ctx-icon" aria-hidden="true">👥</span>
-        {{ crowdStrategyLabel }}
-      </span>
-      <span v-if="sourceLabel" class="ctx-chip">
-        <span class="ctx-icon" aria-hidden="true">📋</span>
-        {{ sourceLabel }}
-      </span>
+  <section class="page-heading recommendation-heading">
+    <div>
+      <p class="eyebrow">Profile-aware Agent</p>
+      <h1>智能推荐</h1>
+      <p>结合健康档案、今日菜单和真实菜品数据生成建议，并明确展示引用与可信度。</p>
     </div>
+    <RouterLink class="secondary button-link" to="/health-profile">调整健康档案</RouterLink>
   </section>
 
-  <!-- ── Loading / Error / Empty ──────────────────────────── -->
-  <section v-if="pageLoading" class="card state-card" aria-live="polite">
-    <div class="state-icon">⏳</div>
-    <p>正在加载推荐数据…</p>
-  </section>
-
-  <section v-else-if="pageError" class="card state-card error" aria-live="assertive">
-    <div class="state-icon">⚠️</div>
-    <p>{{ pageError }}</p>
-    <button class="primary" @click="reload">重新加载</button>
-  </section>
-
-  <!-- ── Main Two-Column Layout ──────────────────────────── -->
-  <template v-else>
-    <section :class="['recommend-layout', { 'profile-only-layout': !isFavoritesPanel }]">
-      <!-- Left: Profile Editor -->
-      <form v-if="!isFavoritesPanel" class="card profile-form" @submit.prevent="saveProfile" aria-label="健康档案编辑">
-        <div class="section-title">
-          <h2>健康档案</h2>
-          <p class="muted">调整偏好后保存，推荐结果自动刷新。</p>
-        </div>
-
-        <label>
-          <span>饮食目标</span>
-          <select v-model="form.goal">
-            <option value="fatLoss">减脂</option>
-            <option value="muscleGain">增肌</option>
-            <option value="maintain">维持体重</option>
-            <option value="healthy">健康饮食</option>
-          </select>
-        </label>
-
-        <label>
-          <span>餐次</span>
-          <select v-model="form.mealType">
-            <option value="breakfast">早餐</option>
-            <option value="lunch">午餐</option>
-            <option value="dinner">晚餐</option>
-          </select>
-        </label>
-
-        <label>
-          <span>预算上限：¥{{ form.budgetMax }}</span>
-          <input v-model.number="form.budgetMax" type="range" min="8" max="80" step="1" />
-        </label>
-
-        <label>
-          <span>口味偏好</span>
-          <select v-model="form.taste">
-            <option v-for="t in tasteOptions" :key="t" :value="t">{{ t }}</option>
-          </select>
-        </label>
-
-        <label>
-          <span>饮食模式</span>
-          <select v-model="form.dietaryPattern">
-            <option value="balanced">均衡</option>
-            <option value="omnivore">杂食</option>
-            <option value="pescatarian">鱼素</option>
-            <option value="vegetarian">素食</option>
-            <option value="vegan">纯素</option>
-            <option value="lowCarb">低碳水</option>
-            <option value="keto">生酮</option>
-          </select>
-        </label>
-
-        <label>
-          <span>辣度偏好</span>
-          <select v-model.number="form.spiceLevel">
-            <option :value="1">不辣</option>
-            <option :value="2">微辣</option>
-            <option :value="3">中辣</option>
-            <option :value="4">重辣</option>
-            <option :value="5">极辣</option>
-          </select>
-        </label>
-
-        <fieldset class="tag-fieldset">
-          <legend>营养关注</legend>
-          <div class="tag-toggle-row">
-            <button
-              v-for="nf in nutritionFocusOptions"
-              :key="nf.value"
-              type="button"
-              class="pill-toggle"
-              :class="{ active: form.nutritionFocus.includes(nf.value) }"
-              :aria-pressed="form.nutritionFocus.includes(nf.value)"
-              @click="toggleNutritionFocus(nf.value)"
-            >
-              {{ nf.label }}
-            </button>
-          </div>
-        </fieldset>
-
-        <label>
-          <span>喜爱标签（逗号分隔）</span>
-          <input v-model="favoriteTagsText" type="text" placeholder="如：高蛋白, 低脂, 快手" />
-        </label>
-
-        <label>
-          <span>忌口 / 过敏食材（逗号分隔）</span>
-          <input v-model="avoidText" type="text" placeholder="如：花生, 虾, 牛奶" />
-        </label>
-
-        <label class="check-label">
-          <input v-model="form.halalOnly" type="checkbox" />
-          <span>仅清真</span>
-        </label>
-
-        <label class="check-label">
-          <input v-model="form.preferLowCrowd" type="checkbox" />
-          <span>偏好低人流食堂</span>
-        </label>
-
-        <button class="primary" type="submit" :disabled="saving">
-          {{ saving ? '保存中…' : '保存并刷新推荐' }}
+  <section class="recommend-workspace">
+    <aside class="card workspace-panel quick-panel">
+      <div class="section-title"><p class="eyebrow">Quick Ask</p><h2>快捷提问</h2></div>
+      <div class="quick-prompts">
+        <button v-for="prompt in quickPrompts" :key="prompt.label" type="button" class="prompt-button" :disabled="loading" @click="runPrompt(prompt.query)">
+          <span>{{ prompt.icon }}</span><strong>{{ prompt.label }}</strong><small>{{ prompt.hint }}</small>
         </button>
+      </div>
 
-        <p v-if="profileMessage" class="form-message" :class="{ danger: profileIsError }">
-          {{ profileMessage }}
-        </p>
+      <div class="memory-editor">
+        <div class="section-title horizontal"><div><p class="eyebrow">Memory</p><h2>推荐记忆</h2></div><span class="memory-status">{{ memory.updatedAt ? '已同步' : '待同步' }}</span></div>
+        <textarea v-model="memoryDraft" maxlength="500" placeholder="例如：最近偏好清淡、高蛋白，午餐不想排长队。" />
+        <div class="memory-actions">
+          <button class="secondary" type="button" :disabled="memorySaving" @click="saveMemory">保存</button>
+          <button class="ghost" type="button" :disabled="memorySaving" @click="clearMemory">清除</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="card workspace-panel conversation-panel">
+      <div class="conversation-header">
+        <div><p class="eyebrow">Recommendation</p><h2>你的用餐建议</h2></div>
+        <span class="live-indicator"><i></i>{{ loading ? '分析中' : '数据已连接' }}</span>
+      </div>
+
+      <div ref="conversationEl" class="conversation" aria-live="polite">
+        <div v-if="!conversation.length && loading" class="assistant-thinking">
+          <span></span><span></span><span></span><p>正在读取健康档案与今日供应</p>
+        </div>
+        <article v-for="(messageItem, index) in conversation" :key="`${messageItem.role}-${index}`" :class="['message', messageItem.role]">
+          <span class="message-label">{{ messageItem.role === 'user' ? '你' : '智能推荐' }}</span>
+          <p>{{ messageItem.content }}</p>
+        </article>
+      </div>
+
+      <div v-if="mealPicks.length" class="recommendation-strip">
+        <article v-for="(dish, index) in mealPicks" :key="dish.id" class="recommend-dish" :style="{ '--delay': `${index * 70}ms` }">
+          <RouterLink :to="{ path: '/dishes', query: { dish: dish.id } }" class="recommend-dish-media">
+            <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" />
+            <span v-else class="emoji large">{{ dish.image || '🍽️' }}</span>
+          </RouterLink>
+          <div><strong>{{ dish.name }}</strong><small>¥{{ dish.price }} · {{ dish.nutrition?.calories || 0 }} kcal</small></div>
+          <RouterLink class="primary button-link compact order-link" :to="{ path: '/orders', query: { dish: dish.id } }">点餐</RouterLink>
+        </article>
+      </div>
+
+      <form class="recommend-input" @submit.prevent="runPrompt(question)">
+        <textarea v-model="question" maxlength="300" placeholder="继续追问：预算 20 元，想吃高蛋白又不辣的午餐…" />
+        <button class="primary send-button" type="submit" :disabled="loading || !question.trim()" aria-label="发送问题" title="发送问题">➤</button>
       </form>
+      <p v-if="message" class="form-message" :class="{ danger: isError }">{{ message }}</p>
+    </main>
 
-      <!-- Right: Recommendation Result -->
-      <article v-else class="card recommendation-card">
-        <div class="section-title">
-          <h2>{{ goalLabel }} · 推荐结果</h2>
+    <aside class="workspace-side">
+      <section class="card workspace-panel trust-panel">
+        <div class="section-title"><p class="eyebrow">Trust</p><h2>可信度参考</h2></div>
+        <div class="trust-metrics">
+          <article><span>依据充分度</span><strong>{{ percent(result?.eval?.groundednessScore) }}</strong><i><b :style="{ width: percent(result?.eval?.groundednessScore) }"></b></i></article>
+          <article><span>工具成功率</span><strong>{{ percent(result?.eval?.toolSuccessRate) }}</strong><i><b :style="{ width: percent(result?.eval?.toolSuccessRate) }"></b></i></article>
+          <article><span>安全性</span><strong>{{ percent(result?.eval?.safetyScore) }}</strong><i><b :style="{ width: percent(result?.eval?.safetyScore) }"></b></i></article>
         </div>
-        <p class="muted">{{ planReason }}</p>
+        <p class="muted trust-copy">评分用于辅助判断，最终饮食选择仍需结合个人身体状况。</p>
+      </section>
 
-        <!-- Top Recommendation with Score Breakdown -->
-        <div v-if="rankedDishes.length" class="top-pick">
-          <div class="top-pick-header">
-            <span class="rank-badge">🏆 综合最佳</span>
-            <span class="score-detail" :title="breakdownTitle(rankedDishes[0])">
-              {{ rankedDishes[0].contextualScore?.toFixed(1) }} 分
-            </span>
-          </div>
-          <div class="dish-row dense top-pick-row">
-            <div class="dish-thumb">
-              <img
-                v-if="rankedDishes[0].imageUrl"
-                :src="rankedDishes[0].imageUrl"
-                :alt="rankedDishes[0].name"
-                loading="lazy"
-                @error="onImgError"
-              />
-              <span v-else class="dish-emoji">{{ rankedDishes[0].image || '🍽️' }}</span>
-            </div>
-            <div class="dish-info">
-              <strong>{{ rankedDishes[0].name }}</strong>
-              <small>{{ locationLabel(rankedDishes[0]) }} · ¥{{ rankedDishes[0].price }}</small>
-              <div class="reason-text">{{ (rankedDishes[0].why || []).join(' · ') }}</div>
-            </div>
-            <div class="dish-actions">
-              <button
-                class="icon-btn"
-                :aria-label="isFavorite(rankedDishes[0].id) ? '取消收藏' : '收藏'"
-                :aria-pressed="isFavorite(rankedDishes[0].id)"
-                @click="onToggleFavorite(rankedDishes[0].id)"
-              >
-                {{ isFavorite(rankedDishes[0].id) ? '★' : '☆' }}
-              </button>
-              <button
-                class="icon-btn"
-                aria-label="标记已吃"
-                @click="onMarkEaten(rankedDishes[0].id)"
-              >
-                ✓
-              </button>
-              <RouterLink
-                class="icon-btn order-link"
-                :to="{ path: '/orders', query: { dish: rankedDishes[0].id } }"
-                aria-label="去点这道菜"
-              >🛒</RouterLink>
-            </div>
-          </div>
-          <!-- Extended Nutrition for Top Pick -->
-          <div class="nutrition-grid extended">
-            <span><strong>{{ rankedDishes[0].nutrition.calories }}</strong><small>千卡</small></span>
-            <span><strong>{{ rankedDishes[0].nutrition.protein }}g</strong><small>蛋白质</small></span>
-            <span><strong>{{ rankedDishes[0].nutrition.fat }}g</strong><small>脂肪</small></span>
-            <span><strong>{{ rankedDishes[0].nutrition.carbs }}g</strong><small>碳水</small></span>
-            <span><strong>{{ rankedDishes[0].fiber ?? '—' }}{{ rankedDishes[0].fiber != null ? 'g' : '' }}</strong><small>膳食纤维</small></span>
-            <span><strong>{{ rankedDishes[0].sodium ?? '—' }}{{ rankedDishes[0].sodium != null ? 'mg' : '' }}</strong><small>钠</small></span>
-            <span><strong>{{ rankedDishes[0].sugar ?? '—' }}{{ rankedDishes[0].sugar != null ? 'g' : '' }}</strong><small>糖</small></span>
-            <span><strong>{{ rankedDishes[0].calcium ?? '—' }}{{ rankedDishes[0].calcium != null ? 'mg' : '' }}</strong><small>钙</small></span>
-            <span><strong>{{ rankedDishes[0].iron ?? '—' }}{{ rankedDishes[0].iron != null ? 'mg' : '' }}</strong><small>铁</small></span>
-          </div>
-          <!-- Score Breakdown -->
-          <ul v-if="rankedDishes[0].why?.length" class="reason-chips">
-            <li v-for="(reason, ri) in rankedDishes[0].why" :key="ri" class="reason-chip">
-              {{ reason }}
-            </li>
-          </ul>
+      <section class="card workspace-panel source-panel">
+        <div class="section-title horizontal"><div><p class="eyebrow">Sources</p><h2>真实引用</h2></div><span class="pill">{{ citations.length }} 条</span></div>
+        <div v-if="citations.length" class="source-list">
+          <RouterLink v-for="source in citations" :key="source.id || source.sourceId || source.name" :to="citationLink(source)" class="source-item">
+            <strong>{{ source.name || source.title || '菜品数据' }}</strong>
+            <small>相关度 {{ formatScore(source.score) }}</small>
+            <p>{{ source.snippet || '来源于当前校园菜品库与已发布菜单。' }}</p>
+          </RouterLink>
         </div>
+        <p v-else class="muted">完成一次推荐后显示引用来源。</p>
+      </section>
 
-        <!-- Totals -->
-        <div v-if="planTotals" class="nutrition-grid totals">
-          <span><strong>{{ planTotals.calories }}</strong><small>总热量 kcal</small></span>
-          <span><strong>{{ planTotals.protein }}g</strong><small>总蛋白质</small></span>
-          <span><strong>¥{{ planTotals.price?.toFixed(0) ?? '—' }}</strong><small>总价格</small></span>
-        </div>
-
-        <div v-if="!rankedDishes.length && !pageLoading" class="empty-state">
-          <p>当前条件没有匹配菜品，你可以：</p>
-          <div class="empty-actions">
-            <RouterLink class="primary button-link" to="/orders">查看今日供应</RouterLink>
-            <RouterLink class="secondary button-link" to="/recommend">调整健康档案</RouterLink>
-          </div>
-        </div>
-      </article>
-    </section>
-
-    <!-- ── CS2-Inspired Reveal Track ──────────────────────── -->
-    <section v-if="isFavoritesPanel && rankedDishes.length" class="card reveal-section" aria-label="逐张揭晓推荐">
-      <div class="section-title horizontal">
-        <div>
-          <h2>🎯 逐张揭晓</h2>
-          <p class="muted">按排名依次揭晓推荐菜品，第 {{ revealIndex + 1 }} / {{ rankedDishes.length }} 张</p>
-        </div>
-        <div class="reveal-controls">
-          <button
-            class="primary"
-            :disabled="revealIndex >= rankedDishes.length"
-            @click="revealNext"
-            @keydown.enter="revealNext"
-            @keydown.space.prevent="revealNext"
-          >
-            {{ revealIndex >= rankedDishes.length ? '已全部揭晓' : '揭晓下一张' }}
-          </button>
-          <button class="ghost" @click="resetReveal" @keydown.enter="resetReveal">重置</button>
-        </div>
-      </div>
-
-      <div class="reveal-reel" role="region" aria-live="polite">
-        <TransitionGroup name="card-reveal" tag="div" class="reveal-track">
-          <div
-            v-for="(dish, idx) in revealedDishes"
-            :key="dish.id"
-            class="reveal-card"
-            :class="{
-              'is-latest': idx === revealedDishes.length - 1,
-              'rank-top': idx === 0,
-              'rank-second': idx === 1,
-              'rank-third': idx === 2
-            }"
-            :style="{ '--reveal-delay': `${idx * 0.06}s` }"
-          >
-            <div class="reveal-rank">
-              <span class="rank-num">#{{ idx + 1 }}</span>
-              <span class="rank-score">{{ dish.contextualScore?.toFixed(1) }}</span>
-            </div>
-            <div class="reveal-body">
-              <div class="reveal-thumb">
-                <img
-                  v-if="dish.imageUrl"
-                  :src="dish.imageUrl"
-                  :alt="dish.name"
-                  loading="lazy"
-                  @error="onImgError"
-                />
-                <span v-else class="dish-emoji large">{{ dish.image || '🍽️' }}</span>
-              </div>
-              <div class="reveal-info">
-                <strong>{{ dish.name }}</strong>
-                <small>{{ locationLabel(dish) }} · ¥{{ dish.price }} · {{ dish.taste }}</small>
-                <div class="reveal-nutrition">
-                  <span>{{ dish.nutrition.calories }}kcal</span>
-                  <span>P{{ dish.nutrition.protein }}g</span>
-                  <span>F{{ dish.nutrition.fat }}g</span>
-                  <span>C{{ dish.nutrition.carbs }}g</span>
-                </div>
-                <div class="reason-text">{{ (dish.why || []).join(' · ') }}</div>
-              </div>
-              <div class="reveal-actions">
-                <button
-                  class="icon-btn"
-                  :aria-label="isFavorite(dish.id) ? '取消收藏' : '收藏'"
-                  :aria-pressed="isFavorite(dish.id)"
-                  @click="onToggleFavorite(dish.id)"
-                >
-                  {{ isFavorite(dish.id) ? '★' : '☆' }}
-                </button>
-                <button class="icon-btn" aria-label="标记已吃" @click="onMarkEaten(dish.id)">
-                  ✓
-                </button>
-                <RouterLink class="icon-btn order-link" :to="{ path: '/orders', query: { dish: dish.id } }" aria-label="去点这道菜">🛒</RouterLink>
-              </div>
-            </div>
-          </div>
-        </TransitionGroup>
-
-        <div v-if="unrevealedCount > 0" class="unrevealed-stack">
-          <div v-for="n in Math.min(unrevealedCount, 3)" :key="n" class="unrevealed-card" :style="{ '--stack-i': n }">
-            <span class="unrevealed-label">{{ unrevealedCount - n + 1 }}</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Favorites Panel ────────────────────────────────── -->
-    <section v-if="isFavoritesPanel" class="card favorites-panel">
-      <div class="section-title horizontal">
-        <div>
-          <h2>⭐ 收藏菜品</h2>
-          <p class="muted">你收藏的常吃选择。</p>
-        </div>
-        <span class="pill">{{ favoriteEntries.length }} 项</span>
-      </div>
-      <p v-if="!favoriteEntries.length" class="muted">
-        还没有收藏。点击菜品旁的 ☆ 即可添加。
-      </p>
-      <div v-else class="dish-list dense">
-        <div v-for="entry in favoriteEntries" :key="entry.id" class="dish-row dense">
-          <div class="dish-thumb">
-            <img
-              v-if="entry.imageUrl"
-              :src="entry.imageUrl"
-              :alt="entry.name"
-              loading="lazy"
-              @error="onImgError"
-            />
-            <span v-else class="dish-emoji">{{ entry.image || '🍽️' }}</span>
-          </div>
-          <div class="dish-info">
-            <strong>{{ entry.name }}</strong>
-            <small>¥{{ entry.price }} · {{ entry.taste }} · {{ entry.nutrition?.calories }}kcal</small>
-          </div>
-          <div class="dish-actions">
-            <button class="icon-btn" aria-label="取消收藏" @click="onToggleFavorite(entry.id)">★</button>
-            <button class="icon-btn" aria-label="标记已吃" @click="onMarkEaten(entry.id)">✓</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Frequent / Eaten Panel ─────────────────────────── -->
-    <section v-if="isFavoritesPanel" class="card favorites-panel">
-      <div class="section-title horizontal">
-        <div>
-          <h2>📊 吃过统计</h2>
-          <p class="muted">你标记过的菜品与抽取次数。</p>
-        </div>
-        <span class="pill">{{ eatenEntries.length }} 项</span>
-      </div>
-      <p v-if="!eatenEntries.length" class="muted">
-        还没有记录。点击菜品旁的 ✓ 标记已吃。
-      </p>
-      <div v-else class="dish-list dense">
-        <div v-for="entry in eatenEntries" :key="entry.dishId" class="dish-row dense">
-          <div class="dish-thumb">
-            <img
-              v-if="dishById(entry.dishId)?.imageUrl"
-              :src="dishById(entry.dishId).imageUrl"
-              :alt="dishById(entry.dishId)?.name || ''"
-              loading="lazy"
-              @error="onImgError"
-            />
-            <span v-else class="dish-emoji">{{ dishById(entry.dishId)?.image || '🍽️' }}</span>
-          </div>
-          <div class="dish-info">
-            <strong>{{ dishById(entry.dishId)?.name || entry.dishId }}</strong>
-            <small>
-              吃过 <b>{{ entry.eatenCount }}</b> 次 · 抽取 <b>{{ entry.drawnCount }}</b> 次
-            </small>
-          </div>
-          <div class="dish-actions">
-            <button
-              class="icon-btn"
-              :aria-label="entry.favorite ? '取消收藏' : '收藏'"
-              @click="onToggleFavorite(entry.dishId)"
-            >
-              {{ entry.favorite ? '★' : '☆' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
-  </template>
+      <section v-if="pendingActions.length" class="card workspace-panel action-panel">
+        <div class="section-title"><p class="eyebrow">Confirm</p><h2>待确认操作</h2></div>
+        <article v-for="action in pendingActions" :key="action.id" class="pending-action">
+          <strong>{{ action.label || action.type }}</strong><small>{{ action.riskLevel || 'low' }} 风险</small>
+          <div><button class="primary" type="button" @click="confirmAction(action)">确认</button><button class="ghost" type="button" @click="rejectAction(action)">拒绝</button></div>
+        </article>
+      </section>
+    </aside>
+  </section>
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch, onMounted } from 'vue';
-import { RouterLink, useRoute } from 'vue-router';
-import { normalizeProfileInput } from '../domain/validation.js';
+import { computed, nextTick, onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
+import { validateQuestion } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
-const route = useRoute();
-const isFavoritesPanel = computed(() => route.query.panel === 'favorites');
 
-/* ─── Store ──────────────────────────────────────────────── */
 const store = useCanteenStore();
+const question = ref('');
+const loading = ref(false);
+const message = ref('');
+const isError = ref(false);
+const sessionId = ref('');
+const result = ref(null);
+const conversation = ref([]);
+const citations = ref([]);
+const pendingActions = ref([]);
+const memory = ref({ summary: '', preferences: {} });
+const memoryDraft = ref('');
+const memorySaving = ref(false);
+const conversationEl = ref(null);
 
-/* ─── Page State ─────────────────────────────────────────── */
-const pageLoading = ref(false);
-const pageError = ref('');
-const saving = ref(false);
-const profileMessage = ref('');
-const profileIsError = ref(false);
-
-const tasteOptions = ['不限', '咸鲜', '麻辣', '酸辣', '黑椒', '清淡', '甜味', '酱香'];
-
-const nutritionFocusOptions = [
-  { value: 'highProtein', label: '高蛋白' },
-  { value: 'lowFat', label: '低脂' },
-  { value: 'lowCarb', label: '低碳水' },
-  { value: 'highFiber', label: '高纤维' },
-  { value: 'lowSodium', label: '低钠' },
-  { value: 'lowSugar', label: '低糖' }
+const quickPrompts = [
+  { icon: '◉', label: '按档案推荐', hint: '结合目标与忌口', query: '请根据我的健康档案和今天的供应，推荐一顿合适的餐，并说明理由。' },
+  { icon: '¥', label: '预算内吃好', hint: '控制总价与营养', query: '请在我的预算内推荐高性价比午餐，优先保证蛋白质和蔬菜。' },
+  { icon: '⌁', label: '避开排队', hint: '优先低人流食堂', query: '我不想排长队，请结合食堂拥挤度推荐现在适合去的档口和菜品。' },
+  { icon: '✓', label: '检查忌口', hint: '核对食材风险', query: '请检查今天适合我的菜品，排除健康档案中的忌口和过敏食材。' }
 ];
 
-/* ─── Profile Form ───────────────────────────────────────── */
-const form = reactive({
-  goal: store.profile.goal || 'healthy',
-  mealType: store.profile.mealType || 'lunch',
-  budgetMax: store.profile.budgetMax ?? 20,
-  taste: store.profile.taste || '不限',
-  halalOnly: Boolean(store.profile.halalOnly),
-  dietaryPattern: store.profile.dietaryPattern || 'balanced',
-  spiceLevel: store.profile.spiceLevel ?? 3,
-  nutritionFocus: Array.isArray(store.profile.nutritionFocus) ? [...store.profile.nutritionFocus] : [],
-  favoriteTags: Array.isArray(store.profile.favoriteTags) ? [...store.profile.favoriteTags] : [],
-  preferLowCrowd: Boolean(store.profile.preferLowCrowd)
-});
+const mealPicks = computed(() => result.value?.mealPlan?.picks || result.value?.plan?.picks || []);
 
-const avoidText = ref(Array.isArray(store.profile.avoid) ? store.profile.avoid.join(', ') : '');
-const favoriteTagsText = ref(Array.isArray(store.profile.favoriteTags) ? store.profile.favoriteTags.join(', ') : '');
-
-watch(() => store.profile, (p) => {
-  form.goal = p.goal || 'healthy';
-  form.mealType = p.mealType || 'lunch';
-  form.budgetMax = p.budgetMax ?? 20;
-  form.taste = p.taste || '不限';
-  form.halalOnly = Boolean(p.halalOnly);
-  form.dietaryPattern = p.dietaryPattern || 'balanced';
-  form.spiceLevel = p.spiceLevel ?? 3;
-  form.nutritionFocus = Array.isArray(p.nutritionFocus) ? [...p.nutritionFocus] : [];
-  form.favoriteTags = Array.isArray(p.favoriteTags) ? [...p.favoriteTags] : [];
-  form.preferLowCrowd = Boolean(p.preferLowCrowd);
-  avoidText.value = Array.isArray(p.avoid) ? p.avoid.join(', ') : '';
-  favoriteTagsText.value = Array.isArray(p.favoriteTags) ? p.favoriteTags.join(', ') : '';
-}, { deep: true });
-
-function toggleNutritionFocus(value) {
-  const idx = form.nutritionFocus.indexOf(value);
-  if (idx === -1) form.nutritionFocus.push(value);
-  else form.nutritionFocus.splice(idx, 1);
+function profilePrompt() {
+  const profile = store.profile;
+  const goalMap = { fatLoss: '减脂', muscleGain: '增肌', maintain: '维持体重', healthy: '健康饮食' };
+  return `请根据我的健康档案自动生成本餐推荐。目标：${goalMap[profile.goal] || '健康饮食'}，预算不超过 ${profile.budgetMax || 20} 元，口味偏好 ${profile.taste || '不限'}，并结合今日真实供应、营养和拥挤度说明选择依据。`;
 }
 
-/* ─── Recommendation Data (from store) ───────────────────── */
-const rankedDishes = computed(() => store.contextualRecommendation.ranked || []);
-const serverContext = computed(() => store.contextualRecommendation.context || null);
-const planReason = computed(() => store.contextualRecommendation.plan?.reason || store.recommendation.reason || '');
-const goalLabel = computed(() => store.contextualRecommendation.plan?.goalLabel || store.contextualRecommendation.goalLabel || store.recommendation.goalLabel || '健康饮食');
-const planTotals = computed(() => store.contextualRecommendation.plan?.totals || store.contextualRecommendation.totals || store.recommendation.totals || null);
-
-const sourceLabel = computed(() => {
-  const src = store.contextualRecommendation.source;
-  if (src === 'menu') return '今日供应优先';
-  if (src === 'fallback') return '菜品库兜底';
-  if (store.todayMenu.dishes.length) return '今日供应优先';
-  return '';
-});
-
-const timeLabel = computed(() => {
-  const timeOfDay = serverContext.value?.timeOfDay;
-  const map = { breakfast: '早餐时段', lunch: '午餐时段', dinner: '晚餐时段' };
-  const label = map[timeOfDay] || '午餐时段';
-  const now = new Date();
-  return `${label} · ${now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
-});
-
-const weatherIcon = computed(() => {
-  const w = (serverContext.value?.environment?.weatherLabel || '').toLowerCase();
-  if (w.includes('雨')) return '🌧️';
-  if (w.includes('雪')) return '❄️';
-  if (w.includes('晴')) return '☀️';
-  if (w.includes('云') || w.includes('阴')) return '⛅';
-  return '🌤️';
-});
-
-const crowdStrategyLabel = computed(() => {
-  const pref = store.profile.preferLowCrowd;
-  if (pref) return '低人流优先策略';
-  const temp = serverContext.value?.environment?.temperature;
-  if (temp != null) {
-    if (temp >= 35) return '高温天气，建议清淡消暑';
-    if (temp <= 5) return '低温天气，推荐暖胃热食';
+async function runPrompt(rawText) {
+  const text = String(rawText || '').trim();
+  const validationError = validateQuestion(text);
+  if (validationError) {
+    isError.value = true;
+    message.value = validationError;
+    return;
   }
-  return '综合评分排序';
-});
-
-/* ─── Dish Preferences (from store) ──────────────────────── */
-const prefMap = computed(() => {
-  const map = new Map();
-  for (const p of store.dishPreferences) {
-    map.set(p.dishId, p);
-  }
-  return map;
-});
-
-function isFavorite(dishId) {
-  return prefMap.value.get(dishId)?.favorite === true;
-}
-
-const favoriteEntries = computed(() => {
-  return store.dishPreferences
-    .filter((p) => p.favorite)
-    .map((p) => {
-      const dish = dishById(p.dishId);
-      return dish ? { ...dish, pref: p } : { id: p.dishId, name: p.dishId, image: '🍽️', imageUrl: '', price: 0, taste: '', nutrition: {}, pref: p };
-    });
-});
-
-const eatenEntries = computed(() => {
-  return store.dishPreferences
-    .filter((p) => (p.eatenCount || 0) > 0 || (p.drawnCount || 0) > 0)
-    .sort((a, b) => (b.eatenCount || 0) - (a.eatenCount || 0) || (b.drawnCount || 0) - (a.drawnCount || 0));
-});
-
-/* ─── Store Action Wrappers ──────────────────────────────── */
-async function onToggleFavorite(dishId) {
+  loading.value = true;
+  message.value = '';
+  isError.value = false;
+  conversation.value.push({ role: 'user', content: text });
+  question.value = '';
+  await scrollToLatest();
   try {
-    await store.toggleFavorite(dishId);
-  } catch (err) {
-    profileMessage.value = `收藏操作失败：${err.message}`;
-    profileIsError.value = true;
-  }
-}
-
-async function onMarkEaten(dishId) {
-  try {
-    await store.markDishEaten(dishId);
-  } catch (err) {
-    profileMessage.value = `标记失败：${err.message}`;
-    profileIsError.value = true;
-  }
-}
-
-/* ─── Reveal Track State ─────────────────────────────────── */
-const revealIndex = ref(0);
-const revealedIds = ref([]);
-
-const revealedDishes = computed(() => {
-  return revealedIds.value
-    .map((id) => rankedDishes.value.find((d) => d.id === id))
-    .filter(Boolean);
-});
-
-const unrevealedCount = computed(() => Math.max(0, rankedDishes.value.length - revealIndex.value));
-
-async function revealNext() {
-  if (revealIndex.value >= rankedDishes.value.length) return;
-  const dish = rankedDishes.value[revealIndex.value];
-  revealedIds.value.push(dish.id);
-  revealIndex.value++;
-  try {
-    await store.recordDishDrawn(dish.id);
-  } catch { /* non-blocking */ }
-}
-
-function resetReveal() {
-  revealIndex.value = 0;
-  revealedIds.value = [];
-}
-
-/* ─── Profile Save ───────────────────────────────────────── */
-async function saveProfile() {
-  saving.value = true;
-  profileMessage.value = '';
-  profileIsError.value = false;
-  try {
-    const payload = {
-      goal: form.goal,
-      mealType: form.mealType,
-      budgetMax: Number(form.budgetMax),
-      taste: form.taste,
-      halalOnly: form.halalOnly,
-      dietaryPattern: form.dietaryPattern,
-      spiceLevel: form.spiceLevel,
-      nutritionFocus: [...form.nutritionFocus],
-      preferLowCrowd: form.preferLowCrowd,
-      favoriteTags: favoriteTagsText.value.split(/[，,]+/).map((s) => s.trim()).filter(Boolean),
-      avoid: avoidText.value.split(/[，,]+/).map((s) => s.trim()).filter(Boolean)
-    };
-    await store.saveProfile(normalizeProfileInput(payload, avoidText.value));
-    await store.loadRecommendation();
-    profileMessage.value = '健康档案已保存，推荐已刷新。';
-    revealIndex.value = 0;
-    revealedIds.value = [];
-  } catch (err) {
-    profileMessage.value = err.message || '保存失败';
-    profileIsError.value = true;
+    const response = await store.runAgent({ query: text, sessionId: sessionId.value || undefined });
+    result.value = response;
+    sessionId.value = response.sessionId || sessionId.value;
+    citations.value = response.citations || [];
+    memory.value = response.memory || memory.value;
+    memoryDraft.value = memory.value.summary || '';
+    pendingActions.value = (response.actions || []).filter((action) => action.requiresConfirmation);
+    conversation.value.push({ role: 'assistant', content: response.answer || response.summary?.text || '推荐已生成。' });
+  } catch (error) {
+    isError.value = true;
+    message.value = error.message || '智能推荐暂时不可用';
+    conversation.value.push({ role: 'assistant', content: '本次推荐没有完成，请稍后重试。' });
   } finally {
-    saving.value = false;
+    loading.value = false;
+    await scrollToLatest();
   }
 }
 
-/* ─── Helpers ────────────────────────────────────────────── */
-function dishById(id) {
-  return store.dishes.find((d) => d.id === id) || null;
+async function scrollToLatest() {
+  await nextTick();
+  if (conversationEl.value) conversationEl.value.scrollTop = conversationEl.value.scrollHeight;
 }
 
-function locationLabel(dish) {
-  if (dish.canteenName && dish.stallName) return `${dish.canteenName} ${dish.stallName}`;
-  const stall = store.stalls.find((s) => s.id === dish.stallId);
-  if (!stall) return '';
-  const canteen = store.canteens.find((c) => c.id === stall.canteenId);
-  return canteen ? `${canteen.name} ${stall.name}` : stall.name;
+async function loadMemory() {
+  try {
+    memory.value = await store.loadAgentMemory();
+    memoryDraft.value = memory.value.summary || '';
+  } catch {
+    memory.value = { summary: '', preferences: {} };
+  }
 }
 
-function breakdownTitle(dish) {
-  if (!dish.scoreBreakdown) return '';
-  const b = dish.scoreBreakdown;
-  const parts = [];
-  if (b.goal != null) parts.push(`目标营养: ${b.goal}`);
-  if (b.rating != null) parts.push(`评分热度: ${b.rating}`);
-  if (b.budget != null) parts.push(`预算匹配: ${b.budget}`);
-  if (b.weather != null) parts.push(`天气适配: ${b.weather}`);
-  if (b.crowd != null) parts.push(`人流偏好: ${b.crowd}`);
-  if (b.preference != null) parts.push(`个人偏好: ${b.preference}`);
-  if (b.nutritionFocus != null) parts.push(`营养关注: ${b.nutritionFocus}`);
-  if (b.spice != null) parts.push(`辣度匹配: ${b.spice}`);
-  if (b.tags != null) parts.push(`标签匹配: ${b.tags}`);
-  if (b.timeBonus != null) parts.push(`时段加分: ${b.timeBonus}`);
-  return parts.join('\n');
+async function saveMemory() {
+  memorySaving.value = true;
+  try {
+    memory.value = await store.saveAgentMemory({ summary: memoryDraft.value.trim(), preferences: memory.value.preferences || {} });
+    message.value = '推荐记忆已保存。';
+    isError.value = false;
+  } catch (error) {
+    message.value = error.message || '记忆保存失败';
+    isError.value = true;
+  } finally {
+    memorySaving.value = false;
+  }
 }
 
-function onImgError(event) {
-  event.target.style.display = 'none';
-  const sibling = event.target.nextElementSibling || event.target.parentElement.querySelector('.dish-emoji');
-  if (sibling) sibling.style.display = '';
+async function clearMemory() {
+  memorySaving.value = true;
+  try {
+    memory.value = await store.clearAgentMemory();
+    memoryDraft.value = '';
+    message.value = '推荐记忆已清除。';
+    isError.value = false;
+  } catch (error) {
+    message.value = error.message || '记忆清除失败';
+    isError.value = true;
+  } finally {
+    memorySaving.value = false;
+  }
 }
 
-/* ─── Lifecycle ──────────────────────────────────────────── */
+async function confirmAction(action) {
+  try {
+    await store.confirmAgentAction(action.id);
+    pendingActions.value = pendingActions.value.filter((item) => item.id !== action.id);
+    message.value = '操作已确认执行。';
+    isError.value = false;
+  } catch (error) {
+    message.value = error.message;
+    isError.value = true;
+  }
+}
+
+async function rejectAction(action) {
+  try {
+    await store.rejectAgentAction(action.id);
+    pendingActions.value = pendingActions.value.filter((item) => item.id !== action.id);
+    message.value = '操作已拒绝。';
+    isError.value = false;
+  } catch (error) {
+    message.value = error.message;
+    isError.value = true;
+  }
+}
+
+function percent(value) {
+  const numeric = Number(value || 0);
+  const normalized = numeric <= 1 ? numeric * 100 : numeric;
+  return `${Math.max(0, Math.min(100, Math.round(normalized)))}%`;
+}
+
+function formatScore(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? (numeric <= 1 ? `${Math.round(numeric * 100)}%` : numeric.toFixed(1)) : '已验证';
+}
+
+function citationLink(source) {
+  const dishId = source.sourceId || source.dishId || source.id;
+  return dishId ? { path: '/dishes', query: { dish: dishId } } : '/dishes';
+}
+
 onMounted(async () => {
-  pageLoading.value = true;
-  pageError.value = '';
-  try {
-    if (!store.dishes.length) {
-      await store.load();
-    }
-    await store.loadRecommendation();
-  } catch (err) {
-    pageError.value = err.message || '加载失败';
-  } finally {
-    pageLoading.value = false;
-  }
+  await loadMemory();
+  await runPrompt(profilePrompt());
 });
-
-async function reload() {
-  pageLoading.value = true;
-  pageError.value = '';
-  try {
-    await store.load();
-    await store.loadRecommendation();
-  } catch (err) {
-    pageError.value = err.message || '加载失败';
-  } finally {
-    pageLoading.value = false;
-  }
-}
 </script>
 
 <style scoped>
-/* ── Context Banner ──────────────────────────────────────── */
-.context-banner {
-  margin-bottom: 24px;
-  padding: 16px 20px;
+.recommendation-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.recommend-workspace { display: grid; grid-template-columns: minmax(210px, .72fr) minmax(420px, 1.55fr) minmax(240px, .82fr); gap: 16px; align-items: start; }
+.workspace-panel { padding: 18px; border-radius: 8px; }
+.quick-panel { display: grid; gap: 22px; position: sticky; top: 18px; }
+.quick-prompts { display: grid; gap: 9px; }
+.prompt-button { width: 100%; min-height: 66px; display: grid; grid-template-columns: 30px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px; text-align: left; align-items: center; padding: 11px; border: 1px solid rgba(31, 122, 77, .14); background: #f8fbf7; color: var(--text); }
+.prompt-button > span { grid-row: 1 / 3; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: #e8f4e5; color: var(--primary-dark); font-weight: 800; }
+.prompt-button small { color: var(--muted); }
+.prompt-button:hover { border-color: var(--primary); transform: translateX(3px); }
+.memory-editor { display: grid; gap: 10px; padding-top: 18px; border-top: 1px solid rgba(31, 122, 77, .12); }
+.memory-editor textarea { min-height: 118px; resize: vertical; }
+.memory-status { font-size: 11px; color: var(--primary-dark); }
+.memory-actions { display: flex; gap: 8px; }
+.memory-actions button { flex: 1; }
+.conversation-panel { min-height: 680px; display: flex; flex-direction: column; gap: 16px; }
+.conversation-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.live-indicator { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--primary-dark); white-space: nowrap; }
+.live-indicator i { width: 8px; height: 8px; border-radius: 50%; background: #36a567; box-shadow: 0 0 0 5px rgba(54, 165, 103, .12); }
+.conversation { min-height: 300px; max-height: 430px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 8px 4px; scroll-behavior: smooth; }
+.message { max-width: 88%; padding: 14px 16px; border-radius: 8px; animation: message-in .28s ease both; }
+.message p { margin: 5px 0 0; line-height: 1.7; white-space: pre-wrap; }
+.message-label { font-size: 11px; font-weight: 800; color: var(--muted); }
+.message.user { align-self: flex-end; background: var(--primary); color: #fff; }
+.message.user .message-label { color: rgba(255, 255, 255, .76); }
+.message.assistant { align-self: flex-start; background: #f0f7ed; border: 1px solid rgba(31, 122, 77, .12); }
+.assistant-thinking { min-height: 210px; display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; color: var(--muted); }
+.assistant-thinking span { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); animation: thinking 1s ease-in-out infinite; }
+.assistant-thinking span:nth-child(2) { animation-delay: .12s; }.assistant-thinking span:nth-child(3) { animation-delay: .24s; }
+.assistant-thinking p { flex-basis: 100%; text-align: center; }
+.recommendation-strip { display: grid; gap: 9px; }
+.recommend-dish { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px; border: 1px solid rgba(31, 122, 77, .12); border-radius: 8px; animation: dish-in .32s ease both; animation-delay: var(--delay); }
+.recommend-dish-media { width: 58px; aspect-ratio: 1; overflow: hidden; border-radius: 6px; background: #edf6e9; display: grid; place-items: center; }
+.recommend-dish-media img { width: 100%; height: 100%; object-fit: cover; }
+.recommend-dish > div { display: grid; gap: 3px; min-width: 0; }
+.button-link.compact { min-height: 36px; padding: 7px 12px; }
+.recommend-input { display: grid; grid-template-columns: minmax(0, 1fr) 46px; gap: 9px; margin-top: auto; }
+.recommend-input textarea { min-height: 76px; resize: none; }
+.send-button { width: 46px; min-height: 46px; padding: 0; align-self: end; font-size: 19px; }
+.workspace-side { display: grid; gap: 16px; position: sticky; top: 18px; }
+.trust-metrics { display: grid; gap: 14px; }
+.trust-metrics article { display: grid; grid-template-columns: 1fr auto; gap: 7px; font-size: 12px; }
+.trust-metrics strong { color: var(--primary-dark); }
+.trust-metrics i { grid-column: 1 / 3; height: 6px; overflow: hidden; border-radius: 3px; background: #e6ece4; }
+.trust-metrics b { display: block; height: 100%; background: var(--primary); border-radius: inherit; transition: width .45s ease; }
+.trust-copy { margin: 14px 0 0; font-size: 11px; }
+.source-list { display: grid; gap: 9px; }
+.source-item { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid rgba(31, 122, 77, .1); color: inherit; text-decoration: none; }
+.source-item p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.pending-action { display: grid; gap: 7px; padding: 10px 0; border-bottom: 1px solid rgba(31, 122, 77, .1); }
+.pending-action > div { display: flex; gap: 8px; }
+@keyframes thinking { 0%, 100% { transform: translateY(0); opacity: .45; } 50% { transform: translateY(-6px); opacity: 1; } }
+@keyframes message-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes dish-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+@media (max-width: 1180px) {
+  .recommend-workspace { grid-template-columns: 230px minmax(0, 1fr); }
+  .workspace-side { grid-column: 1 / 3; grid-template-columns: repeat(3, minmax(0, 1fr)); position: static; }
+}
+@media (max-width: 760px) {
+  .recommendation-heading { align-items: stretch; flex-direction: column; }
+  .recommendation-heading .button-link { width: 100%; justify-content: center; }
+  .recommend-workspace { grid-template-columns: 1fr; }
+  .quick-panel, .workspace-side { position: static; }
+  .workspace-side { grid-column: auto; grid-template-columns: 1fr; }
+  .quick-prompts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .conversation-panel { min-height: 600px; }
+  .message { max-width: 94%; }
+}
+@media (max-width: 480px) {
+  .quick-prompts { grid-template-columns: 1fr; }
+  .recommend-dish { grid-template-columns: 52px minmax(0, 1fr); }
+  .recommend-dish .button-link { grid-column: 1 / 3; width: 100%; justify-content: center; }
+  .recommend-input { grid-template-columns: minmax(0, 1fr) 44px; }
 }
-.context-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-.ctx-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 999px;
-  padding: 6px 14px;
-  background: linear-gradient(135deg, rgba(235, 247, 229, .86), rgba(255, 255, 255, .68));
-  color: var(--primary-dark, #115b37);
-  font-size: 13px;
-  font-weight: 650;
-  box-shadow: inset 0 0 0 1px rgba(31, 122, 77, .07);
-}
-.ctx-icon {
-  font-size: 15px;
-  line-height: 1;
-}
-
-/* ── State Cards ─────────────────────────────────────────── */
-.state-card {
-  text-align: center;
-  padding: 52px 24px;
-}
-.state-icon {
-  font-size: 42px;
-  margin-bottom: 12px;
-}
-.state-card.error {
-  border-color: rgba(196, 83, 60, .2);
-}
-
-/* ── Profile Form ────────────────────────────────────────── */
-.profile-form {
-  position: static;
-}
-.profile-only-layout { max-width: 52rem; margin: 0 auto; }
-.tag-fieldset {
-  border: 1px solid rgba(191, 211, 181, .4);
-  border-radius: 15px;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, .42);
-}
-.tag-fieldset legend {
-  font-weight: 650;
-  color: var(--muted, #64705f);
-  padding: 0 6px;
-  font-size: 14px;
-}
-.tag-toggle-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.pill-toggle {
-  border-radius: 999px;
-  padding: 5px 12px;
-  border: 1px solid rgba(191, 211, 181, .5);
-  background: rgba(255, 255, 255, .6);
-  color: var(--muted, #64705f);
-  font-size: 13px;
-  font-weight: 620;
-  cursor: pointer;
-  transition: all .2s var(--ease, cubic-bezier(.2,.8,.2,1));
-}
-.pill-toggle.active {
-  background: linear-gradient(135deg, var(--primary, #1f7a4d), #36a367);
-  color: white;
-  border-color: var(--primary, #1f7a4d);
-  box-shadow: 0 4px 14px rgba(31, 122, 77, .22);
-}
-.pill-toggle:hover:not(.active) {
-  border-color: rgba(31, 122, 77, .3);
-  background: rgba(235, 247, 229, .6);
-}
-input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, var(--primary, #1f7a4d) 0%, var(--accent, #ffb43b) 100%);
-  border: none;
-  padding: 0;
-}
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: white;
-  border: 2px solid var(--primary, #1f7a4d);
-  box-shadow: 0 2px 8px rgba(31, 122, 77, .24);
-  cursor: pointer;
-}
-
-/* ── Recommendation Card ─────────────────────────────────── */
-.recommendation-card {
-  min-height: 300px;
-}
-.top-pick {
-  margin-top: 16px;
-  border-radius: 20px;
-  padding: 16px;
-  background: linear-gradient(135deg, rgba(235, 247, 229, .72), rgba(255, 255, 255, .6));
-  border: 1px solid rgba(31, 122, 77, .12);
-}
-.top-pick-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-.rank-badge {
-  font-weight: 760;
-  color: var(--primary-dark, #115b37);
-  font-size: 14px;
-}
-.score-detail {
-  font-family: var(--font-display, sans-serif);
-  font-weight: 780;
-  font-size: 22px;
-  color: var(--primary, #1f7a4d);
-  cursor: help;
-}
-.top-pick-row {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-}
-.top-pick-row:hover {
-  transform: none;
-}
-
-/* ── Dish Row ────────────────────────────────────────────── */
-.dish-row.dense {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, rgba(238, 246, 232, .78), rgba(255, 255, 255, .64));
-  border: 1px solid rgba(255, 255, 255, .62);
-  transition: transform .22s var(--ease, cubic-bezier(.2,.8,.2,1)), box-shadow .22s var(--ease);
-}
-.dish-row.dense + .dish-row.dense {
-  margin-top: 8px;
-}
-.dish-row.dense:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 24px rgba(24, 72, 43, .08);
-}
-.dish-thumb {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  overflow: hidden;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(244, 250, 239, .8);
-}
-.dish-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.dish-emoji {
-  font-size: 24px;
-  line-height: 1;
-}
-.dish-emoji.large {
-  font-size: 42px;
-}
-.dish-info {
-  flex: 1;
-  min-width: 0;
-}
-.dish-info strong {
-  display: block;
-  font-weight: 720;
-  letter-spacing: -.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dish-info small {
-  color: var(--muted, #64705f);
-  display: block;
-  margin-top: 2px;
-  font-size: 13px;
-}
-.reason-text {
-  color: var(--primary, #1f7a4d);
-  font-size: 12px;
-  font-weight: 620;
-  margin-top: 4px;
-  line-height: 1.4;
-}
-.dish-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-/* ── Icon Button ─────────────────────────────────────────── */
-.icon-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  border: 1px solid rgba(191, 211, 181, .4);
-  background: rgba(255, 255, 255, .7);
-  display: grid;
-  place-items: center;
-  font-size: 16px;
-  cursor: pointer;
-  transition: all .18s var(--ease, cubic-bezier(.2,.8,.2,1));
-  padding: 0;
-}
-.icon-btn:hover {
-  background: rgba(235, 247, 229, .8);
-  border-color: rgba(31, 122, 77, .24);
-  transform: translateY(-1px);
-}
-.icon-btn[aria-pressed="true"] {
-  background: linear-gradient(135deg, rgba(255, 180, 59, .2), rgba(255, 223, 130, .3));
-  border-color: rgba(255, 180, 59, .3);
-  color: #b87a00;
-}
-
-/* ── Extended Nutrition Grid ─────────────────────────────── */
-.nutrition-grid.extended {
-  grid-template-columns: repeat(3, 1fr);
-  margin-top: 12px;
-}
-.nutrition-grid.extended span {
-  border-radius: 14px;
-  padding: 10px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, .78), rgba(245, 250, 239, .76));
-  border: 1px solid rgba(255, 255, 255, .7);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .86);
-  text-align: center;
-}
-.nutrition-grid.extended strong {
-  display: block;
-  font-family: var(--font-display, sans-serif);
-  font-size: 16px;
-  font-weight: 760;
-  letter-spacing: -.02em;
-}
-.nutrition-grid.extended small {
-  display: block;
-  color: var(--muted, #64705f);
-  font-size: 11px;
-  margin-top: 2px;
-}
-
-/* ── Score Reasons ───────────────────────────────────────── */
-.reason-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
-}
-.reason-chip {
-  border-radius: 999px;
-  padding: 4px 10px;
-  background: linear-gradient(135deg, rgba(235, 247, 229, .86), rgba(255, 255, 255, .68));
-  color: var(--primary-dark, #115b37);
-  font-size: 12px;
-  font-weight: 620;
-  box-shadow: inset 0 0 0 1px rgba(31, 122, 77, .07);
-}
-
-/* ── Totals ──────────────────────────────────────────────── */
-.nutrition-grid.totals {
-  grid-template-columns: repeat(3, 1fr);
-}
-
-/* ── Empty State ─────────────────────────────────────────── */
-.empty-state {
-  text-align: center;
-  padding: 42px 20px;
-  color: var(--muted, #64705f);
-}
-
-/* ── Reveal Section ──────────────────────────────────────── */
-.reveal-section {
-  margin-top: 24px;
-}
-.reveal-controls {
-  display: flex;
-  gap: 10px;
-  flex-shrink: 0;
-}
-.reveal-reel {
-  position: relative;
-  min-height: 120px;
-  margin-top: 16px;
-  overflow: hidden;
-  border-radius: 20px;
-  padding: 16px;
-  background: linear-gradient(145deg, rgba(235, 247, 229, .4), rgba(255, 255, 255, .3));
-  border: 1px dashed rgba(31, 122, 77, .15);
-}
-.reveal-track {
-  display: grid;
-  gap: 12px;
-  position: relative;
-}
-
-/* ── Reveal Card Animation ───────────────────────────────── */
-.card-reveal-enter-active {
-  transition: all .5s var(--ease, cubic-bezier(.2,.8,.2,1));
-}
-.card-reveal-enter-from {
-  opacity: 0;
-  transform: translateX(40px) scale(.92);
-}
-
-.reveal-card {
-  display: flex;
-  align-items: stretch;
-  gap: 14px;
-  padding: 14px;
-  border-radius: 20px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, .84), rgba(244, 250, 239, .68));
-  border: 1px solid rgba(255, 255, 255, .72);
-  box-shadow: var(--shadow-soft, 0 16px 42px rgba(24, 72, 43, .1));
-  animation: card-slide-in .5s var(--ease, cubic-bezier(.2,.8,.2,1)) both;
-  animation-delay: var(--reveal-delay, 0s);
-}
-.reveal-card.rank-top {
-  border-color: rgba(31, 122, 77, .28);
-  box-shadow: 0 12px 32px rgba(31, 122, 77, .12);
-}
-.reveal-card.rank-second {
-  border-color: rgba(255, 180, 59, .2);
-}
-.reveal-card.rank-third {
-  border-color: rgba(255, 180, 59, .12);
-}
-.reveal-card.is-latest {
-  animation: card-pop .55s var(--ease, cubic-bezier(.2,.8,.2,1)) both;
-}
-
-.reveal-rank {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-width: 52px;
-  padding: 8px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, var(--primary, #1f7a4d), #36a367);
-  color: white;
-  flex-shrink: 0;
-}
-.rank-num {
-  font-family: var(--font-display, sans-serif);
-  font-weight: 780;
-  font-size: 18px;
-  letter-spacing: -.02em;
-}
-.rank-score {
-  font-size: 11px;
-  font-weight: 650;
-  opacity: .85;
-}
-
-.reveal-body {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
-  min-width: 0;
-}
-.reveal-thumb {
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
-  overflow: hidden;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(244, 250, 239, .8);
-}
-.reveal-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.reveal-info {
-  flex: 1;
-  min-width: 0;
-}
-.reveal-info strong {
-  display: block;
-  font-weight: 730;
-  letter-spacing: -.01em;
-}
-.reveal-info small {
-  display: block;
-  color: var(--muted, #64705f);
-  font-size: 13px;
-  margin-top: 2px;
-}
-.reveal-nutrition {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
-}
-.reveal-nutrition span {
-  font-size: 11px;
-  font-weight: 620;
-  color: var(--primary-dark, #115b37);
-  background: rgba(235, 247, 229, .6);
-  padding: 2px 7px;
-  border-radius: 8px;
-}
-.reveal-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-/* ── Unrevealed Stack ────────────────────────────────────── */
-.unrevealed-stack {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  justify-content: center;
-}
-.unrevealed-card {
-  width: 64px;
-  height: 80px;
-  border-radius: 16px;
-  background: linear-gradient(145deg, rgba(31, 122, 77, .18), rgba(255, 180, 59, .14));
-  border: 2px dashed rgba(31, 122, 77, .2);
-  display: grid;
-  place-items: center;
-  transform: translateY(calc(var(--stack-i, 0) * -4px));
-  transition: transform .2s var(--ease, cubic-bezier(.2,.8,.2,1));
-}
-.unrevealed-card:hover {
-  transform: translateY(calc(var(--stack-i, 0) * -4px - 3px));
-}
-.unrevealed-label {
-  font-family: var(--font-display, sans-serif);
-  font-weight: 780;
-  font-size: 20px;
-  color: var(--primary, #1f7a4d);
-  opacity: .5;
-}
-
-/* ── Favorites / Eaten Panel ─────────────────────────────── */
-.favorites-panel {
-  margin-top: 24px;
-}
-
-/* ── Keyframes ───────────────────────────────────────────── */
-@keyframes card-slide-in {
-  from {
-    opacity: 0;
-    transform: translateX(32px) scale(.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-}
-@keyframes card-pop {
-  0% {
-    opacity: 0;
-    transform: translateX(48px) scale(.88) rotateY(8deg);
-  }
-  60% {
-    opacity: 1;
-    transform: translateX(-4px) scale(1.02) rotateY(-1deg);
-  }
-  100% {
-    opacity: 1;
-    transform: translateX(0) scale(1) rotateY(0);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .reveal-card,
-  .card-reveal-enter-active {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-
-.order-link { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; }
-.empty-actions { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
-
-/* ── Responsive ──────────────────────────────────────────── */
-@media (max-width: 900px) {
-  .grid.two-columns {
-    grid-template-columns: 1fr;
-  }
-  .profile-form {
-    position: static;
-  }
-  .nutrition-grid.extended {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .reveal-body {
-    flex-wrap: wrap;
-  }
-}
-@media (max-width: 640px) {
-  .context-chips {
-    gap: 6px;
-  }
-  .ctx-chip {
-    font-size: 12px;
-    padding: 4px 10px;
-  }
-  .reveal-card {
-    flex-direction: column;
-  }
-  .reveal-rank {
-    flex-direction: row;
-    min-width: auto;
-    padding: 6px 12px;
-    gap: 8px;
-  }
-  .nutrition-grid.extended {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .reveal-controls {
-    flex-direction: column;
-    width: 100%;
-  }
-  .reveal-controls button {
-    width: 100%;
-  }
-  .dish-row.dense {
-    flex-wrap: wrap;
-  }
-  .dish-actions {
-    width: 100%;
-    justify-content: flex-end;
-  }
+  .message, .recommend-dish, .assistant-thinking span { animation: none; }
+  .prompt-button, .trust-metrics b, .conversation { transition: none; scroll-behavior: auto; }
 }
 </style>

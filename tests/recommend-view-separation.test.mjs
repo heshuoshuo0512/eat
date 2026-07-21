@@ -5,23 +5,38 @@ import { resolve } from 'node:path';
 
 const appVue = readFileSync(resolve('src/App.vue'), 'utf8');
 const recommendVue = readFileSync(resolve('src/views/RecommendView.vue'), 'utf8');
+const healthProfileVue = readFileSync(resolve('src/views/HealthProfileView.vue'), 'utf8');
+const savedVue = readFileSync(resolve('src/views/SavedView.vue'), 'utf8');
+const routerJs = readFileSync(resolve('src/router/index.js'), 'utf8');
 
 describe('student health and preference views', () => {
-  it('keeps health profile and favorites as distinct navigation states', () => {
-    assert.match(appVue, /to:\s*'\/recommend',\s*label:\s*'健康推荐'/);
-    assert.match(appVue, /to:\s*'\/recommend\?panel=favorites',\s*label:\s*'收藏与吃过'/);
-    assert.match(appVue, /item\.to === '\/recommend'.*route\.query\.panel !== 'favorites'/s);
+  it('keeps recommendation, health profile, and saved records as distinct routes', () => {
+    assert.match(appVue, /to:\s*'\/recommend',\s*label:\s*'智能推荐'/);
+    assert.match(appVue, /to:\s*'\/health-profile',\s*label:\s*'健康档案'/);
+    assert.match(appVue, /to:\s*'\/saved',\s*label:\s*'收藏与吃过'/);
+    assert.match(routerJs, /query\.panel === 'favorites'[\s\S]*path:\s*'\/saved'/);
   });
 
-  it('shows only the profile form on the health recommendation state', () => {
-    assert.match(recommendVue, /const isFavoritesPanel = computed\(\(\) => route\.query\.panel === 'favorites'\)/);
-    assert.match(recommendVue, /<form v-if="!isFavoritesPanel"[^>]*class="card profile-form"/);
-    assert.match(recommendVue, /<article v-else class="card recommendation-card"/);
+  it('health profile page contains only profile editing and refreshes recommendation after save', () => {
+    assert.match(healthProfileVue, /<h1>健康档案<\/h1>/);
+    assert.match(healthProfileVue, /await store\.saveProfile/);
+    assert.match(healthProfileVue, /await store\.loadRecommendation/);
+    assert.doesNotMatch(healthProfileVue, /逐张揭晓/);
   });
 
-  it('moves recommendation results, reveal, favorites, and eaten history to the favorites state', () => {
-    assert.match(recommendVue, /v-if="isFavoritesPanel && serverContext"/);
-    assert.match(recommendVue, /v-if="isFavoritesPanel && rankedDishes\.length"[^>]*class="card reveal-section"/);
-    assert.equal((recommendVue.match(/v-if="isFavoritesPanel" class="card favorites-panel"/g) || []).length, 2);
+  it('saved page owns favorites and eaten history without profile fields', () => {
+    assert.match(savedVue, /<h1>收藏与吃过<\/h1>/);
+    assert.match(savedVue, /favoriteEntries/);
+    assert.match(savedVue, /eatenEntries/);
+    assert.doesNotMatch(savedVue, /饮食目标/);
+  });
+
+  it('recommendation page is a profile-aware agent workspace with sources and confidence', () => {
+    assert.match(recommendVue, /recommend-workspace/);
+    assert.match(recommendVue, /loadAgentMemory/);
+    assert.match(recommendVue, /groundednessScore/);
+    assert.match(recommendVue, /toolSuccessRate/);
+    assert.match(recommendVue, /safetyScore/);
+    assert.match(recommendVue, /onMounted\(async \(\) =>[\s\S]*runPrompt\(profilePrompt\(\)\)/);
   });
 });

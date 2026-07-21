@@ -4,11 +4,11 @@
     <section class="hero card">
       <div>
         <p class="eyebrow">校园智慧食堂</p>
-        <h1>数据驱动选餐，吃得明白又健康</h1>
-        <p class="hero-copy">今日点餐、热门排行、个性化推荐，一站搞定你的每一餐。</p>
+        <h1>数据驱动选菜，吃得明白，又健康</h1>
+        <p class="hero-copy">从今日供应到营养依据，把选菜、点餐和真实校园口碑放在同一处。</p>
         <div class="hero-actions">
           <RouterLink class="primary button-link" to="/orders">今日点餐</RouterLink>
-          <RouterLink class="secondary button-link" to="/dishes">检索菜品</RouterLink>
+          <RouterLink class="secondary button-link" to="/recommend">智能推荐</RouterLink>
         </div>
       </div>
       <div class="metric-grid compact">
@@ -31,137 +31,75 @@
       </div>
     </section>
 
-    <section class="card">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">热门排行</p>
-          <h2>综合评分榜 Top 4</h2>
+    <section class="card reveal-home" aria-label="逐张揭晓推荐">
+      <div class="reveal-copy">
+        <p class="eyebrow">逐张揭晓</p>
+        <h2>按排名发现下一顿</h2>
+        <p v-if="contextSummary" class="muted">{{ contextSummary }}</p>
+        <p v-else class="muted">推荐会根据健康档案、今日供应和个人记录自动更新。</p>
+        <div class="reveal-controls">
+          <button class="primary" type="button" :disabled="recLoading || !revealDish" @click="advanceReveal">揭晓下一张</button>
+          <button class="ghost" type="button" :disabled="!revealDish" @click="resetReveal">重置</button>
+          <span>{{ revealDish ? `第 ${revealIndex + 1} / ${recContext.ranked.length} 张` : '等待推荐' }}</span>
         </div>
-        <RouterLink class="text-link" to="/rankings">查看完整排行榜</RouterLink>
       </div>
-      <div class="cards-grid">
-        <article v-for="dish in store.rankings.dishes.slice(0, 4)" :key="dish.id" class="mini-card">
-          <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb" />
-          <span v-else class="emoji large">{{ dish.image }}</span>
-          <strong>{{ dish.name }}</strong>
-          <small>{{ dishStallLabel(dish) }}</small>
-          <small>{{ dish.tags.join(' / ') }}</small>
-          <span class="pill">综合分 {{ dish.rankScore }}</span>
-        </article>
-      </div>
+      <article v-if="revealDish" :key="revealDish.id" class="reveal-dish">
+        <div class="reveal-media">
+          <img v-if="revealDish.imageUrl" :src="revealDish.imageUrl" :alt="revealDish.name" />
+          <span v-else class="emoji large">{{ revealDish.image || '🍽️' }}</span>
+          <span class="rank-badge">{{ revealIndex + 1 }}</span>
+        </div>
+        <div class="reveal-info">
+          <strong>{{ revealDish.name }}</strong>
+          <small>{{ dishStallLabel(revealDish) }}</small>
+          <p>{{ formatWhy(revealDish.why) || '结合你的健康档案与当前供应排序。' }}</p>
+          <div><span class="pill">{{ revealDish.nutrition?.calories || 0 }} kcal</span><span class="pill">¥{{ revealDish.price }}</span></div>
+        </div>
+        <RouterLink class="primary button-link" :to="{ path: '/orders', query: { dish: revealDish.id } }">点这道菜</RouterLink>
+      </article>
+      <div v-else class="reveal-empty"><p>{{ recLoading ? '正在加载推荐…' : '暂时没有推荐结果' }}</p><button v-if="!recLoading" class="secondary" type="button" @click="loadRecommendation">重新加载</button></div>
     </section>
 
-    <section class="region-preview">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">区域推荐</p>
-          <h2>按风味找到想吃的</h2>
-        </div>
-        <RouterLink class="text-link" to="/regions">查看全部区域</RouterLink>
-      </div>
-      <div class="region-preview-grid">
-        <RouterLink
-          v-for="region in featuredRegions"
-          :key="region.id"
-          class="region-preview-card"
-          :to="{ path: '/regions', query: { region: region.id, sort: 'forYou' } }"
-        >
-          <img v-if="region.heroDish?.imageUrl" :src="region.heroDish.imageUrl" :alt="region.name" />
-          <span v-else class="emoji large">{{ region.icon }}</span>
-          <span>
-            <strong>{{ region.name }}</strong>
-            <small>{{ region.count }} 道菜 · ⭐ {{ region.averageRating.toFixed(1) }}</small>
-          </span>
-        </RouterLink>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="section-title horizontal">
-        <div>
-          <p class="eyebrow">智能推荐</p>
-          <h2>{{ recommendationLabel }}</h2>
-          <span v-if="recContext.source" class="pill">{{ recContext.source === 'today_menu' ? '来自今日菜单' : '菜品库推荐' }}</span>
-        </div>
-        <div class="table-actions">
-          <button class="ghost" type="button" :disabled="recLoading" @click="loadRecommendation">{{ recLoading ? '加载中...' : '刷新推荐' }}</button>
-          <RouterLink class="text-link" to="/recommend">定制推荐</RouterLink>
-        </div>
-      </div>
-      <p v-if="contextSummary" class="hero-copy">{{ contextSummary }}</p>
-      <p v-if="recContext.menu?.date" class="muted">菜单日期：{{ recContext.menu.date }} · {{ mealTypeLabel(recContext.menu.mealType) }}</p>
-      <div v-if="recContext.ranked.length" class="dish-list dense">
-        <RouterLink v-for="(dish, idx) in recContext.ranked" :key="dish.id" class="dish-row" :to="{ path: '/dishes', query: { dish: dish.id } }">
-          <span class="rank-badge">{{ idx + 1 }}</span>
-          <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb-sm" />
-          <span v-else class="emoji">{{ dish.image }}</span>
-          <span>
-            <strong>{{ dish.name }}</strong>
-            <small>{{ dish.nutrition?.calories || 0 }} kcal · 蛋白 {{ dish.nutrition?.protein || 0 }}g · ¥{{ dish.price }}</small>
-            <small v-if="formatWhy(dish.why)" class="rec-reason">{{ formatWhy(dish.why) }}</small>
-          </span>
-          <span v-if="dish.recommendationScore" class="pill">推荐分 {{ dish.recommendationScore.toFixed(1) }}</span>
-        </RouterLink>
-      </div>
-      <p v-else class="muted">{{ recLoading ? '正在加载推荐...' : '暂无推荐，去今日点餐看看今天有什么好吃的吧！' }} <RouterLink v-if="!recLoading" class="text-link" to="/orders">查看今日供应</RouterLink></p>
-      <div v-if="recContext.totals" class="metric-grid compact" style="margin-top:0.75rem;">
-        <article><strong>{{ recContext.totals.calories || 0 }}</strong><span>kcal 合计</span></article>
-        <article><strong>{{ recContext.totals.protein || 0 }}g</strong><span>蛋白</span></article>
-        <article><strong>¥{{ recContext.totals.price || 0 }}</strong><span>总价</span></article>
-      </div>
-    </section>
-
-    <section class="grid two-columns">
-      <article class="card">
-        <div class="section-title">
-          <p class="eyebrow">今日推荐</p>
-          <h2>{{ store.recommendation.goalLabel }}餐单</h2>
-          <span class="pill">{{ menuSourceLabel }}</span>
-        </div>
-        <p class="muted">{{ store.todayMenu.dishes.length ? `优先来自 ${store.todayMenu.date} 已发布且未售罄的今日菜单。` : store.recommendation.reason }}</p>
-        <div class="dish-list dense">
-          <RouterLink v-for="dish in store.recommendation.dishes" :key="dish.id" class="dish-row" :to="{ path: '/dishes', query: { dish: dish.id } }">
-            <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb-sm" />
-            <span v-else class="emoji">{{ dish.image }}</span>
-            <span>
-              <strong>{{ dish.name }}</strong>
-              <small>{{ dish.nutrition.calories }} kcal · 蛋白 {{ dish.nutrition.protein }}g · ¥{{ dish.price }}</small>
-            </span>
+    <section class="student-dashboard-grid">
+      <article class="card dashboard-module">
+        <div class="section-title horizontal"><div><p class="eyebrow">今日点餐</p><h2>正在供应</h2></div><RouterLink class="text-link" to="/orders">去点餐</RouterLink></div>
+        <div class="module-list">
+          <RouterLink v-for="dish in store.todayMenu.dishes.slice(0, 3)" :key="dish.id" :to="{ path: '/orders', query: { dish: dish.id } }" class="module-row">
+            <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" /><span v-else class="emoji">{{ dish.image }}</span>
+            <span><strong>{{ dish.name }}</strong><small>¥{{ dish.price }} · {{ dish.supplyStatus === 'limited' ? '余量紧张' : '供应中' }}</small></span>
           </RouterLink>
         </div>
-        <p v-if="!store.todayMenu.dishes.length" class="muted">今日菜单尚未更新，以下为根据历史数据为您推荐的菜品。</p>
+        <p v-if="!store.todayMenu.dishes.length" class="muted">今日菜单更新中。</p>
       </article>
 
-      <article class="card">
-        <div class="section-title">
-          <p class="eyebrow">快速入口</p>
-          <h2>常用功能</h2>
+      <article class="card dashboard-module">
+        <div class="section-title horizontal"><div><p class="eyebrow">热门排行</p><h2>评分靠前</h2></div><RouterLink class="text-link" to="/rankings">完整榜单</RouterLink></div>
+        <div class="module-list">
+          <RouterLink v-for="(dish, index) in store.rankings.dishes.slice(0, 3)" :key="dish.id" :to="{ path: '/dishes', query: { dish: dish.id } }" class="module-row rank-row">
+            <span class="rank-badge">{{ index + 1 }}</span><span><strong>{{ dish.name }}</strong><small>{{ dishStallLabel(dish) }}</small></span><span class="pill">{{ dish.rankScore }}</span>
+          </RouterLink>
         </div>
-        <div class="quick-links">
-          <RouterLink class="quick-link-item" to="/orders">
-            <span class="emoji">🛒</span>
-            <span>今日点餐</span>
+      </article>
+
+      <article class="card dashboard-module">
+        <div class="section-title horizontal"><div><p class="eyebrow">区域推荐</p><h2>按风味挑选</h2></div><RouterLink class="text-link" to="/regions">查看全部</RouterLink></div>
+        <div class="module-list region-list">
+          <RouterLink v-for="region in featuredRegions.slice(0, 3)" :key="region.id" :to="{ path: '/regions', query: { region: region.id, sort: 'forYou' } }" class="module-row">
+            <img v-if="region.heroDish?.imageUrl" :src="region.heroDish.imageUrl" :alt="region.name" /><span v-else class="emoji">{{ region.icon }}</span>
+            <span><strong>{{ region.name }}</strong><small>{{ region.count }} 道菜 · {{ region.averageRating.toFixed(1) }} 分</small></span>
           </RouterLink>
-          <RouterLink class="quick-link-item" to="/orders">
-            <span class="emoji">📋</span>
-            <span>查看取餐码</span>
-          </RouterLink>
-          <RouterLink class="quick-link-item" to="/recommend">
-            <span class="emoji">🍽️</span>
-            <span>生成今日餐单</span>
-          </RouterLink>
-          <RouterLink class="quick-link-item" to="/canteens">
-            <span class="emoji">🏫</span>
-            <span>食堂导航</span>
-          </RouterLink>
-          <RouterLink class="quick-link-item" to="/rankings">
-            <span class="emoji">🏆</span>
-            <span>查看排行榜</span>
-          </RouterLink>
-          <RouterLink class="quick-link-item" to="/dishes">
-            <span class="emoji">🔍</span>
-            <span>检索菜品</span>
-          </RouterLink>
+        </div>
+      </article>
+
+      <article class="card dashboard-module">
+        <div class="section-title"><p class="eyebrow">快捷入口</p><h2>常用功能</h2></div>
+        <div class="quick-links-grid">
+          <RouterLink to="/dishes"><span>⌕</span><strong>菜品检索</strong></RouterLink>
+          <RouterLink to="/health-profile"><span>+</span><strong>健康档案</strong></RouterLink>
+          <RouterLink to="/saved"><span>★</span><strong>收藏记录</strong></RouterLink>
+          <RouterLink to="/reviews"><span>✓</span><strong>评价总览</strong></RouterLink>
+          <RouterLink to="/community"><span>◌</span><strong>校园帖子</strong></RouterLink>
+          <RouterLink to="/canteens"><span>⌂</span><strong>食堂导航</strong></RouterLink>
         </div>
       </article>
     </section>
@@ -347,6 +285,8 @@ const menuSourceLabel = computed(() => (store.todayMenu.dishes.length ? '今日�
 const recContext = computed(() => store.contextualRecommendation);
 const recLoading = ref(false);
 const aiReadiness = ref(null);
+const revealIndex = ref(0);
+const revealDish = computed(() => recContext.value.ranked[revealIndex.value] || recContext.value.ranked[0] || null);
 
 const recommendationLabel = computed(() => recContext.value.goalLabel ? `${recContext.value.goalLabel}推荐` : '今日智能推荐');
 
@@ -413,9 +353,21 @@ async function loadRecommendation() {
   recLoading.value = true;
   try {
     await store.fetchRecommendation();
+    revealIndex.value = 0;
   } finally {
     recLoading.value = false;
   }
+}
+
+async function advanceReveal() {
+  const dishes = recContext.value.ranked;
+  if (!dishes.length) return;
+  revealIndex.value = (revealIndex.value + 1) % dishes.length;
+  try { await store.recordDishDrawn(dishes[revealIndex.value].id); } catch { /* recommendation remains usable */ }
+}
+
+function resetReveal() {
+  revealIndex.value = 0;
 }
 
 async function refreshAdminMetrics() {
@@ -461,6 +413,40 @@ onMounted(async () => {
   flex-direction: column;
   gap: 12px;
 }
+
+.reveal-home {
+  display: grid;
+  grid-template-columns: minmax(240px, .85fr) minmax(420px, 1.55fr);
+  gap: 24px;
+  align-items: center;
+  overflow: hidden;
+  background: linear-gradient(120deg, #ffffff 0 52%, #eef7ea 52% 100%);
+}
+
+.reveal-copy { display: grid; gap: 8px; }
+.reveal-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.reveal-controls span { color: var(--muted); font-size: 12px; }
+.reveal-dish { display: grid; grid-template-columns: 156px minmax(0, 1fr) auto; align-items: center; gap: 18px; animation: reveal-in .38s ease both; }
+.reveal-media { position: relative; width: 156px; aspect-ratio: 1; overflow: hidden; border-radius: 8px; background: #dfeeda; display: grid; place-items: center; }
+.reveal-media img { width: 100%; height: 100%; object-fit: cover; }
+.reveal-media .rank-badge { position: absolute; left: 10px; top: 10px; }
+.reveal-info { display: grid; gap: 7px; min-width: 0; }
+.reveal-info > strong { font-size: 22px; }.reveal-info p { margin: 0; color: var(--muted); line-height: 1.55; }.reveal-info > div { display: flex; gap: 7px; flex-wrap: wrap; }
+.reveal-empty { min-height: 156px; display: grid; place-items: center; align-content: center; gap: 8px; }
+
+.student-dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.dashboard-module { min-height: 330px; display: flex; flex-direction: column; }
+.module-list { display: grid; gap: 9px; }
+.module-row { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 10px; padding: 9px; border-radius: 7px; color: inherit; text-decoration: none; border: 1px solid transparent; transition: transform .2s ease, background .2s ease, border-color .2s ease; }
+.module-row:hover { transform: translateX(3px); background: #f4f9f1; border-color: rgba(31, 122, 77, .12); }
+.module-row img, .module-row > .emoji { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; display: grid; place-items: center; background: #edf6e9; }
+.module-row > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }.module-row strong, .module-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-row { grid-template-columns: 30px minmax(0, 1fr) auto; }.rank-row .rank-badge { width: 28px; height: 28px; }
+.quick-links-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.quick-links-grid a { min-height: 92px; display: grid; place-items: center; align-content: center; gap: 7px; border: 1px solid rgba(31, 122, 77, .13); border-radius: 7px; color: inherit; text-decoration: none; background: #fafcf9; transition: transform .2s ease, background .2s ease; }
+.quick-links-grid a:hover { transform: translateY(-2px); background: #eff7eb; }.quick-links-grid span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--primary); color: #fff; font-weight: 800; }
+
+@keyframes reveal-in { from { opacity: 0; transform: translateX(14px) rotate(.3deg); } to { opacity: 1; transform: translateX(0) rotate(0); } }
 
 .region-preview { display: grid; gap: 1rem; }
 
@@ -577,9 +563,17 @@ onMounted(async () => {
 
 @media (max-width: 1020px) {
   .region-preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reveal-home { grid-template-columns: 1fr; background: #fff; }
+  .reveal-dish { background: #eef7ea; padding: 14px; border-radius: 8px; }
 }
 
 @media (max-width: 560px) {
+  .student-dashboard-grid { grid-template-columns: 1fr; }
+  .dashboard-module { min-height: auto; }
+  .reveal-dish { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
+  .reveal-media { width: 104px; }
+  .reveal-dish .button-link { grid-column: 1 / 3; width: 100%; justify-content: center; }
+  .reveal-controls button { flex: 1; }
   .region-preview { gap: .75rem; }
   .region-preview-grid { grid-template-columns: 1fr; gap: .75rem; }
   .region-preview-card {
@@ -602,5 +596,10 @@ onMounted(async () => {
   .region-preview-card { grid-template-columns: 4.5rem minmax(0, 1fr); min-height: 5.75rem; }
   .region-preview-card img,
   .region-preview-card > .emoji { width: 4.5rem; height: 4.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-dish { animation: none; }
+  .module-row, .quick-links-grid a { transition: none; }
 }
 </style>

@@ -14,7 +14,29 @@
        MANAGE PAGE (/admin) — 评价管理 + 数据管理
        ═══════════════════════════════════════════════════════════════ -->
 
-  <template v-if="isAdmin && activePanel === 'reviews'"><section class="card admin-form"><h2>评价审核</h2><div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>菜品</th><th>评分</th><th>内容</th><th>操作</th></tr></thead><tbody><tr v-for="review in store.adminReviews" :key="review.id"><td>{{ review.createdAt?.slice(0, 10) }}</td><td>{{ review.user }}</td><td>{{ dishNameById(review.targetId) }}</td><td><span class="pill">{{ review.rating }} ★</span></td><td>{{ review.content }}</td><td><span v-if="review.status === 'pending'" class="table-actions"><button class="ghost" type="button" @click="approveReview(review.id)">批准</button><button class="ghost danger" type="button" @click="rejectReview(review.id)">拒绝</button></span><span v-else class="pill">{{ review.status === 'approved' ? '已批准' : review.status === 'rejected' ? '已拒绝' : review.status }}</span><button class="ghost danger" type="button" @click="removeReview(review.id)">删除</button></td></tr></tbody></table></div><div class="pagination" v-if="store.adminReviewTotal > reviewPageSize"><button class="ghost" type="button" :disabled="reviewPage === 0" @click="reviewPage--; refreshReviews()">上一页</button><span>{{ reviewPage + 1 }} / {{ Math.ceil(store.adminReviewTotal / reviewPageSize) }}</span><button class="ghost" type="button" :disabled="(reviewPage + 1) * reviewPageSize >= store.adminReviewTotal" @click="reviewPage++; refreshReviews()">下一页</button></div><p v-if="reviewMessage" class="form-message">{{ reviewMessage }}</p></section></template>
+  <template v-if="isAdmin && activePanel === 'reviews'">
+    <section class="card admin-form">
+      <div class="section-title horizontal">
+        <div><p class="eyebrow">Moderation</p><h2>评价与帖子审核</h2></div>
+        <div class="moderation-tabs">
+          <button type="button" :class="{ active: moderationTab === 'reviews' }" @click="moderationTab = 'reviews'">评价</button>
+          <button type="button" :class="{ active: moderationTab === 'posts' }" @click="moderationTab = 'posts'">校园帖子</button>
+        </div>
+      </div>
+
+      <template v-if="moderationTab === 'reviews'">
+        <div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>对象</th><th>评分</th><th>内容</th><th>操作</th></tr></thead><tbody><tr v-for="review in store.adminReviews" :key="review.id"><td>{{ review.createdAt?.slice(0, 10) }}</td><td>{{ review.user }}</td><td>{{ dishNameById(review.targetId) }}</td><td><span class="pill">{{ review.rating }} ★</span></td><td>{{ review.content }}</td><td><span v-if="review.status === 'pending'" class="table-actions"><button class="ghost" type="button" @click="approveReview(review.id)">批准</button><button class="ghost danger" type="button" @click="rejectReview(review.id)">拒绝</button></span><span v-else class="pill">{{ review.status === 'approved' ? '已批准' : review.status === 'rejected' ? '已拒绝' : review.status }}</span><button class="ghost danger" type="button" @click="removeReview(review.id)">删除</button></td></tr></tbody></table></div>
+        <div class="pagination" v-if="store.adminReviewTotal > reviewPageSize"><button class="ghost" type="button" :disabled="reviewPage === 0" @click="reviewPage--; refreshReviews()">上一页</button><span>{{ reviewPage + 1 }} / {{ Math.ceil(store.adminReviewTotal / reviewPageSize) }}</span><button class="ghost" type="button" :disabled="(reviewPage + 1) * reviewPageSize >= store.adminReviewTotal" @click="reviewPage++; refreshReviews()">下一页</button></div>
+        <p v-if="reviewMessage" class="form-message">{{ reviewMessage }}</p>
+      </template>
+
+      <template v-else>
+        <div class="table-wrap"><table><thead><tr><th>时间</th><th>用户</th><th>关联对象</th><th>图片</th><th>评分</th><th>内容</th><th>状态 / 操作</th></tr></thead><tbody><tr v-for="post in store.adminPosts" :key="post.id"><td>{{ post.createdAt?.slice(0, 10) }}</td><td>{{ post.user }}</td><td>{{ postTargetLabel(post) }}</td><td><img v-if="post.imageUrl" class="post-admin-thumb" :src="post.imageUrl" alt="帖子图片" /><span v-else>—</span></td><td>{{ post.rating ? `${post.rating} ★` : '—' }}</td><td>{{ post.content }}</td><td><span class="pill">{{ postStatusLabel(post.status) }}</span><span class="table-actions"><button v-if="post.status !== 'approved'" class="ghost" type="button" @click="moderatePost(post.id, 'approved')">通过</button><button v-if="post.status !== 'rejected'" class="ghost danger" type="button" @click="moderatePost(post.id, 'rejected')">驳回</button><button v-if="post.status !== 'pending'" class="ghost" type="button" @click="moderatePost(post.id, 'pending')">待审</button></span></td></tr></tbody></table></div>
+        <div class="pagination" v-if="store.adminPostTotal > postPageSize"><button class="ghost" type="button" :disabled="postPage === 0" @click="postPage--; refreshPosts()">上一页</button><span>{{ postPage + 1 }} / {{ Math.ceil(store.adminPostTotal / postPageSize) }}</span><button class="ghost" type="button" :disabled="(postPage + 1) * postPageSize >= store.adminPostTotal" @click="postPage++; refreshPosts()">下一页</button></div>
+        <p v-if="postMessage" class="form-message">{{ postMessage }}</p>
+      </template>
+    </section>
+  </template>
   <template v-if="isAdmin && activePanel === 'data'">
     <!-- 顶部统计概览 -->
     <section class="card admin-form">
@@ -517,6 +539,10 @@ const selectedMenuIds = ref(new Set());
 const reviewPage = ref(0);
 const reviewPageSize = 20;
 const reviewMessage = ref('');
+const moderationTab = ref('reviews');
+const postPage = ref(0);
+const postPageSize = 20;
+const postMessage = ref('');
 
 const auditPage = ref(0);
 const auditPageSize = 20;
@@ -894,6 +920,33 @@ async function refreshReviews() {
   }
 }
 
+async function refreshPosts() {
+  try {
+    await store.loadPostsAdmin(postPageSize, postPage.value * postPageSize);
+    postMessage.value = '';
+  } catch (error) {
+    postMessage.value = error.message;
+  }
+}
+
+async function moderatePost(id, status) {
+  try {
+    await store.updatePostStatusAdmin(id, status);
+    postMessage.value = status === 'approved' ? '帖子已通过并同步评价。' : status === 'rejected' ? '帖子已驳回。' : '帖子已恢复为待审核。';
+    await refreshPosts();
+  } catch (error) {
+    postMessage.value = error.message;
+  }
+}
+
+function postTargetLabel(post) {
+  return post.dish?.name || post.canteen?.name || post.targetId;
+}
+
+function postStatusLabel(status) {
+  return { pending: '待审核', approved: '已通过', rejected: '已驳回' }[status] || status;
+}
+
 async function approveReview(id) {
   try {
     await store.approveReviewAdmin(id);
@@ -1155,7 +1208,7 @@ async function initializeAdminPage() {
     return;
   }
   // Manage page
-  refreshReviews();
+  await Promise.all([refreshReviews(), refreshPosts()]);
 }
 
 onBeforeUnmount(resetVisionImport);
@@ -1164,3 +1217,11 @@ onMounted(initializeAdminPage);
 
 watch(() => [route.path, route.query.panel, store.user?.role], initializeAdminPage);
 </script>
+
+<style scoped>
+.moderation-tabs { display: inline-grid; grid-template-columns: repeat(2, 1fr); gap: 4px; padding: 4px; border: 1px solid rgba(31, 122, 77, .16); border-radius: 8px; background: #eef5eb; }
+.moderation-tabs button { border: 0; background: transparent; color: var(--muted); }
+.moderation-tabs button.active { background: #fff; color: var(--primary-dark); box-shadow: 0 3px 10px rgba(21, 95, 59, .1); }
+.post-admin-thumb { width: 64px; height: 48px; object-fit: cover; border-radius: 6px; }
+@media (max-width: 640px) { .moderation-tabs { width: 100%; } }
+</style>

@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Smart Canteen Enterprise MVP API
-  version: 0.5.0
-  description: Database-backed campus smart canteen API with RBAC, tenant management, menu operations, authenticated uploads, RAG, agent, vision meal analysis, AI usage metering and quota governance.
+  version: 0.6.0
+  description: Database-backed campus smart canteen API with RBAC, tenant management, menu operations, authenticated uploads, student review overview, moderated campus posts, RAG, agent, vision meal analysis, AI usage metering and quota governance.
 servers:
   - url: /api
 security:
@@ -367,11 +367,37 @@ paths:
         '200': { description: Answer, citations and recommended plan }
         '429': { description: AI monthly quota exhausted }
   /reviews:
+    get:
+      description: List approved reviews with dish, stall and canteen metadata. Requires login.
+      parameters:
+        - { name: targetType, in: query, schema: { type: string, enum: [dish, canteen] } }
+        - { name: canteenId, in: query, schema: { type: string } }
+        - { name: stallId, in: query, schema: { type: string } }
+        - { name: dishId, in: query, schema: { type: string } }
+        - { name: sort, in: query, schema: { type: string, enum: [rating_desc, rating_asc, latest], default: rating_desc } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 100, default: 30 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200': { description: Approved review page and summary }
+        '401': { description: Login required }
     post:
       description: Requires review:create.
       responses:
         '201': { description: Updated dish detail }
         '401': { description: Login required }
+  /posts:
+    get:
+      description: List approved campus posts plus the current user's own moderation states. Requires login.
+      parameters:
+        - { name: targetType, in: query, schema: { type: string, enum: [dish, canteen] } }
+        - { name: canteenId, in: query, schema: { type: string } }
+        - { name: dishId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 100, default: 30 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses: { '200': { description: Campus post page }, '401': { description: Login required } }
+    post:
+      description: Create a text post with an optional owned upload and optional dish rating. Requires post:create; all new posts are pending.
+      responses: { '201': { description: Pending campus post }, '400': { description: Invalid target, content, rating or image }, '401': { description: Login required } }
   /health/profile:
     put:
       description: Requires profile:write.
@@ -623,3 +649,16 @@ paths:
         '200': { description: Updated review status }
         '400': { description: Invalid status }
         '404': { description: Review not found }
+  /admin/posts:
+    get:
+      description: List campus posts for moderation. Requires post:moderate.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected] } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses: { '200': { description: Campus post moderation page }, '403': { description: Permission denied } }
+  /admin/posts/{id}/status:
+    patch:
+      description: Moderate a campus post. Approving a rated dish post creates or reactivates exactly one linked approved review. Requires post:moderate.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Updated post with linkedReviewId }, '403': { description: Permission denied }, '404': { description: Post not found } }

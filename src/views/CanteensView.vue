@@ -398,7 +398,7 @@ function crowdClass(value) {
 .back-row { margin-bottom: 14px; }
 .back-btn { cursor: pointer; border: 1px solid rgba(255,255,255,.6); background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(255,255,255,.56)); }
 
-.canteen-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.canteen-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .canteen-card { cursor: pointer; transition: transform .16s, box-shadow .16s; }
 .canteen-card:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0,0,0,.08); }
 
@@ -448,5 +448,8 @@ function crowdClass(value) {
   .dish-preview-grid { grid-template-columns: 1fr; }
   .dish-preview-card { flex-direction: column; align-items: stretch; }
   .dish-preview-img { width: 100%; height: 140px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canteen-card, .stall-card, .dish-preview-card { transition: none; }
 }
 </style>

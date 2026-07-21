@@ -70,6 +70,7 @@ function migrate(db) {
     CREATE TABLE IF NOT EXISTS stalls (
       id TEXT PRIMARY KEY,
       canteen_id TEXT NOT NULL REFERENCES canteens(id) ON DELETE CASCADE,
+      parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT,
       floor TEXT NOT NULL,
       name TEXT NOT NULL,
       category TEXT NOT NULL,
@@ -115,6 +116,21 @@ function migrate(db) {
       rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
       content TEXT NOT NULL,
       created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS campus_posts (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      target_type TEXT NOT NULL CHECK(target_type IN ('dish','canteen')),
+      target_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      image_url TEXT,
+      rating INTEGER CHECK(rating BETWEEN 1 AND 5),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+      linked_review_id TEXT REFERENCES reviews(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS health_profiles (
@@ -345,6 +361,8 @@ function migrate(db) {
 
     CREATE INDEX IF NOT EXISTS idx_dishes_stall ON dishes(stall_id);
     CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews(target_type, target_id);
+    CREATE INDEX IF NOT EXISTS idx_campus_posts_tenant_status ON campus_posts(tenant_id, status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_campus_posts_user ON campus_posts(tenant_id, user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_stalls_canteen ON stalls(canteen_id);
     CREATE INDEX IF NOT EXISTS idx_rag_documents_source ON rag_documents(source_type, source_id);
     CREATE INDEX IF NOT EXISTS idx_uploads_owner ON uploads(owner_id);
@@ -356,6 +374,7 @@ function migrate(db) {
 
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN expires_at TEXT"); } catch {}
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN payload_hash TEXT NOT NULL DEFAULT ''"); } catch {}
+  try { db.exec('ALTER TABLE stalls ADD COLUMN parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT'); } catch {}
   for (const [table, column] of [
     ['users', "tenant_id TEXT NOT NULL DEFAULT 'default'"],
     ['canteens', "tenant_id TEXT NOT NULL DEFAULT 'default'"],
@@ -457,6 +476,7 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
     CREATE INDEX IF NOT EXISTS idx_canteens_tenant ON canteens(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_stalls_tenant_canteen ON stalls(tenant_id, canteen_id);
+    CREATE INDEX IF NOT EXISTS idx_stalls_tenant_parent ON stalls(tenant_id, parent_id);
     CREATE INDEX IF NOT EXISTS idx_dishes_tenant_status ON dishes(tenant_id, status);
     CREATE INDEX IF NOT EXISTS idx_reviews_tenant_target ON reviews(tenant_id, target_type, target_id);
     CREATE INDEX IF NOT EXISTS idx_uploads_tenant_owner ON uploads(tenant_id, owner_id);
@@ -638,6 +658,7 @@ export function rowToStall(row) {
   return {
     id: row.id,
     canteenId: row.canteen_id,
+    parentId: row.parent_id || null,
     floor: row.floor,
     name: row.name,
     category: row.category,
@@ -689,6 +710,23 @@ export function rowToReview(row) {
     content: row.content,
     status: row.status || 'approved',
     createdAt: row.created_at
+  };
+}
+
+export function rowToPost(row) {
+  return {
+    id: row.id,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    userId: row.user_id,
+    user: row.nickname || row.username || '匿名用户',
+    content: row.content,
+    imageUrl: row.image_url || '',
+    rating: row.rating == null ? null : Number(row.rating),
+    status: row.status || 'pending',
+    linkedReviewId: row.linked_review_id || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }
 

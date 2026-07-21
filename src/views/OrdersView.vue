@@ -30,7 +30,17 @@
             </small>
             <small class="muted">{{ supplyText(dish) }}</small>
           </span>
-          <button class="primary" type="button" :disabled="dish.supplyStatus === 'sold_out'" @click="addToCart(dish)">加入</button>
+          <button
+            class="add-dish-button"
+            :class="{ added: cartQuantity(dish.id) > 0 }"
+            type="button"
+            :disabled="dish.supplyStatus === 'sold_out'"
+            :aria-label="dish.supplyStatus === 'sold_out' ? `${dish.name} 已售罄` : `加入 ${dish.name}`"
+            @click="addToCart(dish)"
+          >
+            <span>{{ cartQuantity(dish.id) > 0 ? '✓' : '+' }}</span>
+            <strong>{{ dish.supplyStatus === 'sold_out' ? '售罄' : cartQuantity(dish.id) > 0 ? `已加 ${cartQuantity(dish.id)}` : '加入' }}</strong>
+          </button>
         </div>
       </div>
       <p v-else class="muted">当前餐次暂无可点菜品，可
@@ -118,7 +128,11 @@
     <div v-else-if="store.orders.length" class="order-cards">
       <article v-for="order in store.orders" :key="order.id" class="order-card" :class="'status-' + order.status">
         <div class="order-card-header">
-          <div class="pickup-code-badge">{{ order.pickupCode }}</div>
+          <div class="pickup-code-panel">
+            <span>取餐码</span>
+            <strong>{{ order.pickupCode }}</strong>
+            <button class="copy-code-button" type="button" :aria-label="`复制取餐码 ${order.pickupCode}`" :title="copiedOrderId === order.id ? '已复制' : '复制取餐码'" @click="copyPickupCode(order)">{{ copiedOrderId === order.id ? '✓' : '▣' }}</button>
+          </div>
           <span class="status-tag" :class="order.status">{{ statusLabel(order.status) }}</span>
         </div>
         <div class="order-card-body">
@@ -160,6 +174,7 @@ const dishNotice = ref('');
 const dishNoticeType = ref('');
 const payingOrderId = ref(null);
 const cancellingOrderId = ref(null);
+const copiedOrderId = ref(null);
 const deliveryMode = ref('pickup');
 const dormBuilding = ref('');
 const dormRoom = ref('');
@@ -254,6 +269,28 @@ function addToCart(dish) {
       stallName: stall?.name || ''
     });
   }
+}
+
+function cartQuantity(dishId) {
+  return cart.value.find((item) => item.dishId === dishId)?.quantity || 0;
+}
+
+async function copyPickupCode(order) {
+  try {
+    await navigator.clipboard.writeText(String(order.pickupCode));
+  } catch {
+    const input = document.createElement('textarea');
+    input.value = String(order.pickupCode);
+    input.setAttribute('readonly', '');
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    input.remove();
+  }
+  copiedOrderId.value = order.id;
+  window.setTimeout(() => { if (copiedOrderId.value === order.id) copiedOrderId.value = null; }, 1600);
 }
 
 function increment(dishId) {
@@ -380,6 +417,26 @@ function statusLabel(status) {
 .dish-row.rich {
   align-items: flex-start;
 }
+.add-dish-button {
+  width: 74px;
+  min-height: 48px;
+  padding: 6px 8px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(31, 122, 77, .22);
+  border-radius: 8px;
+  background: #eff7eb;
+  color: var(--primary-dark, #155f3b);
+  transition: transform .18s ease, background .18s ease, color .18s ease;
+}
+.add-dish-button > span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--primary, #1f7a4d); color: #fff; font-size: 17px; line-height: 1; }
+.add-dish-button strong { font-size: 12px; white-space: nowrap; }
+.add-dish-button:hover:not(:disabled) { transform: translateY(-2px) scale(1.02); background: #e1f1db; }
+.add-dish-button:active:not(:disabled) { transform: scale(.96); }
+.add-dish-button.added { background: var(--primary, #1f7a4d); color: #fff; }
+.add-dish-button.added > span { background: #fff; color: var(--primary-dark, #155f3b); }
 .qty-controls {
   display: flex;
   align-items: center;
@@ -498,13 +555,11 @@ function statusLabel(status) {
   justify-content: space-between;
   margin-bottom: 8px;
 }
-.pickup-code-badge {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  font-family: 'Courier New', monospace;
-  color: var(--primary, #4f46e5);
-}
+.pickup-code-panel { display: grid; grid-template-columns: auto auto 34px; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid rgba(31, 122, 77, .18); border-radius: 8px; background: #eff7eb; }
+.pickup-code-panel > span { font-size: 11px; color: var(--muted); }
+.pickup-code-panel > strong { font-size: 21px; letter-spacing: 2px; font-family: 'Courier New', monospace; color: var(--primary-dark, #155f3b); }
+.copy-code-button { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: #fff; color: var(--primary-dark, #155f3b); font-size: 16px; box-shadow: 0 3px 9px rgba(21, 95, 59, .1); }
+.copy-code-button:hover { transform: translateY(-1px); }
 .status-tag {
   font-size: 12px;
   font-weight: 600;
@@ -558,5 +613,15 @@ function statusLabel(status) {
 }
 .text-link-btn:hover {
   opacity: 0.8;
+}
+@media (max-width: 560px) {
+  .dish-row.rich { display: grid; grid-template-columns: 56px minmax(0, 1fr) 70px; }
+  .add-dish-button { width: 70px; }
+  .order-card-header { align-items: flex-start; gap: 10px; }
+  .pickup-code-panel { grid-template-columns: auto auto 32px; }
+  .pickup-code-panel > strong { font-size: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .add-dish-button, .copy-code-button { transition: none; }
 }
 </style>

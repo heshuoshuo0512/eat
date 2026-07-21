@@ -47,6 +47,23 @@ export const apiClient = {
   async addReview(payload) {
     return request('/api/reviews', { method: 'POST', body: JSON.stringify(payload) });
   },
+  async listReviews(params = {}) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== '' && value != null) query.set(key, value);
+    }
+    return request(`/api/reviews?${query}`);
+  },
+  async listPosts(params = {}) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== '' && value != null) query.set(key, value);
+    }
+    return request(`/api/posts?${query}`);
+  },
+  async createPost(payload) {
+    return request('/api/posts', { method: 'POST', body: JSON.stringify(payload) });
+  },
   async saveProfile(payload) {
     return request('/api/health/profile', { method: 'PUT', body: JSON.stringify(payload) });
   },
@@ -251,9 +268,12 @@ export const apiClient = {
   async deleteDatabaseRow(entity, id) {
     return request(`/api/admin/database/entities/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
-  async listReviewsAdmin(limit = 50, offset = 0, status = '') {
+  async listReviewsAdmin(limit = 50, offset = 0, status = '', filters = {}) {
     const qs = new URLSearchParams({ limit, offset });
     if (status) qs.set('status', status);
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== '' && value != null) qs.set(key, value);
+    }
     return request(`/api/admin/reviews?${qs}`);
   },
   async listReviewAnalytics() {
@@ -264,6 +284,17 @@ export const apiClient = {
   },
   async updateReviewStatus(id, status) {
     return request(`/api/admin/reviews/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+  },
+  async listAdminPosts(limit = 50, offset = 0, status = '', filters = {}) {
+    const query = new URLSearchParams({ limit, offset });
+    if (status) query.set('status', status);
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== '' && value != null) query.set(key, value);
+    }
+    return request(`/api/admin/posts?${query}`);
+  },
+  async updatePostStatus(id, status) {
+    return request(`/api/admin/posts/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
   },
   async upsertStall(payload) {
     const path = payload.id ? `/api/admin/stalls/${encodeURIComponent(payload.id)}` : '/api/admin/stalls';
