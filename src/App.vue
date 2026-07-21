@@ -160,7 +160,10 @@ function navKey(item) { return `${item.group}-${item.feature}-${item.to}`; }
 function isNavActive(item) {
   const [path, queryString] = item.to.split('?');
   if (route.path !== path && !(path !== '/' && route.path.startsWith(`${path}/`))) return false;
-  if (!queryString) return route.path === path || (path !== '/' && route.path.startsWith(`${path}/`));
+  if (!queryString) {
+    if (item.to === '/recommend') return route.path === path && route.query.panel !== 'favorites';
+    return route.path === path || (path !== '/' && route.path.startsWith(`${path}/`));
+  }
   const params = new URLSearchParams(queryString);
   return [...params.entries()].every(([key, value]) => route.query[key] === value);
 }

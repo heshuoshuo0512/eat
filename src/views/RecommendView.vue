@@ -1,12 +1,12 @@
 <template>
   <section class="page-heading">
-    <p class="eyebrow">吃什么 · 怎么吃 · 食堂导航</p>
-    <h1>个性化餐单推荐</h1>
-    <p>基于你的健康档案、时段、预算与实时食堂供应，从真实菜品库中筛选排名，为你揭晓今日最佳选择。</p>
+    <p class="eyebrow">{{ isFavoritesPanel ? '推荐结果 · 收藏 · 吃过' : '健康与计划' }}</p>
+    <h1>{{ isFavoritesPanel ? '收藏与吃过' : '健康档案' }}</h1>
+    <p>{{ isFavoritesPanel ? '查看为你生成的推荐结果，并集中管理收藏与吃过记录。' : '调整偏好后保存，推荐结果自动刷新。' }}</p>
   </section>
 
   <!-- ── Server Context Banner ────────────────────────────── -->
-  <section v-if="serverContext" class="card context-banner" aria-label="推荐上下文">
+  <section v-if="isFavoritesPanel && serverContext" class="card context-banner" aria-label="推荐上下文">
     <div class="context-chips">
       <span class="ctx-chip">
         <span class="ctx-icon" aria-hidden="true">🕐</span>
@@ -41,9 +41,9 @@
 
   <!-- ── Main Two-Column Layout ──────────────────────────── -->
   <template v-else>
-    <section class="grid two-columns align-start">
+    <section :class="['recommend-layout', { 'profile-only-layout': !isFavoritesPanel }]">
       <!-- Left: Profile Editor -->
-      <form class="card profile-form" @submit.prevent="saveProfile" aria-label="健康档案编辑">
+      <form v-if="!isFavoritesPanel" class="card profile-form" @submit.prevent="saveProfile" aria-label="健康档案编辑">
         <div class="section-title">
           <h2>健康档案</h2>
           <p class="muted">调整偏好后保存，推荐结果自动刷新。</p>
@@ -151,7 +151,7 @@
       </form>
 
       <!-- Right: Recommendation Result -->
-      <article class="card recommendation-card">
+      <article v-else class="card recommendation-card">
         <div class="section-title">
           <h2>{{ goalLabel }} · 推荐结果</h2>
         </div>
@@ -235,14 +235,14 @@
           <p>当前条件没有匹配菜品，你可以：</p>
           <div class="empty-actions">
             <RouterLink class="primary button-link" to="/orders">查看今日供应</RouterLink>
-            <button class="secondary" type="button" @click="saveProfile">调整档案后重新生成</button>
+            <RouterLink class="secondary button-link" to="/recommend">调整健康档案</RouterLink>
           </div>
         </div>
       </article>
     </section>
 
     <!-- ── CS2-Inspired Reveal Track ──────────────────────── -->
-    <section v-if="rankedDishes.length" class="card reveal-section" aria-label="逐张揭晓推荐">
+    <section v-if="isFavoritesPanel && rankedDishes.length" class="card reveal-section" aria-label="逐张揭晓推荐">
       <div class="section-title horizontal">
         <div>
           <h2>🎯 逐张揭晓</h2>
@@ -329,7 +329,7 @@
     </section>
 
     <!-- ── Favorites Panel ────────────────────────────────── -->
-    <section v-if="route.query.panel === 'favorites'" class="card favorites-panel">
+    <section v-if="isFavoritesPanel" class="card favorites-panel">
       <div class="section-title horizontal">
         <div>
           <h2>⭐ 收藏菜品</h2>
@@ -365,7 +365,7 @@
     </section>
 
     <!-- ── Frequent / Eaten Panel ─────────────────────────── -->
-    <section v-if="route.query.panel === 'favorites'" class="card favorites-panel">
+    <section v-if="isFavoritesPanel" class="card favorites-panel">
       <div class="section-title horizontal">
         <div>
           <h2>📊 吃过统计</h2>
@@ -415,6 +415,7 @@ import { RouterLink, useRoute } from 'vue-router';
 import { normalizeProfileInput } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 const route = useRoute();
+const isFavoritesPanel = computed(() => route.query.panel === 'favorites');
 
 /* ─── Store ──────────────────────────────────────────────── */
 const store = useCanteenStore();
@@ -734,9 +735,9 @@ async function reload() {
 
 /* ── Profile Form ────────────────────────────────────────── */
 .profile-form {
-  position: sticky;
-  top: 24px;
+  position: static;
 }
+.profile-only-layout { max-width: 52rem; margin: 0 auto; }
 .tag-fieldset {
   border: 1px solid rgba(191, 211, 181, .4);
   border-radius: 15px;
