@@ -19,7 +19,91 @@ components:
       required: [error]
       properties:
         error: { type: string }
+        code: { type: string, description: Stable business error code when applicable. }
         requestId: { type: string }
+    AdminCatalogTreeResponse:
+      type: object
+      required: [regions, total]
+      properties:
+        regions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminCatalogRegion'
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        offset: { type: integer, minimum: 0 }
+        include: { type: string, enum: [summary, dishes] }
+    AdminCatalogRegion:
+      type: object
+      required: [id, name, defaultName, displayName, position, venueType, areaType, areaLabel, labels, missing, counts, canteens, unassignedStalls]
+      properties:
+        id: { type: string, enum: [campus-main, north-zone, south-zone, east-zone] }
+        name: { type: string, description: Current tenant-owned venue name from the database, or the default name when the fixed venue record is missing. }
+        defaultName: { type: string, description: Stable fallback name for the fixed venue slot. }
+        displayName: { type: string, description: Context-ready venue display name. }
+        position: { type: string, enum: [top-left, top-right, bottom-left, bottom-right] }
+        venueType: { type: string, enum: [dining_complex, multi_floor_canteen] }
+        areaType: { type: string, enum: [restaurant, floor_area] }
+        areaLabel: { type: string, enum: [餐厅, 楼层餐区] }
+        labels:
+          type: object
+          required: [venue, area, stall, dish]
+          properties:
+            venue: { type: string, example: 餐饮场所 }
+            area: { type: string, description: 餐厅 for the dining complex; 楼层餐区 for multi-floor canteens. }
+            stall: { type: string, example: 档口 }
+            dish: { type: string, example: 菜品 }
+        missing: { type: boolean, description: True when the fixed region record is not present for this tenant. }
+        region: { type: [object, 'null'], description: Backward-compatible underlying canteen record for this fixed venue. }
+        counts:
+          type: object
+          required: [canteens, stalls, dishes, openStalls]
+          properties:
+            canteens: { type: integer, minimum: 0 }
+            stalls: { type: integer, minimum: 0 }
+            dishes: { type: integer, minimum: 0 }
+            openStalls: { type: integer, minimum: 0 }
+        canteens:
+          type: array
+          items: { $ref: '#/components/schemas/AdminCatalogCanteen' }
+        unassignedStalls:
+          type: array
+          description: Legacy top-level stalls attached directly to the venue and awaiting assignment to an area.
+          items: { $ref: '#/components/schemas/AdminCatalogStallNode' }
+    AdminCatalogCanteen:
+      type: object
+      properties:
+        canteen: { type: object }
+        displayName: { type: string }
+        areaType: { type: string, enum: [restaurant, floor_area] }
+        areaLabel: { type: string, enum: [餐厅, 楼层餐区] }
+        primaryStallCount: { type: integer, minimum: 0 }
+        stallCount: { type: integer, minimum: 0 }
+        openStallCount: { type: integer, minimum: 0 }
+        dishCount: { type: integer, minimum: 0 }
+        stalls:
+          type: array
+          items: { $ref: '#/components/schemas/AdminCatalogStallNode' }
+    AdminCatalogStallNode:
+      type: object
+      properties:
+        stall:
+          type: object
+          properties:
+            id: { type: string }
+            canteenId: { type: string }
+            parentId: { type: [string, 'null'] }
+            name: { type: string }
+        legacyHierarchy: { type: boolean, description: True for a retained historical child-stall node. }
+        childCount: { type: integer, minimum: 0 }
+        dishCount: { type: integer, minimum: 0 }
+        directDishes:
+          type: array
+          description: Returned only when include=dishes.
+          items: { type: object }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/AdminCatalogStallNode' }
     LoginRequest:
       type: object
       required: [username, password]
@@ -595,7 +679,7 @@ components:
       properties:
         id: { type: string }
         canteenId: { type: string }
-        parentId: { type: string, nullable: true, description: 'Optional top-level parent stall. Parent and child must belong to the same tenant and canteen; only two levels are allowed.' }
+        parentId: { type: string, nullable: true, description: 'POST accepts only null. PUT may retain the current value for historical records or set null to migrate the stall directly under a dining area.' }
         name: { type: string }
         floor: { type: string }
         category: { type: string }
@@ -603,6 +687,12 @@ components:
         avgPrice: { type: number }
         open: { type: boolean }
         description: { type: string }
+    AdminSavedResponse:
+      type: object
+      required: [savedId]
+      properties:
+        savedId: { type: string }
+        savedEntity: { type: object, nullable: true, description: 'Returned for dish writes.' }
     ReviewStatusUpdate:
       type: object
       required: [status]
@@ -826,21 +916,31 @@ paths:
         '429': { description: AI monthly quota exhausted }
   /admin/canteens:
     post:
-      description: Create canteen. Requires canteen:write.
-      responses: { '201': { description: Full state } }
+      description: Create a dining venue or dining area. Requires canteen:write. A dining area parentId must reference one of the four tenant-owned top-level venues; third-level dining areas are rejected. Existing non-catalog top-level canteen creation remains backward compatible.
+      responses:
+        '201': { description: Full state plus savedId, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSavedResponse' } } } }
+        '400': { description: Invalid hierarchy; stable codes include CANTEEN_FIXED_PARENT_FORBIDDEN, CANTEEN_PARENT_SELF, CANTEEN_PARENT_NOT_FOUND and CANTEEN_PARENT_NESTED }
+        '409': { description: The requested id belongs to another tenant }
   /admin/canteens/{id}:
     put:
-      description: Edit canteen. Requires canteen:write.
+      description: Edit a dining venue or dining area. Requires canteen:write. Fixed venues cannot have a parent; existing dining areas cannot explicitly clear parentId and may move only to another valid fixed venue. Omitting parentId preserves the current parent.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { '200': { description: Full state } }
+      responses:
+        '200': { description: Full state plus savedId, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSavedResponse' } } } }
+        '400': { description: Invalid hierarchy; stable codes include CANTEEN_FIXED_PARENT_FORBIDDEN, CANTEEN_AREA_PARENT_REQUIRED, CANTEEN_PARENT_SELF, CANTEEN_PARENT_NOT_FOUND and CANTEEN_PARENT_NESTED }
+        '409': { description: The requested id belongs to another tenant }
     delete:
-      description: Delete canteen. Requires canteen:delete.
+      description: Delete canteen. Requires canteen:delete. A fixed venue containing dining areas must be emptied or migrated first.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { '200': { description: Full state } }
+      responses:
+        '200': { description: Full state }
+        '409': { description: Fixed venue still contains dining areas; code CANTEEN_HAS_AREAS }
   /admin/dishes:
     post:
       description: Create dish. Requires dish:write.
-      responses: { '201': { description: Full state } }
+      responses:
+        '201': { description: Full state plus savedId and savedEntity, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSavedResponse' } } } }
+        '409': { description: The requested dish id belongs to another tenant }
   /admin/dishes/import:
     post:
       description: Bulk import dishes. Requires dish:bulk_import.
@@ -859,7 +959,7 @@ paths:
     put:
       description: Edit dish. Requires dish:write.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { '200': { description: Full state } }
+      responses: { '200': { description: Full state plus savedId and savedEntity, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSavedResponse' } } } } }
     delete:
       description: Soft-delete dish. Requires dish:delete.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
@@ -942,6 +1042,36 @@ paths:
       responses:
         '200': { description: Updated count and menu list, content: { application/json: { schema: { $ref: '#/components/schemas/MenuBatchResponse' } } } }
         '400': { description: Invalid action or empty ids }
+  /admin/catalog/tree:
+    get:
+      description: >-
+        Tenant-scoped hierarchical catalog read for the administrator catalog workspace.
+        Requires any one of audit:read, canteen:write, stall:write or dish:write. The response always preserves the four fixed region order;
+        missing regions are returned with missing=true. Search keeps matching parent paths.
+        venueId/areaId are aliases for regionId/canteenId. Stall and dish fields use
+        camelCase, including parentId.
+      parameters:
+        - { name: regionId, in: query, schema: { type: string, enum: [campus-main, north-zone, south-zone, east-zone] } }
+        - { name: venueId, in: query, schema: { type: string, enum: [campus-main, north-zone, south-zone, east-zone] }, description: Alias for regionId used by the four-venue workspace. }
+        - { name: canteenId, in: query, schema: { type: string } }
+        - { name: areaId, in: query, schema: { type: string }, description: Alias for canteenId used by the unified dining-area terminology. }
+        - { name: stallId, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string }, description: Name/category search; matching ancestors remain in the path. }
+        - { name: include, in: query, schema: { type: string, enum: [summary, dishes], default: summary } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 20, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Fixed-region catalog tree with counts and optional dishes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCatalogTreeResponse' }
+        '403': { description: Missing every supported catalog-read capability or tenant access }
+        '500':
+          description: Server error with request correlation id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /admin/users:
     get:
       description: Requires user:read.
@@ -1007,32 +1137,32 @@ paths:
         '500': { description: PostgreSQL retrieval extensions or indexes are not ready }
   /admin/stalls:
     post:
-      description: Create stall. Requires stall:write. canteenId and parentId must belong to the current tenant; a child stall must use the same canteen as its top-level parent and the hierarchy is limited to two levels.
+      description: Create a stall directly under a dining area whose parent is one of the four fixed venues. Requires stall:write. Direct placement under a top-level venue and new parentId relationships are rejected; historical records remain readable and can be migrated through the update endpoint.
       requestBody:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/StallInput' }
       responses:
-        '201': { description: Full state }
-        '400': { description: Invalid canteen, parent relationship, hierarchy depth, or missing fields }
+        '201': { description: Full state plus savedId, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSavedResponse' } } } }
+        '400': { description: Invalid dining area, legacy parentId, or missing fields; stable codes include STALL_CANTEEN_NOT_FOUND, STALL_AREA_REQUIRED and STALL_PARENT_LEGACY_ONLY }
   /admin/stalls/{id}:
     put:
-      description: Update stall. Requires stall:write. Parent changes are restricted to a same-tenant, same-canteen top-level stall; a parent with children cannot be demoted or moved to another canteen.
+      description: Update a stall. Requires stall:write. Historical direct-venue stalls may be edited without changing canteenId. Moving a stall, or flattening a historical child stall, requires a valid dining-area target. New or changed parent relationships are rejected.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       requestBody:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/StallInput' }
       responses:
-        '200': { description: Full state }
-        '400': { description: Invalid parent relationship or hierarchy change }
+        '200': { description: Full state plus savedId, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSavedResponse' } } } }
+        '400': { description: Invalid target or hierarchy change; stable codes include STALL_CANTEEN_NOT_FOUND, STALL_AREA_REQUIRED, STALL_PARENT_LEGACY_ONLY, STALL_PARENT_SELF, STALL_PARENT_NESTED and STALL_PARENT_CROSS_CANTEEN }
         '404': { description: Stall not found }
     delete:
       description: Delete stall. Requires stall:delete.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses:
         '200': { description: Full state }
-        '409': { description: Cannot delete a stall while it still has child stalls }
+        '409': { description: Cannot delete a stall while it still has child stalls; code STALL_HAS_CHILDREN }
         '404': { description: Stall not found }
   /admin/environment:
     get:

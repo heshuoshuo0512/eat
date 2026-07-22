@@ -124,6 +124,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const contextualRecommendation = ref(emptyContextualRecommendation());
   const healthPlan = ref(null);
   const adminEnvironment = ref(null);
+  const adminCatalogTree = ref(null);
 
   function setState(nextState) {
     state.value = { ...emptyState(), ...nextState, profile: normalizeProfile(nextState?.profile) };
@@ -297,7 +298,9 @@ export const useCanteenStore = defineStore('canteen', () => {
   }
 
   async function upsertCanteen(payload) {
-    setState(await apiClient.upsertCanteen(payload));
+    const result = await apiClient.upsertCanteen(payload);
+    setState(result);
+    return state.value.canteens.find((item) => item.id === result.savedId) || null;
   }
 
   async function deleteCanteen(id) {
@@ -305,7 +308,9 @@ export const useCanteenStore = defineStore('canteen', () => {
   }
 
   async function upsertDish(payload) {
-    setState(await apiClient.upsertDish(payload));
+    const result = await apiClient.upsertDish(payload);
+    setState(result);
+    return result.savedEntity || state.value.dishes.find((item) => item.id === result.savedId) || null;
   }
 
   async function deleteDish(id) {
@@ -313,7 +318,9 @@ export const useCanteenStore = defineStore('canteen', () => {
   }
 
   async function upsertStall(payload) {
-    setState(await apiClient.upsertStall(payload));
+    const result = await apiClient.upsertStall(payload);
+    setState(result);
+    return state.value.stalls.find((item) => item.id === result.savedId) || null;
   }
 
   async function deleteStall(id) {
@@ -618,9 +625,14 @@ export const useCanteenStore = defineStore('canteen', () => {
   adminAnalytics.value = result;
   return result; }
   
-    async function loadDatabaseOverview() {
-      return apiClient.getDatabaseOverview();
-    }
+  async function loadDatabaseOverview() {
+    return apiClient.getDatabaseOverview();
+  }
+  async function loadAdminCatalogTree(params = {}) {
+    const result = await apiClient.getAdminCatalogTree(params);
+    adminCatalogTree.value = result;
+    return result;
+  }
   const databaseEntities = ref([]);
   const databaseRows = ref([]);
   const databaseEntityMeta = ref(null);
@@ -889,6 +901,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     updateDatabaseRow,
     deleteDatabaseRow,
     loadDatabaseOverview,
+    adminCatalogTree,
+    loadAdminCatalogTree,
     loadReviewsAdmin,
     deleteReviewAdmin,
     updateReviewStatusAdmin,

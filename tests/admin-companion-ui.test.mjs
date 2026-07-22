@@ -36,28 +36,64 @@ describe('administrator companion UI contracts', () => {
     assert.deepEqual([...positions].sort((left, right) => left - right), positions);
     assert.match(admin, /\.region-management-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
     assert.match(admin, /@media \(max-width: 720px\)[\s\S]*\.region-management-grid[^}]*grid-template-columns:\s*1fr/);
-    assert.match(admin, /直属菜品/);
+    assert.match(admin, /食堂 → 餐厅\/楼层餐区 → 档口 → 菜品/);
     assert.match(admin, /parentId/);
   });
 
-  it('provides focused cascading entry with three save outcomes and CSV-first import', () => {
-    for (const task of ['canteen', 'stall', 'sub-stall', 'dish', 'import']) {
-      assert.match(admin, new RegExp(`id:\\s*'${task}'`));
+  it('uses the venue, area, stall and dish entry hierarchy with URL-restored context', () => {
+    const taskDefinitions = admin.match(/const entryTaskDefinitions\s*=\s*\[([\s\S]*?)\n\];/)?.[1];
+    assert.ok(taskDefinitions, 'entry task definitions should remain explicit and testable');
+
+    const taskIds = ['venue', 'area', 'stall', 'dish', 'import'];
+    const declaredTaskIds = [...taskDefinitions.matchAll(/id:\s*['"]([^'"]+)['"]/g)].map((match) => match[1]);
+    assert.deepEqual(declaredTaskIds, taskIds);
+    assert.doesNotMatch(taskDefinitions, /id:\s*['"]sub-stall['"]/, 'legacy child stalls must not be creatable');
+    for (const [task, permission] of [
+      ['venue', 'canWriteCanteens'],
+      ['area', 'canWriteCanteens'],
+      ['stall', 'canWriteStalls'],
+      ['dish', 'canWriteDishes'],
+      ['import', 'canBulkImportDishes']
+    ]) {
+      assert.match(taskDefinitions, new RegExp(`\\{\\s*id:\\s*'${task}'[^}]*allowed:\\s*${permission}[^}]*\\}`));
     }
-    assert.match(admin, /餐饮区/);
-    assert.match(admin, /entryContext\.canteenId/);
-    assert.match(admin, /entryContext\.primaryStallId/);
-    assert.match(admin, /entryContext\.childStallId/);
+
+    const contextDefinition = admin.match(/const entryContext\s*=\s*reactive\(\{([^}]+)\}\)/)?.[1];
+    assert.ok(contextDefinition, 'entry context should be a single reactive object');
+    const contextKeys = [...contextDefinition.matchAll(/([A-Za-z][A-Za-z0-9]*)\s*:/g)].map((match) => match[1]);
+    assert.deepEqual(contextKeys, ['venueId', 'areaId', 'stallId']);
+    for (const key of ['venueId', 'areaId', 'stallId']) {
+      assert.match(contextDefinition, new RegExp(`${key}:\\s*['"]['"]`));
+      assert.match(admin, new RegExp(`route\\.query\\.${key}`), `${key} should restore from the URL`);
+      assert.match(admin, new RegExp(`entryContext\\.${key}`), `${key} should drive the cascading controls`);
+    }
+    assert.doesNotMatch(contextDefinition, /regionId|canteenId|primaryStallId|childStallId/);
     assert.match(admin, /initializeEntryWorkspace\(\)/);
-    assert.match(admin, /entryTaskDefinitions[\s\S]*allowed:\s*canWriteCanteens[\s\S]*allowed:\s*canWriteStalls[\s\S]*allowed:\s*canWriteDishes/);
-    assert.match(admin, /entryTasks = computed/);
-    assert.match(admin, /stallForm\.id && canDeleteStalls/);
-    assert.match(admin, /if \(!canDeleteStalls\.value\)/);
-    assert.match(admin, /parentId:\s*entryMode\.value === 'sub-stall'/);
-    for (const action of ["saveCanteen('continue')", "saveStall('return')", "saveDish('stay')"]) {
-      assert.ok(admin.includes(action));
+
+    const areaLabelDefinition = admin.match(/const entryAreaLabel\s*=\s*computed\(\(\)\s*=>\s*\{?[\s\S]*?\}\);/)?.[0];
+    assert.ok(areaLabelDefinition, 'area terminology should be computed from the selected venue');
+    assert.match(areaLabelDefinition, /campus-main|dining_complex/);
+    assert.match(areaLabelDefinition, /餐厅/);
+    assert.match(areaLabelDefinition, /楼层餐区/);
+    assert.match(admin, /\{\{\s*entryAreaLabel\s*\}\}/);
+    assert.match(admin, /v-model="entryContext\.venueId"/);
+    assert.match(admin, /v-model="entryContext\.areaId"/);
+    assert.match(admin, /v-model="entryContext\.stallId"/);
+    assert.match(admin, /router\.replace\(\{\s*path:\s*'\/admin\/input',\s*query/);
+
+    for (const label of ['保存', '保存并继续新增', '保存后返回数据管理']) {
+      assert.ok(admin.includes(label), `missing save action: ${label}`);
     }
+  });
+
+  it('keeps CSV import preview-first and disables confirmation while loading', () => {
     assert.ok(admin.indexOf('CSV 批量导入菜品') < admin.indexOf('高级导入：JSON 数组'));
+    assert.match(admin, /previewCsvImport/);
+    assert.match(admin, /confirmCsvImport/);
+    const confirmButton = admin.split(/\r?\n/).find((line) => line.includes('@click="confirmCsvImport"'));
+    assert.ok(confirmButton, 'CSV confirmation button should be present');
+    assert.match(confirmButton, /:disabled="[^"]*excelLoading[^"]*"/);
+    assert.match(confirmButton, /excelRows\.some\(\(row\) => !row\.valid\)/);
     assert.match(admin, /previewJsonImport/);
     assert.match(admin, /confirmJsonImport/);
     assert.doesNotMatch(admin, /@click="importBulkDishes"/);

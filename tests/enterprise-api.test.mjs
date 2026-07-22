@@ -471,6 +471,39 @@ describe('Admin bulk import dishes', () => {
     assert.deepEqual(preview.data.rows[0].dish.tags, ['高蛋白', '低脂', '健身']);
   });
 
+  it('validates the food hall, dining area, and stall path during CSV preview', async () => {
+    const { data: bootstrap } = await req('/api/bootstrap', { token: adminToken });
+    const stall = bootstrap.stalls.find((item) => item.id === 'n-protein');
+    const area = bootstrap.canteens.find((item) => item.id === stall.canteenId);
+    assert.ok(area?.parentId, 'seed stall should belong to a dining area');
+    const csvText = [
+      '食堂ID,餐厅或楼层ID,菜品ID,档口ID,菜名,价格,口味,菜系,食材,标签,热量,蛋白,脂肪,碳水',
+      `${area.parentId},${area.id},csv-path-valid,n-protein,层级正确餐,18,清爽,轻食,鸡胸肉,高蛋白,520,38,9,68`,
+      `south-zone,${area.id},csv-path-invalid,n-protein,层级错误餐,18,清爽,轻食,鸡胸肉,高蛋白,520,38,9,68`,
+    ].join('\n');
+
+    const preview = await req('/api/admin/dishes/import/preview', { method: 'POST', token: adminToken, body: { csvText } });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.data.validCount, 1);
+    assert.equal(preview.data.errorCount, 1);
+    assert.equal(preview.data.rows[0].venueId, area.parentId);
+    assert.equal(preview.data.rows[0].areaId, area.id);
+    assert.ok(preview.data.rows[1].errors.some((error) => /食堂ID不匹配/.test(error)));
+  });
+
+  it('rejects duplicate dish ids in the same CSV preview', async () => {
+    const csvText = [
+      '菜品ID,档口ID,菜名,价格,口味,菜系,食材,标签,热量,蛋白,脂肪,碳水',
+      'csv-duplicate,n-protein,重复菜一,18,清爽,轻食,鸡胸肉,高蛋白,520,38,9,68',
+      'csv-duplicate,n-protein,重复菜二,19,清爽,轻食,鸡胸肉,高蛋白,530,39,10,69',
+    ].join('\n');
+
+    const preview = await req('/api/admin/dishes/import/preview', { method: 'POST', token: adminToken, body: { csvText } });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.data.errorCount, 1);
+    assert.ok(preview.data.rows[1].errors.some((error) => /菜品ID重复/.test(error)));
+  });
+
   it('confirm rejects CSV that contains validation errors', async () => {
     const csvText = [
       '菜品ID,档口ID,菜名,价格,口味,菜系,食材,标签,热量,蛋白,脂肪,碳水',
@@ -492,6 +525,23 @@ describe('Admin bulk import dishes', () => {
     assert.equal(confirmed.status, 200);
     assert.equal(confirmed.data.imported, 1);
     assert.ok(confirmed.data.state.dishes.some((dish) => dish.id === 'csv-confirm-1'));
+  });
+
+  it('rolls back the whole JSON batch when a later dish is invalid', async () => {
+    const validDish = {
+      id: 'json-rollback-first', stallId: 'n-protein', name: '不应残留的菜', price: 18,
+      taste: '清爽', cuisine: '轻食', ingredients: ['鸡胸肉'], tags: ['高蛋白'],
+      nutrition: { calories: 520, protein: 38, fat: 9, carbs: 68 },
+    };
+    const rejected = await req('/api/admin/dishes/import', {
+      method: 'POST',
+      token: adminToken,
+      body: { dishes: [validDish, { ...validDish, id: 'json-rollback-second', stallId: 'missing-stall' }] },
+    });
+    assert.equal(rejected.status, 400);
+
+    const { data: bootstrap } = await req('/api/bootstrap', { token: adminToken });
+    assert.ok(!bootstrap.dishes.some((dish) => dish.id === validDish.id));
   });
 
   it('student cannot preview CSV dish import', async () => {

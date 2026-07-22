@@ -261,6 +261,13 @@ export const apiClient = {
   async getDatabaseOverview() {
     return request('/api/admin/database/overview');
   },
+  async getAdminCatalogTree(params = {}) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== '' && value != null) query.set(key, value);
+    }
+    return request(`/api/admin/catalog/tree?${query}`);
+  },
   async listDatabaseEntities() {
     return request('/api/admin/database/entities');
   },

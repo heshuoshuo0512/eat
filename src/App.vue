@@ -117,8 +117,8 @@ const previewMode = computed(() => route.query.preview === '1' || route.query.pr
 const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
 const roleFeatures = {
   student: new Set(['student']),
-  operator: new Set(['data_input', 'agent']),
-  stall_admin: new Set(['data_input', 'agent']),
+  operator: new Set(['data_input', 'data_manage', 'agent']),
+  stall_admin: new Set(['data_input', 'data_manage', 'agent']),
   canteen_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'agent']),
   auditor: new Set(['data_manage']),
   finance: new Set(),
@@ -139,7 +139,7 @@ const navItems = [
   { to: '/orders', label: '今日点餐', feature: 'student', group: '待开发', badge: '预览' },
   { to: '/health-profile', label: '健康档案', feature: 'student', group: '健康档案' },
   { to: '/admin?panel=reviews&tab=reviews', label: '内容审核', feature: 'reviews', group: '数据中心' },
-  { to: '/admin?panel=data', label: '数据管理', feature: 'data_manage', group: '数据中心' },
+  { to: '/admin/catalog', label: '数据管理', feature: 'data_manage', group: '数据中心' },
   { to: '/admin/input', label: '数据录入', feature: 'data_input', group: '数据中心' },
   { to: '/agent', label: '运营智能体', feature: 'agent', group: '智能与配置' },
   { to: '/admin/ai', label: 'AI 配置', feature: 'ai_config', group: '智能与配置' }

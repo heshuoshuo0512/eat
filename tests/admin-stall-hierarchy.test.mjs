@@ -9,6 +9,7 @@ let server;
 let baseUrl;
 let adminToken;
 let studentToken;
+let db;
 
 async function req(path, { method = 'GET', token, body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -41,7 +42,8 @@ const rootPayload = {
 
 describe('admin stall hierarchy', () => {
   before(async () => {
-    const app = createApp({ db: openDatabase(':memory:') });
+    db = openDatabase(':memory:');
+    const app = createApp({ db });
     server = createServer(app.handler);
     await new Promise((resolve) => server.listen(0, resolve));
     baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -60,7 +62,7 @@ describe('admin stall hierarchy', () => {
     assert.ok(response.data.dishes.some((dish) => dish.stallId === existing.id));
   });
 
-  it('creates a top-level stall and a child stall in the same canteen', async () => {
+  it('creates top-level stalls and rejects new child-stall creation', async () => {
     const root = await req('/api/admin/stalls', { method: 'POST', token: adminToken, body: rootPayload });
     assert.equal(root.status, 201);
     const createdRoot = root.data.stalls.find((stall) => stall.id === rootPayload.id);
@@ -71,10 +73,11 @@ describe('admin stall hierarchy', () => {
       token: adminToken,
       body: { ...rootPayload, id: 'stall-hierarchy-child', name: '测试子档口', parentId: rootPayload.id }
     });
-    assert.equal(child.status, 201);
-    const createdChild = child.data.stalls.find((stall) => stall.id === 'stall-hierarchy-child');
-    assert.equal(createdChild.parentId, rootPayload.id);
-    assert.equal(createdChild.canteenId, rootPayload.canteenId);
+    assert.equal(child.status, 400);
+    assert.equal(child.data.code, 'STALL_PARENT_LEGACY_ONLY');
+    const timestamp = new Date().toISOString();
+    db.prepare('INSERT INTO stalls (id, tenant_id, canteen_id, parent_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('stall-hierarchy-child', 'default', rootPayload.canteenId, rootPayload.id, '1F', '测试子档口', '综合档口', 4.5, 15, 1, '历史层级测试', timestamp, timestamp);
   });
 
   it('rejects cross-canteen parents, third-level nesting, self-parenting, and cycles', async () => {

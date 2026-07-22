@@ -177,7 +177,7 @@
         <div>
           <p class="eyebrow">Four Dining Areas</p>
           <h2>四区数据管理</h2>
-          <p class="muted">固定按中央、北苑、南湖、东苑四个餐饮区展示，层级为食堂 → 一级档口 → 子档口 → 菜品。</p>
+          <p class="muted">固定展示四个食堂，统一按食堂 → 餐厅/楼层餐区 → 档口 → 菜品管理。</p>
         </div>
         <div class="summary-bar compact-summary">
           <div class="summary-item"><strong>{{ store.canteens.length }}</strong><span>食堂</span></div>
@@ -196,7 +196,7 @@
             <h2>{{ regionCard.name }}</h2>
             <p>{{ regionCard.region?.location || '尚未建立该固定餐饮区的数据' }}</p>
           </div>
-          <button v-if="canWriteCanteens" class="region-add-button" type="button" title="在该餐饮区新增食堂" :aria-label="`在${regionCard.name}新增食堂`" @click="openEntry({ task: 'canteen', parentId: regionCard.id })">+</button>
+          <button v-if="canWriteCanteens" class="region-add-button" type="button" :title="`新增${regionCard.id === 'campus-main' ? '餐厅' : '楼层餐区'}`" @click="openEntry({ task: 'area', venueId: regionCard.id })">+</button>
         </div>
 
         <div class="region-stats" aria-label="区域数据统计">
@@ -224,55 +224,53 @@
               <button class="hierarchy-main" type="button" @click="toggleCanteen(canteenNode.canteen.id)">
                 <span :class="['tree-caret', { open: isCanteenOpen(regionCard.id, canteenNode.canteen.id) }]">▶</span>
                 <span class="hierarchy-copy"><strong>{{ canteenNode.canteen.name }}</strong><small>{{ canteenNode.canteen.location }}</small></span>
-                <span class="hierarchy-count">{{ canteenNode.primaryStallCount }} 一级档口 · {{ canteenNode.dishCount }} 菜品</span>
+                <span class="hierarchy-count">{{ canteenNode.primaryStallCount }} 档口 · {{ canteenNode.dishCount }} 菜品</span>
               </button>
               <div class="hierarchy-actions">
-                <button v-if="canWriteCanteens" type="button" title="编辑食堂" @click="openEntry({ task: 'canteen', editId: canteenNode.canteen.id })">编辑</button>
-                <button v-if="canWriteStalls" type="button" title="新增一级档口" @click="openEntry({ task: 'stall', canteenId: canteenNode.canteen.id })">+ 档口</button>
+                <button v-if="canWriteCanteens" type="button" title="编辑餐饮分区" @click="openEntry({ task: 'area', venueId: regionCard.id, areaId: canteenNode.canteen.id, editId: canteenNode.canteen.id })">编辑</button>
+                <button v-if="canWriteStalls" type="button" title="新增档口" @click="openEntry({ task: 'stall', venueId: regionCard.id, areaId: canteenNode.canteen.id })">+ 档口</button>
               </div>
             </div>
 
             <div v-if="isCanteenOpen(regionCard.id, canteenNode.canteen.id)" class="hierarchy-children">
-              <div v-if="!canteenNode.stalls.length" class="tree-empty">暂无一级档口</div>
+              <div v-if="!canteenNode.stalls.length" class="tree-empty">暂无档口</div>
               <section v-for="stallNode in canteenNode.stalls" :key="stallNode.stall.id" class="hierarchy-stall">
                 <div class="hierarchy-row stall-hierarchy-row">
                   <button class="hierarchy-main" type="button" @click="toggleStall(stallNode.stall.id)">
                     <span :class="['tree-caret', { open: isStallOpen(regionCard.id, stallNode.stall.id) }]">▶</span>
-                    <span class="level-badge">一级档口</span>
+                    <span class="level-badge">档口</span>
                     <span class="hierarchy-copy"><strong>{{ stallNode.stall.name }}</strong><small>{{ stallNode.stall.floor }} · {{ stallNode.stall.category }}</small></span>
-                    <span class="hierarchy-count">{{ stallNode.childCount }} 子档口 · {{ stallNode.dishCount }} 菜品</span>
+                    <span class="hierarchy-count">{{ stallNode.childCount }} 历史层级 · {{ stallNode.dishCount }} 菜品</span>
                   </button>
                   <div class="hierarchy-actions">
-                    <button v-if="canWriteStalls" type="button" title="编辑一级档口" @click="openEntry({ task: 'stall', canteenId: canteenNode.canteen.id, editId: stallNode.stall.id })">编辑</button>
-                    <button v-if="canWriteStalls" type="button" title="新增子档口" @click="openEntry({ task: 'sub-stall', canteenId: canteenNode.canteen.id, parentId: stallNode.stall.id })">+ 子档口</button>
-                    <button v-if="canWriteDishes" type="button" title="新增直属菜品" @click="openEntry({ task: 'dish', canteenId: canteenNode.canteen.id, stallId: stallNode.stall.id })">+ 菜品</button>
+                    <button v-if="canWriteStalls" type="button" title="编辑档口" @click="openEntry({ task: 'stall', venueId: regionCard.id, areaId: canteenNode.canteen.id, stallId: stallNode.stall.id, editId: stallNode.stall.id })">编辑</button>
+                    <button v-if="canWriteDishes" type="button" title="新增菜品" @click="openEntry({ task: 'dish', venueId: regionCard.id, areaId: canteenNode.canteen.id, stallId: stallNode.stall.id })">+ 菜品</button>
                   </div>
                 </div>
 
                 <div v-if="isStallOpen(regionCard.id, stallNode.stall.id)" class="stall-contents">
                   <div v-if="stallNode.directDishes.length" class="direct-dishes">
-                    <p class="hierarchy-group-label">直属菜品</p>
+                    <p class="hierarchy-group-label">菜品</p>
                     <div v-for="dish in stallNode.directDishes" :key="dish.id" class="dish-hierarchy-row">
                       <span class="dish-name">{{ dish.name }}</span>
                       <span>{{ dish.taste || '未设置口味' }}</span>
                       <strong>¥{{ dish.price }}</strong>
-                      <button v-if="canWriteDishes" type="button" @click="openEntry({ task: 'dish', canteenId: canteenNode.canteen.id, stallId: stallNode.stall.id, editId: dish.id })">编辑</button>
+                      <button v-if="canWriteDishes" type="button" @click="openEntry({ task: 'dish', venueId: regionCard.id, areaId: canteenNode.canteen.id, stallId: stallNode.stall.id, editId: dish.id })">编辑</button>
                     </div>
                   </div>
 
                   <div v-if="stallNode.children.length" class="child-stalls">
-                    <p class="hierarchy-group-label">子档口</p>
+                    <p class="hierarchy-group-label">历史层级档口</p>
                     <section v-for="childNode in stallNode.children" :key="childNode.stall.id" class="child-stall-node">
                       <div class="hierarchy-row child-stall-row">
                         <button class="hierarchy-main" type="button" @click="toggleStall(childNode.stall.id)">
                           <span :class="['tree-caret', { open: isStallOpen(regionCard.id, childNode.stall.id) }]">▶</span>
-                          <span class="level-badge child">子档口</span>
+                          <span class="level-badge child">历史层级</span>
                           <span class="hierarchy-copy"><strong>{{ childNode.stall.name }}</strong><small>{{ childNode.stall.floor }} · {{ childNode.stall.category }}</small></span>
                           <span class="hierarchy-count">{{ childNode.dishes.length }} 菜品</span>
                         </button>
                         <div class="hierarchy-actions">
-                          <button v-if="canWriteStalls" type="button" title="编辑子档口" @click="openEntry({ task: 'sub-stall', canteenId: canteenNode.canteen.id, parentId: stallNode.stall.id, editId: childNode.stall.id })">编辑</button>
-                          <button v-if="canWriteDishes" type="button" title="新增菜品" @click="openEntry({ task: 'dish', canteenId: canteenNode.canteen.id, stallId: childNode.stall.id })">+ 菜品</button>
+                          <button v-if="canWriteStalls" type="button" title="迁移历史档口" @click="openEntry({ task: 'stall', venueId: regionCard.id, areaId: canteenNode.canteen.id, stallId: childNode.stall.id, editId: childNode.stall.id })">迁移</button>
                         </div>
                       </div>
                       <div v-if="isStallOpen(regionCard.id, childNode.stall.id)" class="child-dishes">
@@ -281,12 +279,12 @@
                           <span class="dish-name">{{ dish.name }}</span>
                           <span>{{ dish.taste || '未设置口味' }}</span>
                           <strong>¥{{ dish.price }}</strong>
-                          <button v-if="canWriteDishes" type="button" @click="openEntry({ task: 'dish', canteenId: canteenNode.canteen.id, stallId: childNode.stall.id, editId: dish.id })">编辑</button>
+                          <button v-if="canWriteDishes" type="button" @click="openEntry({ task: 'dish', venueId: regionCard.id, areaId: canteenNode.canteen.id, stallId: childNode.stall.id, editId: dish.id })">编辑</button>
                         </div>
                       </div>
                     </section>
                   </div>
-                  <div v-if="!stallNode.directDishes.length && !stallNode.children.length" class="tree-empty">暂无子档口或直属菜品</div>
+                  <div v-if="!stallNode.directDishes.length && !stallNode.children.length" class="tree-empty">暂无菜品</div>
                 </div>
               </section>
             </div>
@@ -309,7 +307,7 @@
         <div>
           <p class="eyebrow">Focused Entry</p>
           <h2>分段数据录入</h2>
-          <p class="muted">一次只处理一种数据，保存后保留当前餐饮区、食堂和档口上下文。</p>
+          <p class="muted">所有录入统一遵循“食堂 → 餐厅/楼层餐区 → 档口 → 菜品”，保存后保留当前层级上下文。</p>
         </div>
         <div class="entry-task-tabs" role="tablist" aria-label="数据录入类型">
           <button v-for="task in entryTasks" :key="task.id" type="button" :class="{ active: entryMode === task.id }" @click="setEntryMode(task.id)">{{ task.label }}</button>
@@ -317,56 +315,42 @@
       </div>
       <div v-if="!entryTasks.length" class="moderation-empty">
         <strong>当前角色无数据录入权限</strong>
-        <span>请联系管理员分配食堂、档口或菜品写入权限。</span>
+        <span>请联系管理员分配食堂、餐饮分区、档口或菜品写入权限。</span>
       </div>
       <div v-else-if="entryMode !== 'import'" class="entry-context-grid">
-        <label>餐饮区
-          <select v-model="entryContext.regionId" @change="handleEntryRegionChange">
-            <option value="">请选择餐饮区</option>
-            <option v-for="region in fixedRegions" :key="region.id" :value="region.id">{{ region.name }}</option>
-          </select>
-        </label>
-        <label :class="{ disabled: entryMode === 'canteen' }">食堂
-          <select v-model="entryContext.canteenId" :disabled="entryMode === 'canteen'" @change="handleEntryCanteenChange">
+        <label>食堂
+          <select v-model="entryContext.venueId" @change="handleEntryVenueChange">
             <option value="">请选择食堂</option>
-            <option v-for="canteen in entryCanteens" :key="canteen.id" :value="canteen.id">{{ canteen.name }}</option>
+            <option v-for="venue in fixedRegions" :key="venue.id" :value="venue.id">{{ regionDisplayName(venue) }}</option>
           </select>
         </label>
-        <label :class="{ disabled: !['sub-stall', 'dish'].includes(entryMode) }">一级档口
-          <select v-model="entryContext.primaryStallId" :disabled="!['sub-stall', 'dish'].includes(entryMode)" @change="handleEntryPrimaryStallChange">
-            <option value="">请选择一级档口</option>
-            <option v-for="stall in entryPrimaryStalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option>
+        <label :class="{ disabled: entryMode === 'venue' }">{{ entryAreaLabel }}
+          <select v-model="entryContext.areaId" :disabled="entryMode === 'venue'" @change="handleEntryAreaChange">
+            <option value="">{{ entryMode === 'area' ? `新增${entryAreaLabel}` : `请选择${entryAreaLabel}` }}</option>
+            <option v-for="area in entryAreas" :key="area.id" :value="area.id">{{ area.name }}</option>
           </select>
         </label>
-        <label :class="{ disabled: entryMode !== 'dish' }">子档口（可选）
-          <select v-model="entryContext.childStallId" :disabled="entryMode !== 'dish'" @change="handleEntryChildStallChange">
-            <option value="">直属一级档口</option>
-            <option v-for="stall in entryChildStalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option>
+        <label :class="{ disabled: !['stall', 'dish'].includes(entryMode) }">档口
+          <select v-model="entryContext.stallId" :disabled="!['stall', 'dish'].includes(entryMode)" @change="handleEntryStallChange">
+            <option value="">{{ entryMode === 'stall' ? '新增档口' : '请选择档口' }}</option>
+            <option v-for="stall in entryStalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option>
           </select>
         </label>
       </div>
+      <p v-if="entryMode !== 'import'" class="entry-context-path">当前路径：{{ entryContextPath }}</p>
     </section>
 
-    <!-- 食堂与档口 CRUD -->
-    <section v-if="['canteen', 'stall', 'sub-stall'].includes(entryMode)" class="entry-task-section">
-      <form v-if="entryMode === 'canteen'" class="card admin-form" @submit.prevent="saveCanteen('stay')">
+    <!-- 食堂、餐饮分区与档口 CRUD -->
+    <section v-if="['venue', 'area', 'stall'].includes(entryMode)" class="entry-task-section">
+      <form v-if="['venue', 'area'].includes(entryMode)" class="card admin-form" @submit.prevent="saveCanteen('stay')">
         <div class="section-title horizontal">
           <div>
             <p class="eyebrow">Canteen</p>
-            <h2>{{ canteenForm.id ? '编辑食堂' : '新增食堂' }}</h2>
+            <h2>{{ canteenForm.id ? `编辑${entryEntityLabel}` : `新增${entryEntityLabel}` }}</h2>
           </div>
-          <button v-if="canteenForm.id" class="ghost" type="button" @click="resetCanteenForm">取消编辑</button>
+          <button v-if="canteenForm.id" class="ghost" type="button" @click="cancelCanteenEdit">取消编辑</button>
         </div>
-        <label>名称<input v-model="canteenForm.name" required /></label>
-        <label>食堂类型<select v-model="canteenForm.canteenType" required><option value="primary">一级食堂（主食堂）</option><option value="sub">下属食堂（子食堂）</option></select></label>
-        <label v-if="canteenForm.canteenType === 'sub'">上级食堂<select v-model="canteenForm.parentId" :required="canteenForm.canteenType === 'sub'"><option value="">请选择上级食堂</option><option v-for="c in primaryCanteens" :key="c.id" :value="c.id">{{ c.name }}</option></select></label>
-        <label>位置<input v-model="canteenForm.location" required /></label>
-        <label>营业时间<input v-model="canteenForm.hours" placeholder="07:00 - 21:00" required /></label>
-        <label>图片 URL<input v-model="canteenForm.imageUrl" placeholder="https://... 或上传后自动填充" /></label>
-        <label>标签<input v-model="canteenForm.tags" placeholder="低脂, 夜宵" /></label>
-        <label>简介<textarea v-model="canteenForm.description" required /></label>
-        <label>拥挤度 (0-100)<input v-model.number="canteenForm.crowdLevel" type="number" min="0" max="100" /></label>
-        <div v-if="canteenForm.imageUrl" class="vision-preview" style="max-width:12.5rem;margin-bottom:0.5rem;"><img :src="canteenForm.imageUrl" :alt="canteenForm.name || '食堂图片'" /></div>
+        <CatalogAreaFormFields :form="canteenForm" :entity-label="entryEntityLabel" />
         <div class="entry-save-actions">
           <button class="primary" type="submit" :disabled="entrySaving">{{ entrySaving ? '保存中...' : '保存' }}</button>
           <button class="secondary" type="button" :disabled="entrySaving" @click="saveCanteen('continue')">保存并继续新增</button>
@@ -379,19 +363,11 @@
         <div class="section-title horizontal">
           <div>
             <p class="eyebrow">Stall CRUD</p>
-            <h2>{{ stallForm.id ? '编辑档口' : entryMode === 'sub-stall' ? '新增子档口' : '新增一级档口' }}</h2>
+            <h2>{{ stallForm.id ? '编辑档口' : '新增档口' }}</h2>
           </div>
-          <button v-if="stallForm.id" class="ghost" type="button" @click="resetStallForm">取消编辑</button>
+          <button v-if="stallForm.id" class="ghost" type="button" @click="cancelStallEdit">取消编辑</button>
         </div>
-        <label>所属食堂<select v-model="entryContext.canteenId" required @change="handleEntryCanteenChange"><option value="">请选择食堂</option><option v-for="c in entryCanteens" :key="c.id" :value="c.id">{{ c.name }}</option></select></label>
-        <label v-if="entryMode === 'sub-stall'">上级一级档口<select v-model="stallForm.parentId" required><option value="">请选择一级档口</option><option v-for="stall in entryPrimaryStalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option></select></label>
-        <label>名称<input v-model="stallForm.name" required /></label>
-        <label>楼层<input v-model="stallForm.floor" placeholder="1F" required /></label>
-        <label>品类<input v-model="stallForm.category" placeholder="健康轻食" required /></label>
-        <label>评分<input v-model.number="stallForm.rating" type="number" min="1" max="5" step="0.1" /></label>
-        <label>均价<input v-model.number="stallForm.avgPrice" type="number" min="1" /></label>
-        <label>描述<textarea v-model="stallForm.description" /></label>
-        <label class="check-label"><input v-model="stallForm.open" type="checkbox" /> 营业中</label>
+        <CatalogStallFormFields :form="stallForm" :areas="entryAreas" :area-label="entryAreaLabel" @area-change="syncStallEntryContext" />
         <div class="entry-save-actions">
           <button class="primary" type="submit" :disabled="entrySaving">{{ entrySaving ? '保存中...' : '保存' }}</button>
           <button class="secondary" type="button" :disabled="entrySaving" @click="saveStall('continue')">保存并继续新增</button>
@@ -416,86 +392,40 @@
             <p class="eyebrow">Dish Workspace</p>
             <h2>{{ dishForm.id ? '编辑菜品' : '新增菜品' }}</h2>
           </div>
-          <button v-if="dishForm.id" class="ghost" type="button" @click="resetDishForm">取消编辑</button>
+          <button v-if="dishForm.id" class="ghost" type="button" @click="cancelDishEdit">取消编辑</button>
         </div>
 
-        <fieldset class="entry-field-group">
-          <legend>基础信息</legend>
-          <div class="form-grid">
-            <label>所属档口
-              <select v-model="dishForm.stallId" required @change="syncDishEntryContext">
-                <option value="">请选择档口</option>
-                <option v-for="stall in entryDishStalls" :key="stall.id" :value="stall.id">{{ stall.parentId ? `子档口 · ${stall.name}` : `一级档口 · ${stall.name}` }}</option>
-              </select>
-            </label>
-            <label>菜名<input v-model="dishForm.name" required /></label>
-            <label>价格<input v-model.number="dishForm.price" type="number" min="1" required /></label>
-            <label>口味<input v-model="dishForm.taste" required /></label>
-            <label>菜系<input v-model="dishForm.cuisine" required /></label>
-          </div>
-          <label>食材<input v-model="dishForm.ingredients" placeholder="鸡胸肉, 西兰花" required /></label>
-          <label>标签<input v-model="dishForm.tags" placeholder="高蛋白, 减脂推荐" required /></label>
-        </fieldset>
-
-        <fieldset class="entry-field-group">
-          <legend>营养与安全</legend>
-          <div class="form-grid nutrition-entry-grid">
-            <label>热量 (kcal)<input v-model.number="dishForm.calories" type="number" min="1" required /></label>
-            <label>蛋白 (g)<input v-model.number="dishForm.protein" type="number" min="0" required /></label>
-            <label>脂肪 (g)<input v-model.number="dishForm.fat" type="number" min="0" required /></label>
-            <label>碳水 (g)<input v-model.number="dishForm.carbs" type="number" min="0" required /></label>
-          </div>
-          <details class="advanced-fields">
-            <summary>高级营养与安全字段</summary>
-            <div class="form-grid nutrition-entry-grid">
-              <label>膳食纤维 (g)<input v-model.number="dishForm.fiber" type="number" min="0" /></label>
-              <label>钠 (mg)<input v-model.number="dishForm.sodium" type="number" min="0" /></label>
-              <label>糖 (g)<input v-model.number="dishForm.sugar" type="number" min="0" /></label>
-              <label>钙 (mg)<input v-model.number="dishForm.calcium" type="number" min="0" /></label>
-              <label>铁 (mg)<input v-model.number="dishForm.iron" type="number" min="0" step="0.1" /></label>
-              <label>过敏原提示<input v-model="dishForm.allergens" placeholder="花生, 乳制品, 麸质" /></label>
-            </div>
-            <label class="check-label"><input v-model="dishForm.halal" type="checkbox" /> 清真菜品</label>
-          </details>
-        </fieldset>
-
-        <fieldset class="entry-field-group">
-          <legend>图片与展示</legend>
-          <div class="form-grid">
-            <label>图片地址<input v-model="dishForm.imageUrl" placeholder="上传后自动填充" /></label>
+        <CatalogDishFormFields :form="dishForm" :stalls="entryDishStalls" @stall-change="syncDishEntryContext">
+          <template #image-actions>
             <label>上传展示图<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" @change="handleImageFile" /></label>
-          </div>
-          <div v-if="dishForm.imageUrl" class="vision-preview compact-vision-preview"><img :src="dishForm.imageUrl" :alt="dishForm.name || '菜品图片'" /></div>
-
-          <div class="vision-import-inline">
-            <div class="section-title horizontal">
-              <div>
-                <p class="eyebrow">Vision Import</p>
-                <h3>AI 图片识别预填</h3>
+          </template>
+          <template #vision-actions>
+            <div class="vision-import-inline">
+              <div class="section-title horizontal">
+                <div><p class="eyebrow">Vision Import</p><h3>AI 图片识别预填</h3></div>
+                <span class="pill">只预填 · 需确认</span>
               </div>
-              <span class="pill">只预填 · 需确认</span>
-            </div>
-            <label>拍照或上传识别图<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" capture="environment" @change="handleVisionFile" /></label>
-            <div v-if="visionPreview" class="vision-preview compact-vision-preview"><img :src="visionPreview" alt="待识别菜品图" /></div>
-            <div class="table-actions">
-              <button class="secondary" type="button" :disabled="visionLoading || !visionFile" @click="identifyVisionDish">{{ visionLoading ? '识别中...' : 'AI 识别并预填' }}</button>
-              <button class="ghost" type="button" :disabled="visionLoading || (!visionFile && !visionSuggestion)" @click="resetVisionImport">清空识别结果</button>
-            </div>
-            <article v-if="visionSuggestion" class="vision-suggestion">
-              <strong>{{ visionSuggestion.name || '未识别菜名' }}</strong>
-              <p>{{ visionSuggestion.notes }}</p>
-              <div class="nutrition-grid">
-                <span>{{ visionSuggestion.nutrition.calories }} kcal</span>
-                <span>蛋白 {{ visionSuggestion.nutrition.protein }}g</span>
-                <span>脂肪 {{ visionSuggestion.nutrition.fat }}g</span>
-                <span>碳水 {{ visionSuggestion.nutrition.carbs }}g</span>
+              <label>识别图片<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" capture="environment" @change="handleVisionFile" /></label>
+              <div v-if="visionPreview" class="vision-preview compact-vision-preview"><img :src="visionPreview" alt="待识别菜品图" /></div>
+              <div class="table-actions">
+                <button class="secondary" type="button" :disabled="visionLoading || !visionFile" @click="identifyVisionDish">{{ visionLoading ? '识别中...' : '识别并预填' }}</button>
+                <button class="ghost" type="button" :disabled="visionLoading || (!visionFile && !visionSuggestion)" @click="resetVisionImport">清空</button>
               </div>
-              <p class="muted">食材：{{ visionSuggestion.ingredients.join(' / ') }}；标签：{{ visionSuggestion.tags.join(' / ') }}；置信度 {{ Math.round(visionSuggestion.confidence * 100) }}%</p>
-            </article>
-            <p class="muted">识别结果不会自动入库，请确认价格、档口、营养值和图片后再保存。</p>
-            <p v-if="visionMessage" class="form-message">{{ visionMessage }}</p>
-          </div>
-        </fieldset>
+              <article v-if="visionSuggestion" class="vision-suggestion">
+                <strong>{{ visionSuggestion.name || '未识别菜名' }}</strong>
+                <p>{{ visionSuggestion.notes }}</p>
+                <div class="nutrition-grid">
+                  <span>{{ visionSuggestion.nutrition.calories }} kcal</span>
+                  <span>蛋白 {{ visionSuggestion.nutrition.protein }}g</span>
+                  <span>脂肪 {{ visionSuggestion.nutrition.fat }}g</span>
+                  <span>碳水 {{ visionSuggestion.nutrition.carbs }}g</span>
+                </div>
+                <p class="muted">食材：{{ visionSuggestion.ingredients.join(' / ') }}；标签：{{ visionSuggestion.tags.join(' / ') }}；置信度 {{ Math.round(visionSuggestion.confidence * 100) }}%</p>
+              </article>
+              <p v-if="visionMessage" class="form-message">{{ visionMessage }}</p>
+            </div>
+          </template>
+        </CatalogDishFormFields>
 
         <div class="entry-save-actions">
           <button class="primary" type="submit" :disabled="entrySaving">{{ entrySaving ? '保存中...' : '保存' }}</button>
@@ -515,8 +445,8 @@
         </div>
         <span class="pill">先预览 · 后确认</span>
       </div>
-      <p class="muted">表头支持：档口ID、菜名、价格、口味、菜系、食材、标签、热量、蛋白、脂肪、碳水、膳食纤维、钠、糖、钙、铁、清真、餐别、图片地址、描述。上传 UTF-8 CSV，食材/标签/餐别用逗号分隔，含逗号字段请用双引号包裹。</p>
-      <input type="file" accept=".csv,text/csv" @change="previewCsvImport" />
+      <p class="muted">标准层级字段为：食堂ID、餐厅或楼层ID、档口ID、菜品ID。菜品字段支持菜名、价格、口味、菜系、食材、标签、营养、清真、餐别、图片地址和描述。上传 UTF-8 CSV 后先校验完整父链，再确认写入。</p>
+      <input type="file" accept=".csv,text/csv" :disabled="excelLoading" @change="previewCsvImport" />
       <p v-if="excelMessage" class="form-message">{{ excelMessage }}</p>
       <div v-if="excelRows.length" class="table-wrap">
         <table>
@@ -532,11 +462,11 @@
           </tbody>
         </table>
       </div>
-      <button class="primary" type="button" :disabled="!excelRows.length || excelRows.some((row) => !row.valid)" @click="confirmCsvImport">确认导入 {{ excelRows.length }} 行</button>
+      <button class="primary" type="button" :disabled="excelLoading || !excelRows.length || excelRows.some((row) => !row.valid)" @click="confirmCsvImport">{{ excelLoading ? '导入中...' : `确认导入 ${excelRows.length} 行` }}</button>
       <details class="advanced-import-card">
         <summary>高级导入：JSON 数组</summary>
         <div class="advanced-import-body">
-          <textarea v-model="bulkInput" placeholder='[{"stallId":"stall-1","name":"低脂鸡胸饭","price":16,"taste":"清爽","cuisine":"轻食","ingredients":["鸡胸肉"],"tags":["高蛋白"],"nutrition":{"calories":520,"protein":38,"fat":9,"carbs":68}}]' @input="resetJsonPreview"></textarea>
+          <textarea v-model="bulkInput" placeholder='[{"venueId":"campus-main","areaId":"restaurant-1","stallId":"stall-1","dishId":"dish-1","name":"低脂鸡胸饭","price":16,"taste":"清爽","cuisine":"轻食","ingredients":["鸡胸肉"],"tags":["高蛋白"],"nutrition":{"calories":520,"protein":38,"fat":9,"carbs":68}}]' @input="resetJsonPreview"></textarea>
           <div class="table-actions">
             <button class="secondary" type="button" :disabled="jsonLoading || !bulkInput.trim()" @click="previewJsonImport">生成 JSON 预览</button>
             <button class="primary" type="button" :disabled="jsonLoading || !jsonRows.length || jsonRows.some((row) => !row.valid)" @click="confirmJsonImport">确认导入 {{ jsonRows.length }} 行</button>
@@ -756,6 +686,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { assertNumber, assertText, parseList, validateImageFile } from '../domain/validation.js';
 import { useRoute, useRouter } from 'vue-router';
+import CatalogAreaFormFields from '../components/CatalogAreaFormFields.vue';
+import CatalogDishFormFields from '../components/CatalogDishFormFields.vue';
+import CatalogStallFormFields from '../components/CatalogStallFormFields.vue';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
@@ -764,14 +697,14 @@ const router = useRouter();
 const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
 const isAdmin = computed(() => store.user && adminRoleSet.has(store.user.role));
 const roleCapabilities = {
-  operator: ['stall:write', 'dish:write', 'agent:use'],
-  stall_admin: ['stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'agent:use'],
-  canteen_admin: ['canteen:write', 'stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'review:moderate', 'post:moderate', 'agent:use'],
+  operator: ['stall:write', 'dish:write', 'dish:bulk_import', 'agent:use'],
+  stall_admin: ['stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'dish:bulk_import', 'agent:use'],
+  canteen_admin: ['canteen:write', 'stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'dish:bulk_import', 'review:moderate', 'post:moderate', 'agent:use'],
   auditor: [],
   finance: [],
-  tenant_admin: ['canteen:write', 'stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'review:moderate', 'post:moderate', 'agent:use', 'ai:configure'],
-  admin: ['canteen:write', 'stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'review:moderate', 'post:moderate', 'agent:use', 'ai:configure', 'tenant:manage'],
-  super_admin: ['canteen:write', 'stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'review:moderate', 'post:moderate', 'agent:use', 'ai:configure', 'tenant:manage']
+  tenant_admin: ['canteen:write', 'stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'dish:bulk_import', 'review:moderate', 'post:moderate', 'agent:use', 'ai:configure'],
+  admin: ['canteen:write', 'stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'dish:bulk_import', 'review:moderate', 'post:moderate', 'agent:use', 'ai:configure', 'tenant:manage'],
+  super_admin: ['canteen:write', 'stall:write', 'stall:delete', 'dish:write', 'dish:delete', 'dish:bulk_import', 'review:moderate', 'post:moderate', 'agent:use', 'ai:configure', 'tenant:manage']
 };
 
 function hasCapability(permission) {
@@ -785,6 +718,7 @@ const canWriteCanteens = computed(() => hasCapability('canteen:write'));
 const canWriteStalls = computed(() => hasCapability('stall:write'));
 const canDeleteStalls = computed(() => hasCapability('stall:delete'));
 const canWriteDishes = computed(() => hasCapability('dish:write'));
+const canBulkImportDishes = computed(() => hasCapability('dish:bulk_import'));
 const canModerateReviews = computed(() => hasCapability('review:moderate'));
 const canModeratePosts = computed(() => hasCapability('post:moderate'));
 const canConfigureAi = computed(() => hasCapability('ai:configure'));
@@ -795,7 +729,7 @@ const isManagePage = computed(() => route.path === '/admin');
 const activePanel = computed(() => String(route.query.panel || (route.path === '/admin' ? 'reviews' : '')));
 const pageMeta = computed(() => {
   if (isAiPage.value) return { eyebrow: 'AI 配置', title: 'AI 提供商与部署配置', description: '配置 OpenAI-compatible API，查看模型状态、连接测试、使用量、配额和部署就绪度。' };
-  if (isEntryPage.value) return { eyebrow: '数据中心', title: '数据中心数据录入', description: '维护食堂、档口、菜品与营养数据。' };
+  if (isEntryPage.value) return { eyebrow: '数据中心', title: '餐饮目录数据录入', description: '按食堂、餐厅或楼层餐区、档口、菜品的统一层级录入数据。' };
   if (activePanel.value === 'reviews') return { eyebrow: '内容治理', title: '内容审核', description: '集中审核菜品评价、食堂评价和校园帖子，并查看关联对象与评价同步状态。' };
   if (activePanel.value === 'data') return { eyebrow: '数据管理', title: '四区数据管理', description: '固定四个餐饮区，按食堂、一级档口、子档口和菜品逐级管理。' };
   return { eyebrow: '内容治理', title: '内容审核', description: '集中审核评价与校园帖子。' };
@@ -839,22 +773,42 @@ const databaseOverview = ref(null);
 
 // ===== 四区层级数据 =====
 const fixedRegions = [
-  { id: 'campus-main', name: '中央餐饮区', positionLabel: '左上' },
-  { id: 'north-zone', name: '北苑餐饮区', positionLabel: '右上' },
-  { id: 'south-zone', name: '南湖餐饮区', positionLabel: '左下' },
-  { id: 'east-zone', name: '东苑餐饮区', positionLabel: '右下' }
+  { id: 'campus-main', name: '综合餐饮楼', positionLabel: '左上' },
+  { id: 'north-zone', name: '北苑食堂', positionLabel: '右上' },
+  { id: 'south-zone', name: '南湖食堂', positionLabel: '左下' },
+  { id: 'east-zone', name: '东苑食堂', positionLabel: '右下' }
 ];
+function regionDisplayName(definition) {
+  return store.canteens.find((canteen) => canteen.id === definition.id)?.name || definition.name;
+}
 const entryTaskDefinitions = [
-  { id: 'canteen', label: '食堂', allowed: canWriteCanteens },
-  { id: 'stall', label: '一级档口', allowed: canWriteStalls },
-  { id: 'sub-stall', label: '子档口', allowed: canWriteStalls },
+  { id: 'venue', label: '食堂', allowed: canWriteCanteens },
+  { id: 'area', label: '餐厅 / 楼层餐区', allowed: canWriteCanteens },
+  { id: 'stall', label: '档口', allowed: canWriteStalls },
   { id: 'dish', label: '菜品', allowed: canWriteDishes },
-  { id: 'import', label: '批量导入', allowed: canWriteDishes }
+  { id: 'import', label: '批量导入', allowed: canBulkImportDishes }
 ];
 const entryTasks = computed(() => entryTaskDefinitions.filter((task) => task.allowed.value));
 const defaultEntryMode = () => entryTasks.value[0]?.id || '';
-const entryMode = ref(entryTasks.value.some((task) => task.id === route.query.task) ? String(route.query.task) : defaultEntryMode());
-const entryContext = reactive({ regionId: '', canteenId: '', primaryStallId: '', childStallId: '' });
+function normalizeEntryMode(mode) {
+  if (mode === 'canteen') return 'area';
+  if (mode === 'sub-stall') return 'stall';
+  return mode;
+}
+const requestedInitialEntryMode = normalizeEntryMode(String(route.query.task || ''));
+const entryMode = ref(entryTasks.value.some((task) => task.id === requestedInitialEntryMode) ? requestedInitialEntryMode : defaultEntryMode());
+const entryContext = reactive({ venueId: '', areaId: '', stallId: '' });
+const entryAreaLabel = computed(() => {
+  if (!entryContext.venueId) return '餐厅 / 楼层餐区';
+  return entryContext.venueId === 'campus-main' ? '餐厅' : '楼层餐区';
+});
+const entryEntityLabel = computed(() => entryMode.value === 'venue' ? '食堂' : entryAreaLabel.value);
+const entryContextPath = computed(() => {
+  const venue = fixedRegions.find((item) => item.id === entryContext.venueId);
+  const area = store.canteens.find((item) => item.id === entryContext.areaId);
+  const stall = store.stalls.find((item) => item.id === entryContext.stallId);
+  return [venue ? regionDisplayName(venue) : '未选择食堂', area?.name, stall?.name].filter(Boolean).join(' / ');
+});
 const regionSearch = reactive(Object.fromEntries(fixedRegions.map((region) => [region.id, ''])));
 const openCanteens = ref(new Set());
 const openStalls = ref(new Set());
@@ -950,65 +904,125 @@ function regionIdForCanteen(canteenId) {
   return fixedRegions.some((region) => region.id === canteen.id) ? canteen.id : canteen.parentId || '';
 }
 
-function setEntryMode(mode, { reset = true } = {}) {
-  const nextMode = entryTasks.value.some((task) => task.id === mode) ? mode : defaultEntryMode();
+function currentEntryEditId() {
+  if (entryMode.value === 'venue' || entryMode.value === 'area') return canteenForm.id || '';
+  if (entryMode.value === 'stall') return stallForm.id || '';
+  if (entryMode.value === 'dish') return dishForm.id || '';
+  return '';
+}
+
+async function syncEntryRoute() {
+  if (!isEntryPage.value) return;
+  const query = { task: entryMode.value };
+  if (entryContext.venueId) query.venueId = entryContext.venueId;
+  if (entryContext.areaId) query.areaId = entryContext.areaId;
+  if (entryContext.stallId) query.stallId = entryContext.stallId;
+  const editId = currentEntryEditId();
+  if (editId) query.editId = editId;
+  const target = router.resolve({ path: '/admin/input', query });
+  initializedEntryRoute.value = `${target.fullPath}:${store.user?.role || 'anonymous'}`;
+  if (route.fullPath !== target.fullPath) await router.replace({ path: '/admin/input', query });
+}
+
+function hydrateVenueForm() {
+  const venue = store.canteens.find((item) => item.id === entryContext.venueId && !item.parentId);
+  if (venue) editCanteen(venue);
+  else Object.assign(canteenForm, defaultCanteenForm(), {
+    id: entryContext.venueId,
+    name: fixedRegions.find((item) => item.id === entryContext.venueId)?.name || '',
+    canteenType: 'primary',
+    parentId: ''
+  });
+}
+
+function setEntryMode(mode, { reset = true, updateRoute = true } = {}) {
+  const normalizedMode = normalizeEntryMode(mode);
+  const nextMode = entryTasks.value.some((task) => task.id === normalizedMode) ? normalizedMode : defaultEntryMode();
   const changed = entryMode.value !== nextMode;
   entryMode.value = nextMode;
   message.value = '';
   if (changed && reset) {
-    if (nextMode === 'canteen') resetCanteenForm();
-    if (['stall', 'sub-stall'].includes(nextMode)) resetStallForm();
+    if (nextMode === 'venue') hydrateVenueForm();
+    if (nextMode === 'area') {
+      const selectedArea = store.canteens.find((item) => item.id === entryContext.areaId && item.parentId === entryContext.venueId);
+      if (selectedArea) editCanteen(selectedArea);
+      else resetCanteenForm();
+    }
+    if (nextMode === 'stall') {
+      const selectedStall = entryStalls.value.find((item) => item.id === entryContext.stallId);
+      if (selectedStall) editStall(selectedStall);
+      else resetStallForm();
+    }
     if (nextMode === 'dish') resetDishForm();
   }
-  if (nextMode === 'canteen' && !canteenForm.id) {
+  if (nextMode === 'venue' && !canteenForm.id) {
+    canteenForm.canteenType = 'primary';
+    canteenForm.parentId = '';
+  } else if (nextMode === 'area' && !canteenForm.id) {
     canteenForm.canteenType = 'sub';
-    canteenForm.parentId = entryContext.regionId;
+    canteenForm.parentId = entryContext.venueId;
   } else if (nextMode === 'stall' && !stallForm.id) {
     stallForm.parentId = null;
-    stallForm.canteenId = entryContext.canteenId;
-  } else if (nextMode === 'sub-stall' && !stallForm.id) {
-    stallForm.parentId = entryContext.primaryStallId || null;
-    stallForm.canteenId = entryContext.canteenId;
+    stallForm.canteenId = entryContext.areaId;
   } else if (nextMode === 'dish' && !dishForm.id) {
-    dishForm.stallId = entryContext.childStallId || entryContext.primaryStallId || dishForm.stallId;
+    dishForm.stallId = entryContext.stallId || dishForm.stallId;
   }
+  if (updateRoute) void syncEntryRoute();
 }
 
-function handleEntryRegionChange() {
-  entryContext.canteenId = '';
-  entryContext.primaryStallId = '';
-  entryContext.childStallId = '';
-  canteenForm.canteenType = 'sub';
-  canteenForm.parentId = entryContext.regionId;
+function handleEntryVenueChange() {
+  entryContext.areaId = '';
+  entryContext.stallId = '';
+  if (entryMode.value === 'venue') hydrateVenueForm();
+  else if (entryMode.value === 'area') resetCanteenForm();
+  canteenForm.canteenType = entryMode.value === 'venue' ? 'primary' : 'sub';
+  canteenForm.parentId = entryMode.value === 'area' ? entryContext.venueId : '';
   stallForm.canteenId = '';
   stallForm.parentId = null;
+  dishForm.stallId = '';
+  void syncEntryRoute();
 }
 
-function handleEntryCanteenChange() {
-  entryContext.primaryStallId = '';
-  entryContext.childStallId = '';
-  stallForm.canteenId = entryContext.canteenId;
+function handleEntryAreaChange() {
+  entryContext.stallId = '';
+  if (entryMode.value === 'area') {
+    const area = entryAreas.value.find((item) => item.id === entryContext.areaId);
+    if (area) editCanteen(area);
+    else resetCanteenForm();
+  }
+  stallForm.canteenId = entryContext.areaId;
   stallForm.parentId = null;
   dishForm.stallId = '';
+  if (entryMode.value === 'stall') resetStallForm();
+  void syncEntryRoute();
 }
 
-function handleEntryPrimaryStallChange() {
-  entryContext.childStallId = '';
-  if (entryMode.value === 'sub-stall') stallForm.parentId = entryContext.primaryStallId;
-  if (entryMode.value === 'dish') dishForm.stallId = entryContext.primaryStallId;
+function syncStallEntryContext() {
+  entryContext.areaId = stallForm.canteenId;
+  entryContext.venueId = regionIdForCanteen(stallForm.canteenId);
+  entryContext.stallId = stallForm.id || '';
+  stallForm.parentId = null;
+  void syncEntryRoute();
 }
 
-function handleEntryChildStallChange() {
-  dishForm.stallId = entryContext.childStallId || entryContext.primaryStallId;
+function handleEntryStallChange() {
+  if (entryMode.value === 'stall') {
+    const stall = entryStalls.value.find((item) => item.id === entryContext.stallId);
+    if (stall) editStall(stall);
+    else resetStallForm();
+  }
+  if (entryMode.value === 'dish') dishForm.stallId = entryContext.stallId;
+  void syncEntryRoute();
 }
 
-function syncDishEntryContext() {
+function syncDishEntryContext({ updateRoute = true } = {}) {
   const stall = store.stalls.find((item) => item.id === dishForm.stallId);
   if (!stall) return;
-  entryContext.canteenId = stall.canteenId;
-  entryContext.regionId = regionIdForCanteen(stall.canteenId);
-  entryContext.primaryStallId = stall.parentId || stall.id;
-  entryContext.childStallId = stall.parentId ? stall.id : '';
+  const area = store.canteens.find((item) => item.id === stall.canteenId);
+  entryContext.venueId = area?.parentId || (fixedRegions.some((item) => item.id === area?.id) ? area.id : '');
+  entryContext.areaId = area?.parentId ? area.id : '';
+  entryContext.stallId = stall.id;
+  if (updateRoute) void syncEntryRoute();
 }
 
 const initializedEntryRoute = ref('');
@@ -1018,100 +1032,91 @@ function initializeEntryWorkspace() {
   if (!isEntryPage.value) return;
   const routeKey = currentEntryRouteKey();
   if (initializedEntryRoute.value === routeKey) return;
-  const requestedTask = String(route.query.task || '');
+  const requestedTask = normalizeEntryMode(String(route.query.task || ''));
   const nextMode = entryTasks.value.some((task) => task.id === requestedTask) ? requestedTask : defaultEntryMode();
-  const requestedCanteenId = String(route.query.canteenId || '');
-  const requestedParentId = String(route.query.parentId || '');
+  const requestedVenueId = String(route.query.venueId || route.query.parentId || '');
+  const requestedAreaId = String(route.query.areaId || route.query.canteenId || '');
   const requestedStallId = String(route.query.stallId || '');
-  const editId = String(route.query.editId || '');
-  const needsCatalog = Boolean(requestedCanteenId || requestedParentId || requestedStallId || editId);
+  const editId = String(route.query.editId || route.query.dishId || '');
+  const needsCatalog = Boolean(requestedVenueId || requestedAreaId || requestedStallId || editId);
   if (needsCatalog && !store.canteens.length && !store.stalls.length && !store.dishes.length) return;
 
   entryMode.value = nextMode;
-  Object.assign(entryContext, { regionId: '', canteenId: '', primaryStallId: '', childStallId: '' });
+  Object.assign(entryContext, { venueId: '', areaId: '', stallId: '' });
   Object.assign(canteenForm, defaultCanteenForm());
   Object.assign(stallForm, defaultStallForm());
   Object.assign(dishForm, defaultDishForm(), { stallId: '' });
   resetVisionImport();
 
-  if (requestedCanteenId) {
-    entryContext.canteenId = requestedCanteenId;
-    entryContext.regionId = regionIdForCanteen(requestedCanteenId);
-  }
-  if (entryMode.value === 'canteen' && requestedParentId) {
-    entryContext.regionId = requestedParentId;
-    canteenForm.canteenType = 'sub';
-    canteenForm.parentId = requestedParentId;
-  }
-  if (entryMode.value === 'sub-stall' && requestedParentId) {
-    const parent = store.stalls.find((item) => item.id === requestedParentId);
-    entryContext.primaryStallId = requestedParentId;
-    if (parent) {
-      entryContext.canteenId = parent.canteenId;
-      entryContext.regionId = regionIdForCanteen(parent.canteenId);
+  if (requestedVenueId && fixedRegions.some((item) => item.id === requestedVenueId)) entryContext.venueId = requestedVenueId;
+  if (requestedAreaId) {
+    const area = store.canteens.find((item) => item.id === requestedAreaId);
+    if (area?.parentId) {
+      entryContext.venueId = area.parentId;
+      entryContext.areaId = area.id;
+    } else if (area && fixedRegions.some((item) => item.id === area.id)) {
+      entryContext.venueId = area.id;
     }
   }
   if (requestedStallId) {
     const stall = store.stalls.find((item) => item.id === requestedStallId);
     if (stall) {
-      entryContext.canteenId = stall.canteenId;
-      entryContext.regionId = regionIdForCanteen(stall.canteenId);
-      if (stall.parentId) {
-        entryContext.primaryStallId = stall.parentId;
-        entryContext.childStallId = stall.id;
-      } else {
-        entryContext.primaryStallId = stall.id;
-      }
+      const area = store.canteens.find((item) => item.id === stall.canteenId);
+      entryContext.venueId = area?.parentId || (fixedRegions.some((item) => item.id === area?.id) ? area.id : entryContext.venueId);
+      entryContext.areaId = area?.parentId ? area.id : '';
+      entryContext.stallId = stall.id;
       dishForm.stallId = stall.id;
     }
   }
-  if (editId && entryMode.value === 'canteen') {
-    const canteen = store.canteens.find((item) => item.id === editId);
-    if (canteen) {
-      editCanteen(canteen);
-      entryContext.regionId = canteen.parentId || canteen.id;
-    }
+  if (entryMode.value === 'venue') {
+    const venue = store.canteens.find((item) => item.id === (editId || entryContext.venueId) && !item.parentId);
+    if (venue) {
+      entryContext.venueId = venue.id;
+      editCanteen(venue);
+    } else hydrateVenueForm();
   }
-  if (editId && ['stall', 'sub-stall'].includes(entryMode.value)) {
-    const stall = store.stalls.find((item) => item.id === editId);
+  if (entryMode.value === 'area') {
+    const area = store.canteens.find((item) => item.id === (editId || entryContext.areaId) && item.parentId);
+    if (area) {
+      entryContext.venueId = area.parentId;
+      entryContext.areaId = area.id;
+      editCanteen(area);
+    } else resetCanteenForm();
+  }
+  if (entryMode.value === 'stall') {
+    const stall = store.stalls.find((item) => item.id === (editId || entryContext.stallId));
     if (stall) {
-      entryMode.value = stall.parentId ? 'sub-stall' : 'stall';
+      const area = store.canteens.find((item) => item.id === stall.canteenId);
+      entryContext.venueId = area?.parentId || (fixedRegions.some((item) => item.id === area?.id) ? area.id : entryContext.venueId);
+      entryContext.areaId = area?.parentId ? area.id : '';
+      entryContext.stallId = stall.id;
       editStall(stall);
-      entryContext.regionId = regionIdForCanteen(stall.canteenId);
-      entryContext.canteenId = stall.canteenId;
-      entryContext.primaryStallId = stall.parentId || stall.id;
-      entryContext.childStallId = stall.parentId ? stall.id : '';
     }
   }
   if (editId && entryMode.value === 'dish') {
     const dish = store.dishes.find((item) => item.id === editId);
     if (dish) {
       editDish(dish);
-      syncDishEntryContext();
+      syncDishEntryContext({ updateRoute: false });
     }
   }
-  setEntryMode(entryMode.value, { reset: false });
+  setEntryMode(entryMode.value, { reset: false, updateRoute: false });
   initializedEntryRoute.value = routeKey;
+  const hasLegacyQuery = Boolean(route.query.canteenId || route.query.parentId || route.query.dishId || ['canteen', 'sub-stall'].includes(String(route.query.task || '')));
+  if (hasLegacyQuery) void syncEntryRoute();
 }
 
-const primaryCanteens = computed(() => store.canteens.filter((c) => c.canteenType === 'primary' || (!c.canteenType && !c.parentId)));
-const entryCanteens = computed(() => {
-  const children = store.canteens.filter((canteen) => canteen.parentId === entryContext.regionId);
-  const region = store.canteens.find((canteen) => canteen.id === entryContext.regionId);
-  const hasLegacyDirectStalls = region && store.stalls.some((stall) => stall.canteenId === region.id);
-  return hasLegacyDirectStalls ? [region, ...children] : children;
-});
-const entryPrimaryStalls = computed(() => {
-  const stalls = store.stalls.filter((stall) => stall.canteenId === entryContext.canteenId);
-  const ids = new Set(stalls.map((stall) => stall.id));
-  return stalls.filter((stall) => !stall.parentId || !ids.has(stall.parentId));
-});
-const entryChildStalls = computed(() => store.stalls.filter((stall) => stall.parentId === entryContext.primaryStallId && stall.canteenId === entryContext.canteenId));
+const entryAreas = computed(() => store.canteens
+  .filter((canteen) => canteen.parentId === entryContext.venueId)
+  .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')));
+const entryStalls = computed(() => store.stalls
+  .filter((stall) => stall.canteenId === entryContext.areaId && !stall.parentId)
+  .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')));
 const entryDishStalls = computed(() => {
-  const primaryIds = new Set(entryPrimaryStalls.value.map((stall) => stall.id));
-  return store.stalls
-    .filter((stall) => stall.canteenId === entryContext.canteenId && (!stall.parentId || primaryIds.has(stall.parentId)))
-    .sort((left, right) => Number(Boolean(left.parentId)) - Number(Boolean(right.parentId)) || left.name.localeCompare(right.name, 'zh-CN'));
+  const validStalls = [...entryStalls.value];
+  const current = dishForm.id ? store.stalls.find((stall) => stall.id === dishForm.stallId) : null;
+  if (current && !validStalls.some((stall) => stall.id === current.id)) validStalls.unshift({ ...current, legacyInputTarget: true });
+  return validStalls;
 });
 
 const selectedMenuIds = ref(new Set());
@@ -1207,7 +1212,7 @@ function defaultCanteenForm() {
 }
 
 function defaultDishForm() {
-  return { id: '', stallId: store.stalls[0]?.id || '', name: '', price: 15, taste: '清爽', cuisine: '轻食', ingredients: '', tags: '', imageUrl: '', calories: 500, protein: 25, fat: 12, carbs: 60, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '' };
+  return { id: '', stallId: store.stalls[0]?.id || '', name: '', price: 15, taste: '清爽', cuisine: '轻食', ingredients: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', rating: 4.5, reviewCount: 0, sales: 0, calories: 500, protein: 25, fat: 12, carbs: 60, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '' };
 }
 
 function defaultStallForm() {
@@ -1321,12 +1326,44 @@ function selectModerationTab(tab) {
 
 function resetCanteenForm() {
   Object.assign(canteenForm, defaultCanteenForm());
-  if (entryContext.regionId) Object.assign(canteenForm, { canteenType: 'sub', parentId: entryContext.regionId });
+  if (entryMode.value === 'venue') {
+    Object.assign(canteenForm, {
+      id: entryContext.venueId,
+      name: fixedRegions.find((item) => item.id === entryContext.venueId)?.name || '',
+      canteenType: 'primary',
+      parentId: ''
+    });
+  } else if (entryContext.venueId) {
+    Object.assign(canteenForm, { canteenType: 'sub', parentId: entryContext.venueId });
+  }
 }
 
 function resetDishForm() {
   Object.assign(dishForm, defaultDishForm());
-  dishForm.stallId = entryContext.childStallId || entryContext.primaryStallId || '';
+  dishForm.stallId = entryContext.stallId || '';
+}
+
+function cancelCanteenEdit() {
+  if (entryMode.value === 'venue') hydrateVenueForm();
+  else {
+    entryContext.areaId = '';
+    resetCanteenForm();
+  }
+  message.value = '';
+  void syncEntryRoute();
+}
+
+function cancelStallEdit() {
+  entryContext.stallId = '';
+  resetStallForm();
+  message.value = '';
+  void syncEntryRoute();
+}
+
+function cancelDishEdit() {
+  resetDishForm();
+  message.value = '';
+  void syncEntryRoute();
 }
 
 function dishPayload() {
@@ -1341,13 +1378,14 @@ function dishPayload() {
     tags: parseList(dishForm.tags, '标签', { required: true }),
     halal: dishForm.halal,
     allergens: parseList(dishForm.allergens, '过敏原'),
-    mealTypes: ['lunch', 'dinner'],
-    image: '🍽️',
+    mealTypes: parseList(dishForm.mealTypes, '餐次').length ? parseList(dishForm.mealTypes, '餐次') : ['lunch', 'dinner'],
+    image: dishForm.image || '🍽️',
     imageUrl: dishForm.imageUrl || undefined,
-    description: dishForm.allergens ? `过敏原：${parseList(dishForm.allergens, '过敏原').join('、')}。管理员录入菜品。` : '管理员录入菜品。',
-    rating: 4.5,
-    reviewCount: 0,
-    sales: 0,
+    description: String(dishForm.description || '').trim() || '管理员录入菜品。',
+    status: dishForm.status || 'active',
+    rating: Number(dishForm.rating ?? 4.5),
+    reviewCount: Number(dishForm.reviewCount ?? 0),
+    sales: Number(dishForm.sales ?? 0),
     nutrition: {
       calories: assertNumber(dishForm.calories, '热量', 1, 3000),
       protein: assertNumber(dishForm.protein, '蛋白', 0, 300),
@@ -1378,41 +1416,65 @@ function fileToBase64(file) {
   });
 }
 
-function finishEntrySave(action, resetForm) {
+function finishEntrySave(action, resetForm, savedSelection = {}) {
   if (action === 'return') {
-    router.push({ path: '/admin', query: { panel: 'data' } });
+    const query = {};
+    if (savedSelection.venueId || entryContext.venueId) query.venueId = savedSelection.venueId || entryContext.venueId;
+    if (savedSelection.areaId || entryContext.areaId) query.areaId = savedSelection.areaId || entryContext.areaId;
+    if (savedSelection.stallId || entryContext.stallId) query.stallId = savedSelection.stallId || entryContext.stallId;
+    if (savedSelection.dishId) query.dishId = savedSelection.dishId;
+    router.push({ path: '/admin/catalog', query });
     return;
   }
-  if (action === 'continue') resetForm();
+  if (action === 'continue') {
+    if (entryMode.value === 'area') entryContext.areaId = '';
+    if (entryMode.value === 'stall') entryContext.stallId = '';
+    resetForm();
+    void syncEntryRoute();
+  }
 }
 
 async function saveCanteen(action = 'stay') {
   if (entrySaving.value) return;
   entrySaving.value = true;
   try {
-    if (canteenForm.canteenType === 'sub' && !canteenForm.parentId) throw new Error('下属食堂必须选择上级食堂。');
+    const isVenue = entryMode.value === 'venue';
+    if (isVenue && !entryContext.venueId) throw new Error('请选择要维护的食堂。');
+    if (!isVenue && !entryContext.venueId) throw new Error(`新增${entryAreaLabel.value}前必须选择所属食堂。`);
     const payload = {
       ...canteenForm,
-      name: assertText(canteenForm.name, '食堂名称', 2, 40),
+      id: isVenue ? entryContext.venueId : canteenForm.id || undefined,
+      name: assertText(canteenForm.name, `${entryEntityLabel.value}名称`, 2, 40),
       location: assertText(canteenForm.location, '位置', 2, 80),
       hours: assertText(canteenForm.hours, '营业时间', 5, 40),
       description: assertText(canteenForm.description, '简介', 5, 300),
       crowdLevel: assertNumber(canteenForm.crowdLevel, '拥挤度', 0, 100),
       tags: parseList(canteenForm.tags, '标签'),
-      canteenType: canteenForm.canteenType || 'primary',
-      parentId: canteenForm.canteenType === 'sub' ? canteenForm.parentId : null,
+      canteenType: isVenue ? 'primary' : 'sub',
+      parentId: isVenue ? null : entryContext.venueId,
       imageUrl: canteenForm.imageUrl || undefined
     };
-    await store.upsertCanteen(payload);
-    const saved = store.canteens.find((item) => item.id === payload.id)
+    const result = await store.upsertCanteen(payload);
+    const saved = result || store.canteens.find((item) => item.id === payload.id)
       || [...store.canteens].reverse().find((item) => item.name === payload.name && (item.parentId || null) === (payload.parentId || null));
     if (saved) {
-      entryContext.regionId = regionIdForCanteen(saved.id) || saved.parentId || saved.id;
-      entryContext.canteenId = saved.id;
+      if (isVenue) {
+        entryContext.venueId = saved.id;
+        entryContext.areaId = '';
+        entryContext.stallId = '';
+      } else {
+        entryContext.venueId = saved.parentId;
+        entryContext.areaId = saved.id;
+        entryContext.stallId = '';
+      }
     }
-    if (action === 'stay' && saved) editCanteen(saved);
-    else finishEntrySave(action, resetCanteenForm);
-    message.value = '食堂已保存到数据库。';
+    if (action === 'stay' && saved) {
+      editCanteen(saved);
+      void syncEntryRoute();
+    } else {
+      finishEntrySave(action, resetCanteenForm, isVenue ? { venueId: saved?.id } : { areaId: saved?.id });
+    }
+    message.value = `${entryEntityLabel.value}已保存到数据库。`;
   } catch (error) {
     message.value = error.message;
   } finally {
@@ -1424,13 +1486,13 @@ async function saveStall(action = 'stay') {
   if (entrySaving.value) return;
   entrySaving.value = true;
   try {
-    stallForm.canteenId = entryContext.canteenId || stallForm.canteenId;
-    if (!stallForm.canteenId) throw new Error('请选择所属食堂。');
-    if (entryMode.value === 'sub-stall' && !stallForm.parentId) throw new Error('子档口必须选择上级一级档口。');
+    stallForm.canteenId = entryContext.areaId || stallForm.canteenId;
+    const selectedArea = entryAreas.value.find((item) => item.id === stallForm.canteenId);
+    if (!selectedArea) throw new Error(`请选择所属${entryAreaLabel.value}，档口不能直接挂在食堂下。`);
     const payload = {
       id: stallForm.id || undefined,
       canteenId: stallForm.canteenId,
-      parentId: entryMode.value === 'sub-stall' ? stallForm.parentId : null,
+      parentId: null,
       name: assertText(stallForm.name, '档口名称', 2, 40),
       floor: assertText(stallForm.floor, '楼层', 1, 10),
       category: assertText(stallForm.category, '品类', 2, 30),
@@ -1439,20 +1501,20 @@ async function saveStall(action = 'stay') {
       description: stallForm.description || '',
       open: stallForm.open
     };
-    await store.upsertStall(payload);
-    const saved = store.stalls.find((item) => item.id === payload.id)
+    const result = await store.upsertStall(payload);
+    const saved = result || store.stalls.find((item) => item.id === payload.id)
       || [...store.stalls].reverse().find((item) => item.canteenId === payload.canteenId && item.name === payload.name && (item.parentId || null) === (payload.parentId || null));
     if (saved) {
-      if (saved.parentId) {
-        entryContext.primaryStallId = saved.parentId;
-        entryContext.childStallId = saved.id;
-      } else {
-        entryContext.primaryStallId = saved.id;
-        entryContext.childStallId = '';
-      }
+      entryContext.venueId = selectedArea.parentId;
+      entryContext.areaId = selectedArea.id;
+      entryContext.stallId = saved.id;
     }
-    if (action === 'stay' && saved) editStall(saved);
-    else finishEntrySave(action, resetStallForm);
+    if (action === 'stay' && saved) {
+      editStall(saved);
+      void syncEntryRoute();
+    } else {
+      finishEntrySave(action, resetStallForm, { stallId: saved?.id });
+    }
     message.value = '档口已保存到数据库。';
   } catch (error) {
     message.value = error.message;
@@ -1476,7 +1538,7 @@ async function removeStall(id) {
   const childCount = store.stalls.filter((item) => item.parentId === id).length;
   const dishCount = store.dishes.filter((dish) => dish.stallId === id).length;
   if (childCount > 0) {
-    message.value = `该一级档口仍有 ${childCount} 个子档口，请先迁移或删除子档口。`;
+    message.value = `该档口仍关联 ${childCount} 个历史层级档口，请先在目录管理中完成迁移。`;
     return;
   }
   const confirmed = typeof window === 'undefined' || window.confirm(`确认删除“${stall.name}”？该档口当前关联 ${dishCount} 道菜，删除将沿用现有数据库级联规则。`);
@@ -1484,15 +1546,9 @@ async function removeStall(id) {
   entrySaving.value = true;
   try {
     await store.deleteStall(id);
-    if (entryContext.childStallId === id) entryContext.childStallId = '';
-    if (entryContext.primaryStallId === id) {
-      entryContext.primaryStallId = '';
-      entryContext.childStallId = '';
-    }
+    if (entryContext.stallId === id) entryContext.stallId = '';
     resetStallForm();
-    const nextQuery = { ...route.query };
-    delete nextQuery.editId;
-    await router.replace({ path: '/admin/input', query: nextQuery });
+    await syncEntryRoute();
     message.value = '档口已删除。';
   } catch (error) {
     message.value = error.message;
@@ -1503,8 +1559,8 @@ async function removeStall(id) {
 
 function resetStallForm() {
   Object.assign(stallForm, defaultStallForm());
-  stallForm.canteenId = entryContext.canteenId;
-  stallForm.parentId = entryMode.value === 'sub-stall' ? entryContext.primaryStallId || null : null;
+  stallForm.canteenId = entryContext.areaId;
+  stallForm.parentId = null;
 }
 
 async function saveDish(action = 'stay') {
@@ -1512,13 +1568,18 @@ async function saveDish(action = 'stay') {
   entrySaving.value = true;
   try {
     if (!dishForm.stallId) throw new Error('请选择所属档口。');
+    const originalDish = dishForm.id ? store.dishes.find((item) => item.id === dishForm.id) : null;
+    const validTarget = entryStalls.value.some((stall) => stall.id === dishForm.stallId);
+    if (!validTarget && originalDish?.stallId !== dishForm.stallId) throw new Error('新菜品必须绑定到餐厅或楼层餐区下的直属档口。');
     const payload = dishPayload();
-    await store.upsertDish(payload);
-    const saved = store.dishes.find((item) => item.id === payload.id)
-      || [...store.dishes].reverse().find((item) => item.stallId === payload.stallId && item.name === payload.name);
-    syncDishEntryContext();
-    if (action === 'stay' && saved) editDish(saved);
-    else finishEntrySave(action, resetDishForm);
+    const saved = await store.upsertDish(payload);
+    if (saved) editDish(saved);
+    syncDishEntryContext({ updateRoute: false });
+    if (action === 'stay' && saved) {
+      void syncEntryRoute();
+    } else {
+      finishEntrySave(action, resetDishForm, { dishId: saved?.id });
+    }
     message.value = '菜品和营养数据已保存到数据库。';
   } catch (error) {
     message.value = error.message;
@@ -1547,6 +1608,7 @@ function editDish(dish) {
     ingredients: Array.isArray(dish.ingredients) ? dish.ingredients.join(', ') : String(dish.ingredients || ''),
     tags: Array.isArray(dish.tags) ? dish.tags.join(', ') : String(dish.tags || ''),
     allergens: Array.isArray(dish.allergens) ? dish.allergens.join(', ') : String(dish.allergens || ''),
+    mealTypes: Array.isArray(dish.mealTypes) ? dish.mealTypes.join(', ') : String(dish.mealTypes || ''),
     imageUrl: dish.imageUrl || '',
     calories: nutrition.calories,
     protein: nutrition.protein,
@@ -1582,12 +1644,26 @@ function normalizeJsonImportRow(rawDish, index) {
       return fallback;
     }
   };
-  const stallId = String(rawDish.stallId || '').trim();
-  if (!stallId) errors.push('请选择所属档口。');
-  else if (!store.stalls.some((stall) => stall.id === stallId)) errors.push('所属档口不存在或不属于当前租户。');
+  const venueId = String(rawDish.venueId || rawDish['食堂ID'] || '').trim();
+  const areaId = String(rawDish.areaId || rawDish.canteenId || rawDish['餐厅或楼层ID'] || '').trim();
+  const stallId = String(rawDish.stallId || rawDish['档口ID'] || '').trim();
+  const stall = store.stalls.find((item) => item.id === stallId);
+  const area = stall ? store.canteens.find((item) => item.id === stall.canteenId) : null;
+  if (!venueId) errors.push('缺少食堂ID。');
+  if (!areaId) errors.push('缺少餐厅或楼层ID。');
+  if (!stallId) errors.push('缺少档口ID。');
+  else if (!stall) errors.push('所属档口不存在或不属于当前租户。');
+  else if (stall.parentId || !area?.parentId || !fixedRegions.some((item) => item.id === area.parentId)) errors.push('档口必须直属有效的餐厅或楼层餐区。');
+  else {
+    if (areaId && area.id !== areaId) errors.push('档口与餐厅或楼层ID不匹配。');
+    if (venueId && area.parentId !== venueId) errors.push('餐厅或楼层与食堂ID不匹配。');
+  }
   const nutrition = rawDish.nutrition || {};
   const dish = {
     ...rawDish,
+    id: rawDish.id || rawDish.dishId || rawDish['菜品ID'] || undefined,
+    venueId,
+    areaId,
     stallId,
     name: capture(() => assertText(rawDish.name, '菜名', 2, 40), ''),
     price: capture(() => assertNumber(rawDish.price, '价格', 1, 200), 0),
@@ -1633,6 +1709,7 @@ async function confirmJsonImport() {
   jsonLoading.value = true;
   try {
     const imported = await store.importDishes(jsonRows.value.map((row) => row.dish));
+    await refreshEntryDerivedData();
     bulkInput.value = '';
     jsonRows.value = [];
     jsonMessage.value = `已确认导入 ${imported} 道菜。`;
@@ -1668,11 +1745,12 @@ async function previewCsvImport(event) {
 }
 
 async function confirmExcelImport() {
-  if (!excelFile.value) return;
+  if (!excelFile.value || excelLoading.value) return;
   excelLoading.value = true;
   try {
     const csvText = await fileToText(excelFile.value);
     const result = await store.confirmDishImport(csvText);
+    await refreshEntryDerivedData();
     excelRows.value = [];
     excelSummary.value = { validCount: 0, errorCount: 0 };
     excelFile.value = null;
@@ -1786,6 +1864,12 @@ async function refreshReviews(preserveMessage = false) {
   } finally {
     reviewLoading.value = false;
   }
+}
+
+async function refreshEntryDerivedData() {
+  const tasks = [store.loadAdminCatalogTree({ include: 'summary' })];
+  if (canConfigureAi.value) tasks.push(store.loadRetrievalIndexStatus());
+  await Promise.allSettled(tasks);
 }
 
 const confirmCsvImport = confirmExcelImport;
@@ -2238,8 +2322,9 @@ watch(() => [store.canteens.length, store.stalls.length, store.dishes.length], (
 .ai-page-tabs { grid-template-columns: repeat(3, minmax(8rem, 1fr)); margin-bottom: 1rem; }
 .entry-task-tabs button, .ai-page-tabs button { min-height: 2.5rem; border: 0; border-radius: 0.375rem; color: var(--muted); background: transparent; box-shadow: none; }
 .entry-task-tabs button.active, .ai-page-tabs button.active { color: var(--primary-dark); background: #fff; box-shadow: 0 0.1875rem 0.625rem rgba(21, 95, 59, .1); }
-.entry-context-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(31, 122, 77, .12); }
+.entry-context-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(31, 122, 77, .12); }
 .entry-context-grid label.disabled { opacity: .5; }
+.entry-context-path { margin: .75rem 0 0; color: var(--muted); font-size: .8125rem; font-weight: 650; }
 .entry-task-section { min-width: 0; }
 .entry-dish-form { display: grid; gap: 1rem; }
 .entry-field-group { min-width: 0; display: grid; gap: 0.75rem; margin: 0; padding: 1rem; border: 1px solid rgba(31, 122, 77, .13); border-radius: 0.5rem; background: rgba(250, 252, 248, .74); }

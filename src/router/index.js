@@ -17,6 +17,7 @@ const HealthProfileView = () => import('../views/HealthProfileView.vue');
 const SavedView = () => import('../views/SavedView.vue');
 const ReviewsView = () => import('../views/ReviewsView.vue');
 const CommunityView = () => import('../views/CommunityView.vue');
+const AdminCatalogView = () => import('../views/AdminCatalogView.vue');
 
 export const router = createRouter({
   history: createWebHashHistory(),
@@ -49,9 +50,12 @@ export const router = createRouter({
       component: AdminView,
       meta: { audience: 'admin' },
       beforeEnter: (to) => to.query.panel
-        ? true
+        ? to.query.panel === 'data'
+          ? { path: '/admin/catalog', query: Object.fromEntries(Object.entries(to.query).filter(([key]) => key !== 'panel')) }
+          : true
         : { path: '/admin', query: { ...to.query, panel: 'reviews', tab: 'reviews' } }
     },
+    { path: '/admin/catalog', name: 'admin-catalog', component: AdminCatalogView, meta: { audience: 'admin' } },
     { path: '/admin/input', name: 'admin-input', component: AdminView, meta: { audience: 'admin' } },
     { path: '/admin/ai', name: 'admin-ai', component: AdminView, meta: { audience: 'admin' } },
     { path: '/agent', name: 'agent', component: AgentView, meta: { audience: 'admin' } }
@@ -63,7 +67,7 @@ export const router = createRouter({
 
 const adminRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
 const moderationRoles = new Set(['canteen_admin', 'tenant_admin', 'admin', 'super_admin']);
-const dataManageRoles = new Set(['canteen_admin', 'auditor', 'tenant_admin', 'admin', 'super_admin']);
+const dataManageRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'tenant_admin', 'admin', 'super_admin']);
 const dataInputRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'tenant_admin', 'admin', 'super_admin']);
 const agentRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'tenant_admin', 'admin', 'super_admin']);
 const aiConfigRoles = new Set(['tenant_admin', 'admin', 'super_admin']);
@@ -73,11 +77,15 @@ function canAccessAdminRoute(to, role) {
   if (to.path === '/agent') return agentRoles.has(role);
   if (to.path === '/admin/ai') return aiConfigRoles.has(role);
   if (to.path === '/admin' && to.query.panel === 'data') return dataManageRoles.has(role);
+  if (to.path === '/admin/catalog') return dataManageRoles.has(role);
   if (to.path === '/admin') return moderationRoles.has(role);
   return true;
 }
 
 router.beforeEach((to) => {
+  if (to.path === '/admin' && to.query.panel === 'data') {
+    return { path: '/admin/catalog', query: Object.fromEntries(Object.entries(to.query).filter(([key]) => key !== 'panel')) };
+  }
   const store = useCanteenStore();
   if (!store.user || !to.meta.audience) return true;
   const isAdmin = adminRoles.has(store.user.role);

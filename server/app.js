@@ -62,6 +62,138 @@ function tenantIdFor(user) {
   return user?.tenant_id || user?.tenantId || 'default';
 }
 
+const ADMIN_CATALOG_REGIONS = [
+  { id: 'campus-main', name: '综合餐饮楼', position: 'top-left', venueType: 'dining_complex', areaType: 'restaurant', areaLabel: '餐厅' },
+  { id: 'north-zone', name: '北苑食堂', position: 'top-right', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' },
+  { id: 'south-zone', name: '南湖食堂', position: 'bottom-left', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' },
+  { id: 'east-zone', name: '东苑食堂', position: 'bottom-right', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' }
+];
+
+function isAdminCatalogVenueId(value) {
+  return ADMIN_CATALOG_REGIONS.some((definition) => definition.id === value);
+}
+
+function catalogTextMatches(value, query) {
+  return !query || String(value || '').toLocaleLowerCase().includes(query);
+}
+
+async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '', stallId = '', query = '', includeDishes = false, limit = 20, offset = 0 }) {
+  const normalizedQuery = String(query || '').trim().toLocaleLowerCase();
+  const canteenRows = await db.prepare('SELECT * FROM canteens WHERE tenant_id = ? ORDER BY name ASC, id ASC').all(tenantId);
+  const stallRows = await db.prepare('SELECT * FROM stalls WHERE tenant_id = ? ORDER BY name ASC, id ASC').all(tenantId);
+  const dishRows = await db.prepare('SELECT * FROM dishes WHERE tenant_id = ? ORDER BY name ASC, id ASC').all(tenantId);
+  const canteens = canteenRows.map(rowToCanteen);
+  const stalls = stallRows.map(rowToStall);
+  const dishes = dishRows.map(rowToDish);
+  const canteenById = new Map(canteens.map((item) => [item.id, item]));
+  const stallsByCanteen = new Map();
+  const stallsByParent = new Map();
+  const dishesByStall = new Map();
+  for (const stall of stalls) {
+    if (!stallsByCanteen.has(stall.canteenId)) stallsByCanteen.set(stall.canteenId, []);
+    stallsByCanteen.get(stall.canteenId).push(stall);
+    if (stall.parentId) {
+      if (!stallsByParent.has(stall.parentId)) stallsByParent.set(stall.parentId, []);
+      stallsByParent.get(stall.parentId).push(stall);
+    }
+  }
+  for (const dish of dishes) {
+    if (!dishesByStall.has(dish.stallId)) dishesByStall.set(dish.stallId, []);
+    dishesByStall.get(dish.stallId).push(dish);
+  }
+
+  function buildStall(stall) {
+    const children = (stallsByParent.get(stall.id) || []).map(buildStall);
+    const allDirectDishes = dishesByStall.get(stall.id) || [];
+    const dishCount = allDirectDishes.length + children.reduce((sum, child) => sum + child.dishCount, 0);
+    const node = {
+      stall,
+      legacyHierarchy: Boolean(stall.parentId),
+      childCount: children.length,
+      dishCount,
+      directDishes: includeDishes ? allDirectDishes : [],
+      children
+    };
+    Object.defineProperty(node, 'allDirectDishes', { value: allDirectDishes, enumerable: false });
+    return node;
+  }
+
+  function buildCanteen(canteen, areaType = 'floor_area', areaLabel = '楼层餐区') {
+    const primaryStalls = (stallsByCanteen.get(canteen.id) || []).filter((stall) => !stall.parentId).map(buildStall);
+    return {
+      canteen,
+      displayName: canteen.name,
+      areaType,
+      areaLabel,
+      primaryStallCount: primaryStalls.length,
+      stallCount: (stallsByCanteen.get(canteen.id) || []).length,
+      openStallCount: (stallsByCanteen.get(canteen.id) || []).filter((stall) => stall.open).length,
+      dishCount: primaryStalls.reduce((sum, stall) => sum + stall.dishCount, 0),
+      stalls: primaryStalls
+    };
+  }
+
+  function matchesStall(node) {
+    return !normalizedQuery
+      || catalogTextMatches(node.stall.name, normalizedQuery)
+      || catalogTextMatches(node.stall.category, normalizedQuery)
+      || node.allDirectDishes.some((dish) => catalogTextMatches(dish.name, normalizedQuery))
+      || node.children.some((child) => matchesStall(child));
+  }
+
+  function matchesCanteen(node) {
+    return !normalizedQuery
+      || catalogTextMatches(node.canteen.name, normalizedQuery)
+      || catalogTextMatches(node.canteen.location, normalizedQuery)
+      || node.stalls.some((stall) => matchesStall(stall));
+  }
+
+  const regions = ADMIN_CATALOG_REGIONS
+    .filter((definition) => !regionId || definition.id === regionId)
+    .map((definition) => {
+      const region = canteenById.get(definition.id) || null;
+      const children = canteens.filter((canteen) => canteen.parentId === definition.id);
+      const canteenNodes = children.map((canteen) => buildCanteen(canteen, definition.areaType, definition.areaLabel)).filter((node) => {
+        if (canteenId && node.canteen.id !== canteenId) return false;
+        if (stallId && !node.stalls.some((stall) => stall.stall.id === stallId || stall.children.some((child) => child.stall.id === stallId))) return false;
+        return matchesCanteen(node);
+      });
+      const unassignedStalls = region
+        ? (stallsByCanteen.get(region.id) || []).filter((stall) => !stall.parentId).map(buildStall).filter((node) => matchesStall(node))
+        : [];
+      const unassignedMatchesFilter = !canteenId || canteenId === definition.id;
+      const visibleUnassignedStalls = unassignedMatchesFilter
+        ? unassignedStalls.filter((node) => !stallId || node.stall.id === stallId || node.children.some((child) => child.stall.id === stallId))
+        : [];
+      const counts = canteenNodes.reduce((total, node) => ({
+        canteens: total.canteens + 1,
+        stalls: total.stalls + node.stallCount,
+        dishes: total.dishes + node.dishCount,
+        openStalls: total.openStalls + node.openStallCount
+      }), {
+        canteens: 0,
+        stalls: visibleUnassignedStalls.reduce((sum, node) => sum + 1 + node.childCount, 0),
+        dishes: visibleUnassignedStalls.reduce((sum, node) => sum + node.dishCount, 0),
+        openStalls: visibleUnassignedStalls.reduce((sum, node) => sum + Number(node.stall.open) + node.children.filter((child) => child.stall.open).length, 0)
+      });
+      return {
+        ...definition,
+        name: region?.name || definition.name,
+        defaultName: definition.name,
+        displayName: region?.name || definition.name,
+        missing: !region,
+        region,
+        labels: { venue: '餐饮场所', area: definition.areaLabel, stall: '档口', dish: '菜品' },
+        counts,
+        canteens: canteenNodes,
+        unassignedStalls: visibleUnassignedStalls
+      };
+    });
+  const safeOffset = Math.max(0, offset);
+  const safeLimit = Math.max(1, Math.min(limit, 20));
+  return { regions: regions.slice(safeOffset, safeOffset + safeLimit), total: regions.length, limit: safeLimit, offset: safeOffset, include: includeDishes ? 'dishes' : 'summary' };
+}
+
 const DATABASE_ENTITIES = {
   users: { label: '用户', table: 'users', capability: 'user:read', writeCapability: 'user:write', key: 'id', columns: ['id', 'username', 'nickname', 'role', 'created_at', 'updated_at'], writable: ['nickname', 'role'], search: ['username', 'nickname', 'role'] },
   canteens: { label: '食堂', table: 'canteens', capability: 'canteen:write', writeCapability: 'canteen:write', deleteCapability: 'canteen:delete', key: 'id', columns: ['id', 'name', 'location', 'hours', 'crowd_level', 'tags_json', 'description', 'created_at', 'updated_at'], writable: ['name', 'location', 'hours', 'crowd_level', 'tags_json', 'description'], search: ['name', 'location'] },
@@ -152,7 +284,11 @@ function send(res, status, data, extraHeaders = {}) {
 
 function fail(res, error, requestId) {
   const status = error.status || 500;
-  send(res, status, { error: status === 500 ? '服务器内部错误' : error.message, requestId }, { 'X-Request-Id': requestId });
+  send(res, status, {
+    error: status === 500 ? '服务器内部错误' : error.message,
+    ...(error.code ? { code: error.code } : {}),
+    requestId
+  }, { 'X-Request-Id': requestId });
 }
 
 function requireFields(payload, fields) {
@@ -199,6 +335,14 @@ async function requireUser(db, req) {
 
 async function requireCapability(db, req, permission) {
   return requirePermission(await requireUser(db, req), permission);
+}
+
+async function requireAnyCapability(db, req, permissions) {
+  const user = await requireUser(db, req);
+  if (!permissions.some((permission) => hasPermission(user, permission))) {
+    throw Object.assign(new Error('权限不足'), { status: 403 });
+  }
+  return user;
 }
 
 async function audit(db, user, action, entity, entityId, metadata = {}) {
@@ -318,14 +462,66 @@ function normalizeStallParentId(value) {
   return String(value).trim() || null;
 }
 
+async function requireCatalogDiningArea(db, { tenantId, canteenId }) {
+  const area = await db.prepare('SELECT id, parent_id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
+  if (!area) {
+    throw Object.assign(new Error('所属食堂不存在，或餐饮分区不属于当前租户'), {
+      status: 400,
+      code: 'STALL_CANTEEN_NOT_FOUND'
+    });
+  }
+  if (!area.parent_id || !isAdminCatalogVenueId(area.parent_id)) {
+    throw Object.assign(new Error('新建或迁移档口必须直属餐厅或楼层餐区，不能直属顶层餐饮场所'), {
+      status: 400,
+      code: 'STALL_AREA_REQUIRED'
+    });
+  }
+  const venue = await db.prepare('SELECT id, parent_id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, area.parent_id);
+  if (!venue || venue.parent_id) {
+    throw Object.assign(new Error('所属餐饮分区未关联当前租户的有效顶层餐饮场所'), {
+      status: 400,
+      code: 'STALL_AREA_REQUIRED'
+    });
+  }
+  return area;
+}
+
+async function requireDishStallInDiningArea(db, { tenantId, stallId }) {
+  const stall = await db.prepare('SELECT id, canteen_id, parent_id FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantId, stallId);
+  if (!stall) {
+    throw Object.assign(new Error('所属档口不存在或不属于当前租户'), {
+      status: 400,
+      code: 'DISH_STALL_NOT_FOUND'
+    });
+  }
+  if (stall.parent_id) {
+    throw Object.assign(new Error('新建或迁移菜品必须选择餐饮分区直属档口，不能选择历史子档口'), {
+      status: 400,
+      code: 'DISH_STALL_AREA_REQUIRED'
+    });
+  }
+  try {
+    await requireCatalogDiningArea(db, { tenantId, canteenId: stall.canteen_id });
+  } catch (error) {
+    if (error.code === 'STALL_CANTEEN_NOT_FOUND' || error.code === 'STALL_AREA_REQUIRED') {
+      throw Object.assign(new Error('新建或迁移菜品必须选择餐厅或楼层餐区下的直属档口'), {
+        status: 400,
+        code: 'DISH_STALL_AREA_REQUIRED'
+      });
+    }
+    throw error;
+  }
+  return stall;
+}
+
 async function validateStallParent(db, { tenantId, stallId, canteenId, parentId, hasChildren = false }) {
   if (!parentId) return;
-  if (parentId === stallId) throw Object.assign(new Error('档口不能将自身设置为父档口'), { status: 400 });
-  if (hasChildren) throw Object.assign(new Error('存在子档口的一级档口不能再设置父档口'), { status: 400 });
+  if (parentId === stallId) throw Object.assign(new Error('档口不能将自身设置为父档口'), { status: 400, code: 'STALL_PARENT_SELF' });
+  if (hasChildren) throw Object.assign(new Error('存在子档口的一级档口不能再设置父档口'), { status: 400, code: 'STALL_PARENT_HAS_CHILDREN' });
   const parent = await db.prepare('SELECT id, canteen_id, parent_id FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantId, parentId);
-  if (!parent) throw Object.assign(new Error('父档口不存在或不属于当前租户'), { status: 400 });
-  if (parent.parent_id) throw Object.assign(new Error('档口层级最多支持两级，子档口不能继续挂载子档口'), { status: 400 });
-  if (parent.canteen_id !== canteenId) throw Object.assign(new Error('子档口必须与父档口属于同一食堂'), { status: 400 });
+  if (!parent) throw Object.assign(new Error('父档口不存在或不属于当前租户'), { status: 400, code: 'STALL_PARENT_NOT_FOUND' });
+  if (parent.parent_id) throw Object.assign(new Error('档口层级最多支持两级，子档口不能继续挂载子档口'), { status: 400, code: 'STALL_PARENT_NESTED' });
+  if (parent.canteen_id !== canteenId) throw Object.assign(new Error('子档口必须与父档口属于同一食堂'), { status: 400, code: 'STALL_PARENT_CROSS_CANTEEN' });
 }
 
 async function validateDatabaseStallWrite(db, { tenantId, stallId, payload, creating = false }) {
@@ -335,10 +531,15 @@ async function validateDatabaseStallWrite(db, { tenantId, stallId, payload, crea
   if (!creating && !existing) throw Object.assign(new Error('记录不存在'), { status: 404 });
   const canteenId = payload.canteen_id !== undefined ? String(payload.canteen_id || '').trim() : existing?.canteen_id;
   const parentId = payload.parent_id !== undefined ? normalizeStallParentId(payload.parent_id) : (existing?.parent_id || null);
-  const canteen = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
-  if (!canteen) throw Object.assign(new Error('所属食堂不存在或不属于当前租户'), { status: 400 });
+  const isMoving = creating || canteenId !== existing?.canteen_id;
+  if (isMoving) {
+    await requireCatalogDiningArea(db, { tenantId, canteenId });
+  } else {
+    const canteen = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
+    if (!canteen) throw Object.assign(new Error('所属食堂不存在，或餐饮分区不属于当前租户'), { status: 400, code: 'STALL_CANTEEN_NOT_FOUND' });
+  }
   const childCount = creating ? 0 : Number((await db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ? AND parent_id = ?').get(tenantId, stallId))?.count || 0);
-  if (childCount > 0 && canteenId !== existing.canteen_id) throw Object.assign(new Error('存在子档口的一级档口不能直接更换所属食堂'), { status: 400 });
+  if (childCount > 0 && canteenId !== existing.canteen_id) throw Object.assign(new Error('存在子档口的一级档口不能直接更换所属餐饮分区'), { status: 400, code: 'STALL_PARENT_HAS_CHILDREN' });
   await validateStallParent(db, { tenantId, stallId, canteenId, parentId, hasChildren: childCount > 0 });
   if (payload.canteen_id !== undefined) payload.canteen_id = canteenId;
   if (payload.parent_id !== undefined) payload.parent_id = parentId;
@@ -347,7 +548,7 @@ async function validateDatabaseStallWrite(db, { tenantId, stallId, payload, crea
 function rejectDatabaseStallParentWrite(entityName, body) {
   if (entityName !== 'stalls') return;
   if (Object.prototype.hasOwnProperty.call(body, 'parent_id') || Object.prototype.hasOwnProperty.call(body, 'parentId')) {
-    throw Object.assign(new Error('档口父级请使用层级化档口接口维护'), { status: 400 });
+    throw Object.assign(new Error('档口父级请使用层级化档口接口维护'), { status: 400, code: 'STALL_PARENT_WORKBENCH_FORBIDDEN' });
   }
 }
 
@@ -468,21 +669,36 @@ async function computeRankings(db, tenantId = 'default') {
 
 async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tenantId = 'default') {
   requireFields(body, ['stallId', 'name', 'price', 'taste', 'cuisine', 'ingredients', 'tags', 'nutrition']);
-  const stall = await db.prepare('SELECT id FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantId, body.stallId);
-  if (!stall) throw Object.assign(new Error('所属档口不存在或不属于当前租户'), { status: 400 });
+  const normalizedId = String(id || '').trim();
+  const stallId = String(body.stallId || '').trim();
+  const conflictingRecord = await db.prepare('SELECT tenant_id, stall_id FROM dishes WHERE id = ?').get(normalizedId);
+  if (conflictingRecord && conflictingRecord.tenant_id !== tenantId) {
+    throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), {
+      status: 409,
+      code: 'DISH_ID_TENANT_CONFLICT'
+    });
+  }
+  const isNewOrMoving = !conflictingRecord || conflictingRecord.stall_id !== stallId;
+  if (isNewOrMoving) await requireDishStallInDiningArea(db, { tenantId, stallId });
   const nutrition = body.nutrition || {};
   const fiber = Number(body.fiber ?? nutrition.fiber ?? 0);
   const sodium = Number(body.sodium ?? nutrition.sodium ?? 0);
   const sugar = Number(body.sugar ?? nutrition.sugar ?? 0);
   const calcium = Number(body.calcium ?? nutrition.calcium ?? 0);
   const iron = Number(body.iron ?? nutrition.iron ?? 0);
+  const status = body.status == null ? 'active' : String(body.status).trim();
+  if (!['active', 'hidden'].includes(status)) throw Object.assign(new Error('菜品状态必须为 active 或 hidden'), { status: 400 });
   await db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, status, allergens_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, updated_at=excluded.updated_at`)
-    .run(id, tenantId, body.stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, Number(body.rating || 4.5), Number(body.reviewCount || 0), Number(body.sales || 0), body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', serializeJson(splitList(body.allergens || [])), now(), now());
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, updated_at=excluded.updated_at WHERE dishes.tenant_id=excluded.tenant_id`)
+    .run(normalizedId, tenantId, stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, Number(body.rating || 4.5), Number(body.reviewCount || 0), Number(body.sales || 0), body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', status, serializeJson(splitList(body.allergens || [])), now(), now());
+  const savedRecord = await db.prepare('SELECT tenant_id FROM dishes WHERE id = ?').get(normalizedId);
+  if (!savedRecord || savedRecord.tenant_id !== tenantId) {
+    throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), { status: 409, code: 'DISH_ID_TENANT_CONFLICT' });
+  }
   const quota = await aiQuotaStatus(db, tenantId);
-  await syncDishRetrievalDocument(db, { tenantId, dishId: id, ...(quota.quota > 0 && quota.remaining <= 0 ? { embeddingProvider: null } : {}) });
-  return id;
+  await syncDishRetrievalDocument(db, { tenantId, dishId: normalizedId, ...(quota.quota > 0 && quota.remaining <= 0 ? { embeddingProvider: null } : {}) });
+  return normalizedId;
 }
 
 function parseBoolean(value) {
@@ -497,6 +713,8 @@ function parseMealTypes(value) {
 
 function normalizeImportRow(row, index) {
   const get = (...keys) => keys.map((key) => row[key]).find((value) => value != null && String(value).trim() !== '');
+  const venueId = String(get('venueId', 'venue_id', '食堂ID', '餐饮场所ID') || '').trim();
+  const areaId = String(get('areaId', 'area_id', 'canteenId', 'canteen_id', '餐厅或楼层ID', '餐饮分区ID') || '').trim();
   const dish = {
     id: String(get('id', 'ID', '菜品ID') || '').trim() || undefined,
     stallId: String(get('stallId', 'stall_id', '档口ID') || '').trim(),
@@ -527,7 +745,7 @@ function normalizeImportRow(row, index) {
   for (const [field, label] of [['calories', '热量'], ['protein', '蛋白'], ['fat', '脂肪'], ['carbs', '碳水']]) {
     if (!Number.isFinite(dish.nutrition[field]) || dish.nutrition[field] < 0) errors.push(`${label}必须是非负数字`);
   }
-  return { row: index + 2, dish, valid: errors.length === 0, errors };
+  return { row: index + 2, venueId, areaId, dish, valid: errors.length === 0, errors };
 }
 
 function parseCsvCells(line, rowNumber) {
@@ -580,20 +798,83 @@ function parseCsvImport(csvText) {
   return { rows: preview, validCount: preview.filter((row) => row.valid).length, errorCount: preview.filter((row) => !row.valid).length };
 }
 
+async function validateImportHierarchy(db, preview, tenantId) {
+  const seenDishIds = new Set();
+  for (const row of preview.rows) {
+    if (row.dish.id) {
+      if (seenDishIds.has(row.dish.id)) row.errors.push(`菜品ID重复：${row.dish.id}`);
+      seenDishIds.add(row.dish.id);
+    }
+    if (row.dish.stallId) {
+      try {
+        const stall = await requireDishStallInDiningArea(db, { tenantId, stallId: row.dish.stallId });
+        const area = await db.prepare('SELECT id, parent_id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, stall.canteen_id);
+        if (row.areaId && row.areaId !== area.id) row.errors.push('档口与餐厅或楼层ID不匹配');
+        if (row.venueId && row.venueId !== area.parent_id) row.errors.push('餐厅或楼层与食堂ID不匹配');
+        row.areaId ||= area.id;
+        row.venueId ||= area.parent_id;
+      } catch (error) {
+        row.errors.push(error.message);
+      }
+    }
+    row.errors = [...new Set(row.errors)];
+    row.valid = row.errors.length === 0;
+  }
+  preview.validCount = preview.rows.filter((row) => row.valid).length;
+  preview.errorCount = preview.rows.length - preview.validCount;
+  return preview;
+}
+
 async function upsertCanteen(db, body, id = body.id || `canteen-${randomUUID()}`, tenantId = 'default') {
   requireFields(body, ['name', 'location', 'hours', 'description']);
-  const parentId = body.parentId || null;
-  const canteenType = body.canteenType || 'primary';
+  const normalizedId = String(id || '').trim();
   const image = body.imageUrl || body.image || '';
-  // Validate parent exists if specified
-  if (parentId) {
-    if (parentId === id) throw Object.assign(new Error('不能将食堂设为自己的父级'), { status: 400 });
-    const parent = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, parentId);
-    if (!parent) throw Object.assign(new Error('父级食堂不存在'), { status: 400 });
+  const conflictingRecord = await db.prepare('SELECT tenant_id, parent_id FROM canteens WHERE id = ?').get(normalizedId);
+  if (conflictingRecord && conflictingRecord.tenant_id !== tenantId) {
+    throw Object.assign(new Error('该餐饮场所 ID 已被其他租户使用，请更换 ID'), {
+      status: 409,
+      code: 'CANTEEN_ID_TENANT_CONFLICT'
+    });
   }
-  await db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, location=excluded.location, hours=excluded.hours, crowd_level=excluded.crowd_level, tags_json=excluded.tags_json, description=excluded.description, parent_id=excluded.parent_id, canteen_type=excluded.canteen_type, image=excluded.image, updated_at=excluded.updated_at')
-    .run(id, tenantId, body.name, body.location, body.hours, Number(body.crowdLevel || 30), serializeJson(splitList(body.tags)), body.description, parentId, canteenType, image, now(), now());
-  return id;
+  const hasParentId = Object.prototype.hasOwnProperty.call(body, 'parentId');
+  const parentId = hasParentId
+    ? (body.parentId == null ? null : (String(body.parentId).trim() || null))
+    : (conflictingRecord?.tenant_id === tenantId ? (conflictingRecord.parent_id || null) : null);
+  const canteenType = parentId ? 'sub' : 'primary';
+  const isFixedVenue = isAdminCatalogVenueId(normalizedId);
+  if (isFixedVenue && parentId) {
+    throw Object.assign(new Error('固定餐饮场所不能设置父级'), {
+      status: 400,
+      code: 'CANTEEN_FIXED_PARENT_FORBIDDEN'
+    });
+  }
+  if (parentId) {
+    if (parentId === normalizedId) {
+      throw Object.assign(new Error('不能将餐饮分区设为自己的父级'), { status: 400, code: 'CANTEEN_PARENT_SELF' });
+    }
+    const parent = await db.prepare('SELECT id, parent_id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, parentId);
+    if (!parent) {
+      throw Object.assign(new Error('父级餐饮场所不存在或不属于当前租户'), { status: 400, code: 'CANTEEN_PARENT_NOT_FOUND' });
+    }
+    if (!isAdminCatalogVenueId(parent.id) || parent.parent_id) {
+      throw Object.assign(new Error('餐饮分区只能直属四个顶层餐饮场所，不能创建三级餐区'), {
+        status: 400,
+        code: 'CANTEEN_PARENT_NESTED'
+      });
+    }
+  } else if (!isFixedVenue && conflictingRecord?.tenant_id === tenantId && conflictingRecord.parent_id && hasParentId) {
+    throw Object.assign(new Error('已有餐饮分区不能清空父级场所'), {
+      status: 400,
+      code: 'CANTEEN_AREA_PARENT_REQUIRED'
+    });
+  }
+  await db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, location=excluded.location, hours=excluded.hours, crowd_level=excluded.crowd_level, tags_json=excluded.tags_json, description=excluded.description, parent_id=excluded.parent_id, canteen_type=excluded.canteen_type, image=excluded.image, updated_at=excluded.updated_at WHERE canteens.tenant_id=excluded.tenant_id')
+    .run(normalizedId, tenantId, body.name, body.location, body.hours, Number(body.crowdLevel || 30), serializeJson(splitList(body.tags)), body.description, parentId, canteenType, image, now(), now());
+  const savedRecord = await db.prepare('SELECT tenant_id FROM canteens WHERE id = ?').get(normalizedId);
+  if (!savedRecord || savedRecord.tenant_id !== tenantId) {
+    throw Object.assign(new Error('该餐饮场所 ID 已被其他租户使用，请更换 ID'), { status: 409, code: 'CANTEEN_ID_TENANT_CONFLICT' });
+  }
+  return normalizedId;
 }
 
 async function listTenants(db) {
@@ -1999,18 +2280,24 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
       }
 
       if (method === 'POST' && url.pathname === '/api/admin/dishes/import/preview') {
-        await requireCapability(db, req, 'dish:bulk_import');
+        const activeUser = await requireCapability(db, req, 'dish:bulk_import');
         const preview = parseCsvImport((await readBody(req, MAX_IMPORT_BODY_BYTES)).csvText);
+        await validateImportHierarchy(db, preview, tenantIdFor(activeUser));
         return send(res, 200, preview);
       }
 
       if (method === 'POST' && url.pathname === '/api/admin/dishes/import/confirm') {
         const activeUser = await requireCapability(db, req, 'dish:bulk_import');
         const preview = parseCsvImport((await readBody(req, MAX_IMPORT_BODY_BYTES)).csvText);
+        const tenantId = tenantIdFor(activeUser);
+        await validateImportHierarchy(db, preview, tenantId);
         if (preview.errorCount) throw Object.assign(new Error('导入文件存在校验错误，请先修正后再确认导入'), { status: 400 });
-        const imported = [];
-        for (const row of preview.rows) imported.push(await upsertDish(db, row.dish, row.dish.id, tenantIdFor(activeUser)));
-        await audit(db, activeUser, 'CSV_IMPORT', 'dish', `${imported.length}`);
+        const imported = await withTransaction(db, async (tx) => {
+          const ids = [];
+          for (const row of preview.rows) ids.push(await upsertDish(tx, row.dish, row.dish.id, tenantId));
+          await audit(tx, activeUser, 'CSV_IMPORT', 'dish', `${ids.length}`);
+          return ids;
+        });
         await invalidateRankings();
         return send(res, 200, { imported: imported.length, rows: preview.rows, state: await snapshot(db, activeUser) });
       }
@@ -2142,7 +2429,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const activeUser = await requireCapability(db, req, 'canteen:write');
         const id = await upsertCanteen(db, await readBody(req), undefined, tenantIdFor(activeUser));
         await audit(db, activeUser, 'UPSERT', 'canteen', id);
-        return send(res, 201, await snapshot(db, activeUser));
+        return send(res, 201, { ...(await snapshot(db, activeUser)), savedId: id });
       }
 
       if ((method === 'PUT' || method === 'DELETE') && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'canteens' && pathParts[3]) {
@@ -2150,8 +2437,18 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const activeUser = await requireCapability(db, req, permission);
         const id = decodeURIComponent(pathParts[3]);
         const existing = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), id);
-        if (!existing) throw Object.assign(new Error('食堂不存在'), { status: 404 });
+        const isFixedVenue = isAdminCatalogVenueId(id);
+        if (!existing && (method === 'DELETE' || !isFixedVenue)) throw Object.assign(new Error('食堂不存在'), { status: 404 });
         if (method === 'DELETE') {
+          if (isFixedVenue) {
+            const areaCount = Number((await db.prepare('SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = ? AND parent_id = ?').get(tenantIdFor(activeUser), id))?.count || 0);
+            if (areaCount > 0) {
+              throw Object.assign(new Error('该餐饮场所仍包含餐厅或楼层餐区，请先迁移或删除这些餐饮分区'), {
+                status: 409,
+                code: 'CANTEEN_HAS_AREAS'
+              });
+            }
+          }
           await db.prepare('DELETE FROM canteens WHERE tenant_id = ? AND id = ?').run(tenantIdFor(activeUser), id);
           await audit(db, activeUser, 'DELETE', 'canteen', id);
           await invalidateRankings();
@@ -2160,7 +2457,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         await upsertCanteen(db, await readBody(req), id, tenantIdFor(activeUser));
         await audit(db, activeUser, 'UPDATE', 'canteen', id);
         await invalidateRankings();
-        return send(res, 200, await snapshot(db, activeUser));
+        return send(res, 200, { ...(await snapshot(db, activeUser)), savedId: id });
       }
 
       if (method === 'POST' && url.pathname === '/api/admin/dishes') {
@@ -2168,16 +2465,21 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const id = await upsertDish(db, await readBody(req), undefined, tenantIdFor(activeUser));
         await audit(db, activeUser, 'UPSERT', 'dish', id);
         await invalidateRankings();
-        return send(res, 201, await snapshot(db, activeUser));
+        const savedEntity = rowToDish(await db.prepare('SELECT * FROM dishes WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), id));
+        return send(res, 201, { ...(await snapshot(db, activeUser)), savedId: id, savedEntity });
       }
 
       if (method === 'POST' && url.pathname === '/api/admin/dishes/import') {
         const activeUser = await requireCapability(db, req, 'dish:bulk_import');
         const body = await readBody(req);
         if (!Array.isArray(body.dishes)) throw Object.assign(new Error('dishes 必须是数组'), { status: 400 });
-        const imported = [];
-        for (const dish of body.dishes) imported.push(await upsertDish(db, dish, undefined, tenantIdFor(activeUser)));
-        await audit(db, activeUser, 'BULK_IMPORT', 'dish', `${imported.length}`);
+        const tenantId = tenantIdFor(activeUser);
+        const imported = await withTransaction(db, async (tx) => {
+          const ids = [];
+          for (const dish of body.dishes) ids.push(await upsertDish(tx, dish, undefined, tenantId));
+          await audit(tx, activeUser, 'BULK_IMPORT', 'dish', `${ids.length}`);
+          return ids;
+        });
         await invalidateRankings();
         return send(res, 200, { imported: imported.length, state: await snapshot(db, activeUser) });
       }
@@ -2203,9 +2505,10 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const permission = method === 'DELETE' ? 'dish:delete' : 'dish:write';
         const activeUser = await requireCapability(db, req, permission);
         const id = decodeURIComponent(pathParts[3]);
-        const existing = await db.prepare("SELECT id FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantIdFor(activeUser), id);
+        const existing = await db.prepare('SELECT id, status FROM dishes WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), id);
         if (!existing) throw Object.assign(new Error('菜品不存在'), { status: 404 });
         if (method === 'DELETE') {
+          if (existing.status !== 'active') throw Object.assign(new Error('菜品不存在'), { status: 404 });
           await db.prepare("UPDATE dishes SET status = 'hidden', updated_at = ? WHERE tenant_id = ? AND id = ?").run(now(), tenantIdFor(activeUser), id);
           await deleteRetrievalSource(db, { tenantId: tenantIdFor(activeUser), sourceType: 'dish', sourceId: id });
           await audit(db, activeUser, 'DELETE', 'dish', id);
@@ -2215,7 +2518,8 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         await upsertDish(db, await readBody(req), id, tenantIdFor(activeUser));
         await audit(db, activeUser, 'UPDATE', 'dish', id);
         await invalidateRankings();
-        return send(res, 200, await snapshot(db, activeUser));
+        const savedEntity = rowToDish(await db.prepare('SELECT * FROM dishes WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), id));
+        return send(res, 200, { ...(await snapshot(db, activeUser)), savedId: id, savedEntity });
       }
 
 
@@ -2545,6 +2849,24 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         return send(res, 200, { driver: process.env.DB_DRIVER === 'postgres' || process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite', tables, quality, workflow: ['食堂', '档口', '菜品', '菜单', '菜单明细', '发布'] });
 
       }
+      if (method === 'GET' && url.pathname === '/api/admin/catalog/tree') {
+        const activeUser = await requireAnyCapability(db, req, ['audit:read', 'canteen:write', 'stall:write', 'dish:write']);
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 20, 1), 20);
+        const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+        const include = String(url.searchParams.get('include') || 'summary');
+        const result = await loadAdminCatalogTree(db, {
+          tenantId: tenantIdFor(activeUser),
+          regionId: String(url.searchParams.get('venueId') || url.searchParams.get('regionId') || '').trim(),
+          canteenId: String(url.searchParams.get('areaId') || url.searchParams.get('canteenId') || '').trim(),
+          stallId: String(url.searchParams.get('stallId') || '').trim(),
+          query: url.searchParams.get('q') || '',
+          includeDishes: include === 'dishes',
+          limit,
+          offset
+        });
+        await audit(db, activeUser, 'LIST', 'catalog_tree', null, { include, query: url.searchParams.get('q') || '' });
+        return send(res, 200, result);
+      }
       if (method === 'GET' && url.pathname === '/api/admin/retrieval/status') {
         const activeUser = await requireCapability(db, req, 'audit:read');
         return send(res, 200, await getRetrievalIndexStatus(db, { tenantId: tenantIdFor(activeUser) }));
@@ -2853,16 +3175,21 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (!body.canteenId || !String(body.name || '').trim() || !String(body.floor || '').trim() || !String(body.category || '').trim()) throw Object.assign(new Error('缺少必填字段：canteenId, name, floor, category'), { status: 400 });
         const tenantId = tenantIdFor(activeUser);
         const canteenId = String(body.canteenId).trim();
-        const canteen = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
-        if (!canteen) throw Object.assign(new Error('所属食堂不存在'), { status: 400 });
         const stallId = String(body.id || `stall-${randomUUID()}`).trim();
         const parentId = normalizeStallParentId(body.parentId);
+        if (parentId) {
+          throw Object.assign(new Error('不再支持新建子档口；请将档口直属餐厅或楼层餐区'), {
+            status: 400,
+            code: 'STALL_PARENT_LEGACY_ONLY'
+          });
+        }
+        await requireCatalogDiningArea(db, { tenantId, canteenId });
         await validateStallParent(db, { tenantId, stallId, canteenId, parentId });
         await db.prepare('INSERT INTO stalls (id, tenant_id, canteen_id, parent_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
           .run(stallId, tenantId, canteenId, parentId, body.floor, String(body.name).trim(), String(body.category).trim(), Number(body.rating || 4.5), Number(body.avgPrice || 0), body.open !== false ? 1 : 0, body.description || '', now(), now());
         await audit(db, activeUser, 'CREATE', 'stall', stallId);
         await invalidateRankings();
-        return send(res, 201, await snapshot(db, activeUser));
+        return send(res, 201, { ...(await snapshot(db, activeUser)), savedId: stallId });
       }
 
       if ((method === 'PUT' || method === 'DELETE') && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'stalls' && pathParts[3]) {
@@ -2874,7 +3201,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (!existing) throw Object.assign(new Error('档口不存在'), { status: 404 });
         const childCount = Number((await db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ? AND parent_id = ?').get(tenantId, stallId))?.count || 0);
         if (method === 'DELETE') {
-          if (childCount > 0) throw Object.assign(new Error('请先删除或迁移该档口下的子档口'), { status: 409 });
+          if (childCount > 0) throw Object.assign(new Error('请先删除或迁移该档口下的子档口'), { status: 409, code: 'STALL_HAS_CHILDREN' });
           await db.prepare('DELETE FROM stalls WHERE tenant_id = ? AND id = ?').run(tenantId, stallId);
           await audit(db, activeUser, 'DELETE', 'stall', stallId);
           await invalidateRankings();
@@ -2885,9 +3212,21 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const params = [];
         const canteenId = body.canteenId !== undefined ? String(body.canteenId).trim() : existing.canteen_id;
         const parentId = body.parentId !== undefined ? normalizeStallParentId(body.parentId) : (existing.parent_id || null);
-        const canteen = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
-        if (!canteen) throw Object.assign(new Error('所属食堂不存在'), { status: 400 });
-        if (childCount > 0 && canteenId !== existing.canteen_id) throw Object.assign(new Error('存在子档口的一级档口不能直接更换所属食堂'), { status: 400 });
+        if (parentId && parentId !== existing.parent_id) {
+          throw Object.assign(new Error('不再支持新增或变更父档口；历史子档口只能迁移为餐饮分区直属档口'), {
+            status: 400,
+            code: 'STALL_PARENT_LEGACY_ONLY'
+          });
+        }
+        const isMoving = canteenId !== existing.canteen_id;
+        const isMigratingLegacyChild = Boolean(existing.parent_id && body.parentId !== undefined && parentId === null);
+        if (isMoving || isMigratingLegacyChild) {
+          await requireCatalogDiningArea(db, { tenantId, canteenId });
+        } else {
+          const canteen = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
+          if (!canteen) throw Object.assign(new Error('所属食堂不存在，或餐饮分区不属于当前租户'), { status: 400, code: 'STALL_CANTEEN_NOT_FOUND' });
+        }
+        if (childCount > 0 && isMoving) throw Object.assign(new Error('存在子档口的一级档口不能直接更换所属餐饮分区'), { status: 400, code: 'STALL_PARENT_HAS_CHILDREN' });
         await validateStallParent(db, { tenantId, stallId, canteenId, parentId, hasChildren: childCount > 0 });
         if (body.canteenId !== undefined) {
           sets.push('canteen_id = ?'); params.push(canteenId);
@@ -2906,7 +3245,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         await db.prepare(`UPDATE stalls SET ${sets.join(', ')} WHERE tenant_id = ? AND id = ?`).run(...params);
         await audit(db, activeUser, 'UPDATE', 'stall', stallId);
         await invalidateRankings();
-        return send(res, 200, await snapshot(db, activeUser));
+        return send(res, 200, { ...(await snapshot(db, activeUser)), savedId: stallId });
       }
 
       // ── Campus environment (admin) ───────────────────────────────
