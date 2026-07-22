@@ -729,9 +729,9 @@ const isManagePage = computed(() => route.path === '/admin');
 const activePanel = computed(() => String(route.query.panel || (route.path === '/admin' ? 'reviews' : '')));
 const pageMeta = computed(() => {
   if (isAiPage.value) return { eyebrow: 'AI 配置', title: 'AI 提供商与部署配置', description: '配置 OpenAI-compatible API，查看模型状态、连接测试、使用量、配额和部署就绪度。' };
-  if (isEntryPage.value) return { eyebrow: '数据中心', title: '餐饮目录数据录入', description: '按食堂、餐厅或楼层餐区、档口、菜品的统一层级录入数据。' };
+  if (isEntryPage.value) return { eyebrow: '数据中心', title: '餐饮目录数据录入', description: '按餐饮场所、餐饮分区、档口、菜品的统一层级录入数据。' };
   if (activePanel.value === 'reviews') return { eyebrow: '内容治理', title: '内容审核', description: '集中审核菜品评价、食堂评价和校园帖子，并查看关联对象与评价同步状态。' };
-  if (activePanel.value === 'data') return { eyebrow: '数据管理', title: '四区数据管理', description: '固定四个餐饮区，按食堂、一级档口、子档口和菜品逐级管理。' };
+  if (activePanel.value === 'data') return { eyebrow: '数据管理', title: '四区数据管理', description: '固定四个餐饮场所，按餐饮分区、档口和菜品逐级管理。' };
   return { eyebrow: '内容治理', title: '内容审核', description: '集中审核评价与校园帖子。' };
 });
 const message = ref('');
