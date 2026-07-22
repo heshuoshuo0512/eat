@@ -28,10 +28,13 @@
 
         <form v-else class="catalog-drawer-form" @submit.prevent="save">
           <fieldset class="catalog-drawer-body catalog-drawer-fieldset" :disabled="busy">
-            <p v-if="errorMessage" class="catalog-form-message error" role="alert">{{ errorMessage }}</p>
+            <p v-if="errorMessage" :class="['catalog-form-message', 'error', `kind-${errorKind || 'unknown'}`]" role="alert" aria-live="assertive">
+              <strong>{{ errorKindLabel }}</strong><span>{{ errorMessage }}</span>
+              <small v-if="errorCode">错误码 {{ errorCode }}</small>
+            </p>
 
             <template v-if="entityType === 'venue' || entityType === 'area'">
-              <CatalogAreaFormFields :form="form" :entity-label="entityType === 'venue' ? '食堂' : areaLabel" compact />
+              <CatalogAreaFormFields :form="form" :entity-label="entityType === 'venue' ? '餐饮场所' : areaLabel" compact />
             </template>
 
             <template v-else-if="entityType === 'stall'">
@@ -108,6 +111,8 @@ const closeButton = ref(null);
 const initialSnapshot = ref('{}');
 const saving = ref(false);
 const errorMessage = ref('');
+const errorKind = ref('');
+const errorCode = ref('');
 const uploadingImage = ref(false);
 const imageMessage = ref('');
 const imageError = ref(false);
@@ -136,11 +141,18 @@ const stallOptions = computed(() => {
 });
 const dirty = computed(() => mode.value !== 'view' && JSON.stringify(form) !== initialSnapshot.value);
 const busy = computed(() => saving.value || uploadingImage.value || visionLoading.value);
+const errorKindLabel = computed(() => ({
+  permission: '权限不足',
+  validation: '请修正表单',
+  conflict: '保存冲突',
+  network: '网络异常',
+  server: '服务异常'
+}[errorKind.value] || '保存失败'));
 
 const drawerTitle = computed(() => {
   if (mode.value === 'view') return item.value?.name || '节点详情';
   const action = mode.value === 'edit' ? '编辑' : '新增';
-  const labels = { venue: '食堂', area: areaLabel.value, stall: '档口', dish: '菜品' };
+  const labels = { venue: '餐饮场所', area: areaLabel.value, stall: '档口', dish: '菜品' };
   return `${action}${labels[entityType.value] || '数据'}`;
 });
 const breadcrumb = computed(() => [venue.value?.name, area.value?.name, stall.value?.name, entityType.value === 'dish' ? item.value?.name : null].filter(Boolean).join(' / ') || '餐饮目录');
@@ -150,7 +162,7 @@ const viewFields = computed(() => {
     { label: '位置', value: value.location },
     { label: '营业时间', value: value.hours },
     { label: '拥挤度', value: value.crowdLevel == null ? '' : `${value.crowdLevel}%` },
-    { label: '标签', value: (value.tags || []).join('、') },
+    { label: '标签', value: listText(value.tags).replace(/, /g, '、') },
     { label: '简介', value: value.description }
   ];
   if (entityType.value === 'stall') return [
@@ -162,12 +174,12 @@ const viewFields = computed(() => {
     { label: '营业状态', value: value.open ? '营业中' : '暂停营业' },
     { label: '简介', value: value.description }
   ];
-  const nutrition = value.nutrition || {};
+  const nutrition = value.nutrition && typeof value.nutrition === 'object' ? value.nutrition : {};
   return [
     { label: '所属档口', value: stall.value?.name },
     { label: '价格', value: value.price == null ? '' : `¥${value.price}` },
     { label: '口味 / 菜系', value: [value.taste, value.cuisine].filter(Boolean).join(' / ') },
-    { label: '食材', value: (value.ingredients || []).join('、') },
+    { label: '食材', value: listText(value.ingredients).replace(/, /g, '、') },
     { label: '营养', value: `${nutrition.calories || 0} kcal · 蛋白质 ${nutrition.protein || 0}g` },
     { label: '状态', value: value.status === 'hidden' ? '已隐藏' : '上架中' },
     { label: '描述', value: value.description }
@@ -180,6 +192,8 @@ function listText(value) {
 
 function resetForm() {
   errorMessage.value = '';
+  errorKind.value = '';
+  errorCode.value = '';
   imageMessage.value = '';
   imageError.value = false;
   clearVisionImage();
@@ -210,6 +224,24 @@ function resetForm() {
     });
   }
   initialSnapshot.value = JSON.stringify(form);
+}
+
+function focusErrorField(error) {
+  const code = String(error?.code || '').toUpperCase();
+  const fieldName = code.includes('STALL') || code.includes('DISH_STALL') ? (entityType.value === 'dish' ? 'stallId' : 'canteenId') : '';
+  const selector = fieldName ? `[name="${fieldName}"]` : 'input:not([type="file"]), select, textarea';
+  nextTick(() => dialogElement.value?.querySelector(selector)?.focus?.());
+}
+
+function describeSaveError(error) {
+  const kind = error?.kind || (error?.status >= 500 ? 'server' : 'validation');
+  errorKind.value = kind;
+  errorCode.value = String(error?.code || '');
+  if (kind === 'permission') return '当前账号没有执行此操作的权限，请联系管理员。';
+  if (kind === 'conflict') return `${error?.message || '数据与现有记录冲突'}${error?.code ? `（${error.code}）` : ''}`;
+  if (kind === 'validation') return error?.message || '请检查标记字段后再保存。';
+  if (kind === 'network') return error?.message || '网络连接失败，表单内容已保留，请重试。';
+  return error?.message || '保存失败，请稍后重试。';
 }
 
 function splitList(value) {
@@ -383,7 +415,8 @@ async function save() {
       stallId: savedType === 'stall' ? saved.id : (savedType === 'dish' ? saved.stallId : undefined)
     });
   } catch (error) {
-    errorMessage.value = error.message || '保存失败，请稍后重试。';
+    errorMessage.value = describeSaveError(error);
+    focusErrorField(error);
   } finally {
     saving.value = false;
   }
@@ -452,7 +485,8 @@ watch(() => props.open, async (isOpen) => {
   if (!isOpen) return;
   previouslyFocusedElement = typeof document !== 'undefined' ? document.activeElement : null;
   await nextTick();
-  closeButton.value?.focus?.();
+  if (mode.value === 'view') closeButton.value?.focus?.();
+  else dialogElement.value?.querySelector('input:not([type="file"]), select, textarea')?.focus?.();
 });
 
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', handleBeforeUnload);

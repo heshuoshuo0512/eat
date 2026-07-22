@@ -2,18 +2,18 @@
   <fieldset :class="['catalog-area-fields', { compact }]">
     <legend>{{ entityLabel }}信息</legend>
     <p class="field-intro">名称、位置、营业时间和展示信息</p>
-    <label>名称<input v-model.trim="form.name" required maxlength="40" /></label>
+    <label>名称<input v-model.trim="form.name" name="name" required maxlength="40" /></label>
     <div class="area-field-grid two">
-      <label>位置<input v-model.trim="form.location" required maxlength="80" /></label>
-      <label>营业时间<input v-model.trim="form.hours" required placeholder="07:00 - 21:00" /></label>
+      <label>位置<input v-model.trim="form.location" name="location" required maxlength="80" /></label>
+      <label>营业时间<input v-model.trim="form.hours" name="hours" required placeholder="07:00 - 21:00" /></label>
     </div>
-    <label>标签<input v-model="form.tags" placeholder="早餐, 清真, 夜宵" /></label>
-    <label>简介<textarea v-model.trim="form.description" rows="4" required maxlength="300"></textarea></label>
+    <label>标签<input v-model="form.tags" name="tags" placeholder="早餐, 清真, 夜宵" /></label>
+    <label>简介<textarea v-model.trim="form.description" name="description" rows="4" required maxlength="300"></textarea></label>
     <details class="area-advanced-fields">
       <summary>图片与客流设置</summary>
       <div class="area-field-grid two">
-        <label>拥挤度<input v-model.number="form.crowdLevel" type="number" min="0" max="100" /></label>
-        <label>图片 URL<input v-model.trim="form.imageUrl" type="url" placeholder="https://..." /></label>
+        <label>拥挤度<input v-model.number="form.crowdLevel" name="crowdLevel" type="number" min="0" max="100" /></label>
+        <label>图片 URL<input v-model.trim="form.imageUrl" name="imageUrl" type="url" placeholder="https://..." /></label>
       </div>
       <div v-if="form.imageUrl" class="area-image-preview"><img :src="form.imageUrl" :alt="form.name || entityLabel" /></div>
       <slot name="image-actions"></slot>

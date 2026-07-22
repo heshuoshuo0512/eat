@@ -3,20 +3,20 @@
     <legend>档口信息</legend>
     <p class="field-intro">档口统一直属餐厅或楼层餐区</p>
     <label>所属{{ areaLabel }}
-      <select v-model="form.canteenId" required @change="$emit('area-change')">
+      <select v-model="form.canteenId" name="canteenId" required @change="$emit('area-change')">
         <option value="">请选择{{ areaLabel }}</option>
         <option v-for="area in areas" :key="area.id" :value="area.id">{{ area.name }}</option>
       </select>
     </label>
-    <label>档口名称<input v-model.trim="form.name" required maxlength="40" /></label>
+    <label>档口名称<input v-model.trim="form.name" name="name" required maxlength="40" /></label>
     <div class="stall-field-grid two">
-      <label>楼层<input v-model.trim="form.floor" required maxlength="10" placeholder="1F" /></label>
-      <label>品类<input v-model.trim="form.category" required maxlength="30" placeholder="健康轻食" /></label>
-      <label>评分<input v-model.number="form.rating" type="number" min="1" max="5" step="0.1" required /></label>
-      <label>人均价格<input v-model.number="form.avgPrice" type="number" min="1" max="200" required /></label>
+      <label>楼层<input v-model.trim="form.floor" name="floor" required maxlength="10" placeholder="1F" /></label>
+      <label>品类<input v-model.trim="form.category" name="category" required maxlength="30" placeholder="健康轻食" /></label>
+      <label>评分<input v-model.number="form.rating" name="rating" type="number" min="1" max="5" step="0.1" required /></label>
+      <label>人均价格<input v-model.number="form.avgPrice" name="avgPrice" type="number" min="1" max="200" required /></label>
     </div>
-    <label class="stall-switch-row"><input v-model="form.open" type="checkbox" /><span>当前营业</span></label>
-    <label>简介<textarea v-model.trim="form.description" rows="4" maxlength="300"></textarea></label>
+    <label class="stall-switch-row"><input v-model="form.open" name="open" type="checkbox" /><span>当前营业</span></label>
+    <label>简介<textarea v-model.trim="form.description" name="description" rows="4" maxlength="300"></textarea></label>
   </fieldset>
 </template>
 

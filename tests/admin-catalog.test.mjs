@@ -46,6 +46,20 @@ function findFirstDish(tree) {
   return null;
 }
 
+function treeHasDish(tree, dishId) {
+  const visit = (node) => {
+    if ((node.directDishes || []).some((dish) => dish.id === dishId)) return true;
+    return (node.children || []).some(visit);
+  };
+  for (const region of tree.regions || []) {
+    for (const canteen of region.canteens || []) {
+      if ((canteen.stalls || []).some(visit)) return true;
+    }
+    if ((region.unassignedStalls || []).some(visit)) return true;
+  }
+  return false;
+}
+
 describe('admin catalog tree', () => {
   before(async () => {
     db = openDatabase(':memory:');
@@ -294,6 +308,29 @@ describe('admin catalog tree', () => {
     assert.equal(filtered.data.regions.length, 1);
     assert.equal(filtered.data.regions[0].id, 'campus-main');
     assert.equal(filtered.data.regions[0].canteens.length, 1);
+  });
+
+  it('uses q to search dish metadata while retaining the full parent path', async () => {
+    const full = await request('/api/admin/catalog/tree?include=dishes&regionId=campus-main&limit=20&offset=0', { token: adminToken });
+    assert.equal(full.status, 200);
+    const dish = findFirstDish(full.data);
+    assert.ok(dish, 'seed data should contain a dish for metadata search');
+    const queries = [
+      ['taste', dish.taste],
+      ['cuisine', dish.cuisine],
+      ['tag', dish.tags?.[0]],
+      ['ingredient', dish.ingredients?.[0]]
+    ].filter(([, value]) => String(value || '').trim());
+    assert.ok(queries.length >= 4, 'seed dish should expose searchable metadata');
+
+    for (const [field, value] of queries) {
+      const searched = await request(`/api/admin/catalog/tree?include=dishes&q=${encodeURIComponent(value)}&regionId=campus-main`, { token: adminToken });
+      assert.equal(searched.status, 200, `${field} search should succeed`);
+      assert.ok(treeHasDish(searched.data, dish.id), `${field} search should retain the matching dish`);
+      const region = searched.data.regions.find((entry) => entry.id === 'campus-main');
+      assert.ok(region?.canteens?.length, `${field} search should retain the dining-area parent`);
+      assert.ok(region.canteens.some((area) => area.stalls?.length), `${field} search should retain the stall parent`);
+    }
   });
 
   it('allows catalog operators, rejects students and exposes parentId in nested nodes', async () => {

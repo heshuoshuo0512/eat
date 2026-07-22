@@ -8,6 +8,7 @@ const areaFields = readFileSync('src/components/CatalogAreaFormFields.vue', 'utf
 const dishFields = readFileSync('src/components/CatalogDishFormFields.vue', 'utf8');
 const stallFields = readFileSync('src/components/CatalogStallFormFields.vue', 'utf8');
 const admin = readFileSync('src/views/AdminView.vue', 'utf8');
+const apiClient = readFileSync('src/services/apiClient.js', 'utf8');
 
 describe('administrator catalog workspace UI contracts', () => {
   it('uses a fixed four-quadrant workspace with independent scrolling', () => {
@@ -19,6 +20,29 @@ describe('administrator catalog workspace UI contracts', () => {
     assert.match(view, /\.venue-panel-scroll[^}]*overflow-y:\s*auto/s);
     assert.match(view, /scrollbar-gutter:\s*stable/);
     assert.match(view, /position:\s*sticky/);
+  });
+
+  it('renders the missing-venue state before the statistics branch', () => {
+    const statsBranch = view.indexOf('<template v-else-if="modeByVenue[venue.id] === \'stats\'">');
+    const missingBranch = view.indexOf('<template v-else-if="venue.missing">');
+    assert.ok(statsBranch >= 0, 'statistics branch should remain explicit');
+    assert.ok(missingBranch >= 0, 'missing venue branch should remain explicit');
+    assert.ok(missingBranch < statsBranch, 'a missing venue must show its configuration state even when statistics mode is remembered');
+    const missingBlock = view.slice(missingBranch, statsBranch);
+    assert.match(missingBlock, /配置场所/);
+  });
+
+  it('shows all four statistics metrics with unambiguous labels', () => {
+    const summary = view.match(/<div class="stats-total-line"[\s\S]*?<\/div>\s*<\/div>/)?.[0];
+    assert.ok(summary, 'statistics view should expose its metric summary');
+    for (const field of ['canteens', 'stalls', 'dishes', 'openStalls']) {
+      assert.match(summary, new RegExp(`venue\\.counts\\?\\.${field}`), `missing summary field ${field}`);
+    }
+    assert.match(summary, /venue\.areaLabel|餐饮分区/);
+    assert.match(summary, /档口总数/);
+    assert.match(summary, /菜品总数/);
+    assert.match(summary, /营业档口/);
+    assert.match(view, /\.stats-total-line\s*\{[^}]*grid-template-columns:\s*repeat\(4,/s);
   });
 
   it('uses unified venue, area, stall and dish terminology', () => {
@@ -65,6 +89,23 @@ describe('administrator catalog workspace UI contracts', () => {
     assert.match(view, /venue-panel\.is-highlighted/);
   });
 
+  it('passes the current search term to the server-side catalog query', () => {
+    const refreshBody = view.match(/async function refreshTree\(\)\s*\{([\s\S]*?)\n\}/)?.[1];
+    assert.ok(refreshBody, 'refreshTree should remain an inspectable function');
+    assert.match(refreshBody, /loadAdminCatalogTree\(\{[\s\S]*q:\s*(?:searchTerm\.value(?:\.trim\(\))?|normalizedQuery\(\)|String\(route\.query\.q\s*\|\|\s*''\))/);
+    assert.match(apiClient, /getAdminCatalogTree\(params\s*=\s*\{\}\)/);
+  });
+
+  it('uses real dish thumbnails and classifies actionable errors', () => {
+    assert.match(view, /<img[^>]+:src="dish\.imageUrl"[^>]*loading="lazy"/);
+    assert.match(view, /dish\.image\s*\|\|\s*'餐'/);
+    const source = `${view}\n${drawer}\n${apiClient}`;
+    for (const kind of ['permission', 'validation', 'conflict', 'network']) {
+      assert.match(source, new RegExp(kind), `missing ${kind} error classification`);
+    }
+    assert.match(source, /error(?:Kind|Category)|error\.kind/);
+  });
+
   it('keeps write controls permission-aware and edits in the right drawer', () => {
     assert.match(view, /canWriteCanteens/);
     assert.match(view, /canWriteStalls/);
@@ -103,5 +144,9 @@ describe('administrator catalog workspace UI contracts', () => {
     assert.match(drawer, /@media \(max-width: 900px\)[\s\S]*width:\s*100vw/);
     assert.match(view, /prefers-reduced-motion/);
     assert.match(drawer, /prefers-reduced-motion/);
+    const touchBlock = view.match(/@media \(hover: none\), \(pointer: coarse\)\s*\{([\s\S]*?)\n\}/)?.[1];
+    assert.ok(touchBlock, 'touch-specific controls should have a dedicated media block');
+    assert.match(touchBlock, /min-height:\s*(?:2\.75rem|44px)/);
+    assert.match(touchBlock, /min-width:\s*(?:2\.75rem|44px)/);
   });
 });
