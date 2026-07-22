@@ -3,10 +3,10 @@
   <div v-if="!store.user && !previewMode" class="login-landing">
     <section class="login-hero">
       <RouterLink class="brand" to="/">
-        <span class="brand-mark">食</span>
+        <img class="brand-mark" :src="appIcon" alt="" aria-hidden="true">
         <span>
           <strong>智慧食堂</strong>
-          <small>Enterprise MVP</small>
+          <small>Smart Canteen</small>
         </span>
       </RouterLink>
       <p class="eyebrow">Smart Canteen Platform</p>
@@ -75,10 +75,10 @@
     <button class="mobile-nav-toggle" type="button" :aria-expanded="mobileNavOpen" aria-controls="app-sidebar" @click="mobileNavOpen = !mobileNavOpen">{{ mobileNavOpen ? '收起导航' : '打开导航' }}</button>
     <aside id="app-sidebar" :class="['sidebar', { open: mobileNavOpen }]">
       <RouterLink class="brand" to="/" @click="mobileNavOpen = false">
-        <span class="brand-mark">食</span>
+        <img class="brand-mark" :src="appIcon" alt="" aria-hidden="true">
         <span>
           <strong>智慧食堂</strong>
-          <small>Enterprise MVP</small>
+          <small>Smart Canteen</small>
         </span>
       </RouterLink>
       <nav class="nav-list" aria-label="主导航">
@@ -106,6 +106,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
+import appIcon from './assets/brand/app-icon.svg';
 import { validateLoginForm, validateRegisterForm } from './domain/validation.js';
 import { useCanteenStore } from './stores/canteenStore.js';
 

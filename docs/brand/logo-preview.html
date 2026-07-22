@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智慧食堂 Logo 预览</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #18251f; background: #f4f7f5; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    main { width: min(1120px, calc(100% - 48px)); margin: 0 auto; padding: 64px 0 72px; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 32px; padding-bottom: 28px; border-bottom: 1px solid #dfe8e3; }
+    h1 { margin: 0; font-size: 36px; line-height: 1.1; }
+    header p { max-width: 480px; margin: 0; color: #64705f; line-height: 1.7; }
+    .band { display: grid; grid-template-columns: 1.25fr .75fr; gap: 32px; align-items: center; min-height: 290px; padding: 42px 0; border-bottom: 1px solid #dfe8e3; }
+    .lockup { width: min(100%, 560px); }
+    .samples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .sample { display: grid; place-items: center; aspect-ratio: 1; border-radius: 8px; background: #fff; }
+    .sample.dark { background: #167a5b; }
+    .sample img { width: 54%; height: 54%; object-fit: contain; }
+    .sample.app img { width: 68%; height: 68%; }
+    .detail { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; padding-top: 34px; }
+    .detail h2 { margin: 0 0 8px; font-size: 16px; }
+    .detail p { margin: 0; color: #64705f; line-height: 1.7; }
+    @media (max-width: 720px) {
+      main { width: min(100% - 28px, 1120px); padding-top: 32px; }
+      header, .band { display: grid; }
+      .detail { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>智慧食堂<br>品牌标志</h1>
+      <p>“智食碗”把餐碗、热气与数据柱合成一个符号，用品牌绿表达可信与健康，用暖金圆点代表每一位学生的个性化目标。</p>
+    </header>
+    <section class="band">
+      <img class="lockup" src="../../src/assets/brand/logo-lockup.svg" alt="智慧食堂横向标志">
+      <div class="samples">
+        <div class="sample"><img src="../../src/assets/brand/logo-mark.svg" alt="标准标志"></div>
+        <div class="sample dark"><img src="../../src/assets/brand/logo-mark-reversed.svg" alt="反白标志"></div>
+        <div class="sample app"><img src="../../src/assets/brand/app-icon.svg" alt="应用图标"></div>
+        <div class="sample"><img style="width:32px;height:32px" src="../../src/assets/brand/logo-mark.svg" alt="32 像素标志"></div>
+      </div>
+    </section>
+    <section class="detail">
+      <div><h2>真实的一餐</h2><p>稳定的碗形承载菜单、档口和营养数据。</p></div>
+      <div><h2>可理解的数据</h2><p>三根圆头柱既像热气，也像营养与推荐结果。</p></div>
+      <div><h2>以学生为中心</h2><p>暖金圆点是用户，也是每天变化的健康目标。</p></div>
+    </section>
+  </main>
+</body>
+</html>

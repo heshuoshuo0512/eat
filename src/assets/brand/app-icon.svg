@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="icon-title icon-desc">
+  <title id="icon-title">智慧食堂应用图标</title>
+  <desc id="icon-desc">绿色圆角底上的智慧食堂反白标志。</desc>
+  <rect width="96" height="96" rx="24" fill="#167A5B"/>
+  <g transform="translate(14.4 14.4) scale(.7)">
+    <path d="M15 49h66c-2.8 20-16.2 32-33 32S17.8 69 15 49Z" fill="#FFFFFF"/>
+    <rect x="24" y="31" width="11" height="13" rx="5.5" fill="#FFFFFF"/>
+    <rect x="42.5" y="20" width="11" height="24" rx="5.5" fill="#FFFFFF"/>
+    <rect x="61" y="27" width="11" height="17" rx="5.5" fill="#FFFFFF"/>
+    <circle cx="48" cy="12" r="5" fill="#F4B84E"/>
+    <rect x="34" y="85" width="28" height="5" rx="2.5" fill="#FFFFFF"/>
+  </g>
+</svg>

@@ -4,7 +4,7 @@
     <view class="brand-nav">
       <view class="brand-left">
         <button v-if="back" class="nav-back" @tap="goBack">‹</button>
-        <view class="brand-mark">食</view>
+        <image class="brand-mark" src="/static/brand/logo-mark.svg" mode="aspectFit" />
         <view class="brand-copy">
           <text class="brand-name">{{ title }}</text>
           <text class="brand-sub">{{ subtitle }}</text>
@@ -50,7 +50,7 @@ function goBack() {
 .brand-copy { min-width:0; }
 .nav-right { display:flex; align-items:center; }
 .nav-back { width:58rpx; height:58rpx; padding:0; border-radius:18rpx; color:#18251f; background:#f3f6f4; font-size:46rpx; line-height:52rpx; }
-.brand-mark { display:flex; align-items:center; justify-content:center; width:66rpx; height:66rpx; border-radius:20rpx; color:#fff; background:#167a5b; font-size:32rpx; font-weight:900; }
+.brand-mark { display:block; width:66rpx; height:66rpx; flex:0 0 66rpx; }
 .brand-name,.brand-sub { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .brand-name { color:#18251f; font-size:31rpx; font-weight:900; }
 .brand-sub { margin-top:4rpx; color:#84918a; font-size:19rpx; }
