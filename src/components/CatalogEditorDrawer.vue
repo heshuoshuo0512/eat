@@ -529,7 +529,13 @@ defineExpose({ requestClose, confirmDiscard, dirty, saving, busy });
 .catalog-save-state { margin-right: auto; color: #69766c; font-size: .78rem; }
 .catalog-inline-warning, .catalog-form-message { margin: 0; border-radius: .42rem; padding: .75rem .85rem; font-size: .82rem; line-height: 1.5; }
 .catalog-inline-warning { background: #fff7dc; color: #72520a; border: 1px solid #eddc9a; }
-.catalog-form-message.error { background: #fff0ef; color: #8a2f29; border: 1px solid #efcbc7; }
+.catalog-form-message.error { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .16rem .55rem; align-items: baseline; background: #fff0ef; color: #8a2f29; border: 1px solid #efcbc7; }
+.catalog-form-message.error strong { font-size: .78rem; }
+.catalog-form-message.error span { min-width: 0; overflow-wrap: anywhere; }
+.catalog-form-message.error small { grid-column: 2; color: #99625d; font-size: .68rem; }
+.catalog-form-message.error.kind-permission { border-color: #e4c889; background: #fff8e8; color: #73500b; }
+.catalog-form-message.error.kind-conflict { border-color: #edbb91; background: #fff4e9; color: #7c4218; }
+.catalog-form-message.error.kind-network { border-color: #b9cedd; background: #eef7fb; color: #28566e; }
 .catalog-image-preview { overflow: hidden; aspect-ratio: 16 / 9; border: 1px solid rgba(31, 122, 77, .14); border-radius: .45rem; background: #edf4ee; }
 .catalog-image-preview img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .catalog-vision-prefill { display: grid; gap: .75rem; border-top: 1px solid rgba(31, 122, 77, .12); padding-top: .85rem; }
@@ -543,6 +549,9 @@ defineExpose({ requestClose, confirmDiscard, dirty, saving, busy });
   .catalog-drawer { width: 100vw; }
   .catalog-drawer-header, .catalog-drawer-body, .catalog-drawer-footer { padding-left: 1rem; padding-right: 1rem; }
   .catalog-form-grid.two, .catalog-form-grid.nutrition { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (hover: none), (pointer: coarse) {
+  .catalog-icon-button, .catalog-drawer-footer button, .catalog-vision-actions button { min-width: 2.75rem; min-height: 2.75rem; }
 }
 @media (prefers-reduced-motion: reduce) { .catalog-drawer-layer * { transition: none !important; animation: none !important; } }
 </style>

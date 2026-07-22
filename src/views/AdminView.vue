@@ -177,10 +177,10 @@
         <div>
           <p class="eyebrow">Four Dining Areas</p>
           <h2>四区数据管理</h2>
-          <p class="muted">固定展示四个食堂，统一按食堂 → 餐厅/楼层餐区 → 档口 → 菜品管理。</p>
+          <p class="muted">固定展示四个餐饮场所，统一按餐饮场所 → 餐饮分区（餐厅 / 楼层餐区）→ 档口 → 菜品管理。</p>
         </div>
         <div class="summary-bar compact-summary">
-          <div class="summary-item"><strong>{{ store.canteens.length }}</strong><span>食堂</span></div>
+          <div class="summary-item"><strong>{{ store.canteens.length }}</strong><span>餐饮场所 / 分区</span></div>
           <div class="summary-item"><strong>{{ store.stalls.length }}</strong><span>档口</span></div>
           <div class="summary-item"><strong>{{ store.dishes.length }}</strong><span>菜品</span></div>
           <div class="summary-item"><strong>{{ databaseOverview?.driver || '—' }}</strong><span>数据库</span></div>
@@ -207,15 +207,15 @@
 
         <label class="region-search">
           <span class="sr-only">搜索{{ regionCard.name }}数据</span>
-          <input v-model.trim="regionSearch[regionCard.id]" type="search" :placeholder="`搜索${regionCard.name}的食堂、档口或菜品`" />
+          <input v-model.trim="regionSearch[regionCard.id]" type="search" :placeholder="`搜索${regionCard.name}的餐饮分区、档口或菜品`" />
         </label>
 
         <div v-if="!regionCard.region" class="region-empty-state">
           <strong>固定区域数据缺失</strong>
-          <span>不会使用其他食堂补位。</span>
+          <span>不会使用其他餐饮场所补位。</span>
         </div>
         <div v-else-if="!regionCard.canteens.length" class="region-empty-state">
-          <strong>{{ regionSearch[regionCard.id] ? '未找到匹配数据' : '暂无下属食堂' }}</strong>
+          <strong>{{ regionSearch[regionCard.id] ? '未找到匹配数据' : `暂无下属${regionCard.id === 'campus-main' ? '餐厅' : '楼层餐区'}` }}</strong>
           <span>{{ regionSearch[regionCard.id] ? '请尝试其他关键词。' : '可从右上角新增该区域的食堂。' }}</span>
         </div>
         <div v-else class="region-hierarchy">
@@ -307,7 +307,7 @@
         <div>
           <p class="eyebrow">Focused Entry</p>
           <h2>分段数据录入</h2>
-          <p class="muted">所有录入统一遵循“食堂 → 餐厅/楼层餐区 → 档口 → 菜品”，保存后保留当前层级上下文。</p>
+          <p class="muted">所有录入统一遵循“餐饮场所 → 餐饮分区 → 档口 → 菜品”，保存后保留当前层级上下文。</p>
         </div>
         <div class="entry-task-tabs" role="tablist" aria-label="数据录入类型">
           <button v-for="task in entryTasks" :key="task.id" type="button" :class="{ active: entryMode === task.id }" @click="setEntryMode(task.id)">{{ task.label }}</button>
@@ -315,12 +315,12 @@
       </div>
       <div v-if="!entryTasks.length" class="moderation-empty">
         <strong>当前角色无数据录入权限</strong>
-        <span>请联系管理员分配食堂、餐饮分区、档口或菜品写入权限。</span>
+        <span>请联系管理员分配餐饮场所、餐饮分区、档口或菜品写入权限。</span>
       </div>
       <div v-else-if="entryMode !== 'import'" class="entry-context-grid">
-        <label>食堂
+        <label>餐饮场所
           <select v-model="entryContext.venueId" @change="handleEntryVenueChange">
-            <option value="">请选择食堂</option>
+            <option value="">请选择餐饮场所</option>
             <option v-for="venue in fixedRegions" :key="venue.id" :value="venue.id">{{ regionDisplayName(venue) }}</option>
           </select>
         </label>
@@ -782,7 +782,7 @@ function regionDisplayName(definition) {
   return store.canteens.find((canteen) => canteen.id === definition.id)?.name || definition.name;
 }
 const entryTaskDefinitions = [
-  { id: 'venue', label: '食堂', allowed: canWriteCanteens },
+  { id: 'venue', label: '餐饮场所', allowed: canWriteCanteens },
   { id: 'area', label: '餐厅 / 楼层餐区', allowed: canWriteCanteens },
   { id: 'stall', label: '档口', allowed: canWriteStalls },
   { id: 'dish', label: '菜品', allowed: canWriteDishes },
@@ -802,12 +802,12 @@ const entryAreaLabel = computed(() => {
   if (!entryContext.venueId) return '餐厅 / 楼层餐区';
   return entryContext.venueId === 'campus-main' ? '餐厅' : '楼层餐区';
 });
-const entryEntityLabel = computed(() => entryMode.value === 'venue' ? '食堂' : entryAreaLabel.value);
+const entryEntityLabel = computed(() => entryMode.value === 'venue' ? '餐饮场所' : entryAreaLabel.value);
 const entryContextPath = computed(() => {
   const venue = fixedRegions.find((item) => item.id === entryContext.venueId);
   const area = store.canteens.find((item) => item.id === entryContext.areaId);
   const stall = store.stalls.find((item) => item.id === entryContext.stallId);
-  return [venue ? regionDisplayName(venue) : '未选择食堂', area?.name, stall?.name].filter(Boolean).join(' / ');
+  return [venue ? regionDisplayName(venue) : '未选择餐饮场所', area?.name, stall?.name].filter(Boolean).join(' / ');
 });
 const regionSearch = reactive(Object.fromEntries(fixedRegions.map((region) => [region.id, ''])));
 const openCanteens = ref(new Set());
