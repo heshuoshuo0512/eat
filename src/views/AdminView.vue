@@ -177,7 +177,7 @@
         <div>
           <p class="eyebrow">Four Dining Areas</p>
           <h2>四区数据管理</h2>
-          <p class="muted">固定展示四个餐饮场所，统一按餐饮场所 → 餐饮分区（餐厅 / 楼层餐区）→ 档口 → 菜品管理。</p>
+          <p class="muted">固定展示四个餐饮场所，统一按餐饮场所 → 餐饮分区 → 档口 → 菜品管理（餐厅 / 楼层餐区作为分区类型）。</p>
         </div>
         <div class="summary-bar compact-summary">
           <div class="summary-item"><strong>{{ store.canteens.length }}</strong><span>餐饮场所 / 分区</span></div>

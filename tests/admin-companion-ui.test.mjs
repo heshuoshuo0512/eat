@@ -36,7 +36,7 @@ describe('administrator companion UI contracts', () => {
     assert.deepEqual([...positions].sort((left, right) => left - right), positions);
     assert.match(admin, /\.region-management-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
     assert.match(admin, /@media \(max-width: 720px\)[\s\S]*\.region-management-grid[^}]*grid-template-columns:\s*1fr/);
-    assert.match(admin, /食堂 → 餐厅\/楼层餐区 → 档口 → 菜品/);
+    assert.match(admin, /餐饮场所 → 餐饮分区 → 档口 → 菜品/);
     assert.match(admin, /parentId/);
   });
 
