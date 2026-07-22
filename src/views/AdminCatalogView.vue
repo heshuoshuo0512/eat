@@ -390,7 +390,8 @@ let messageTimer = null;
 let highlightTimer = null;
 let internalSelectionUpdate = false;
 let internalSearchUpdate = false;
-let lastAppliedSearch = null;
+let pendingSearchQuery = '';
+let loadedSearchQuery = null;
 
 const roleCapabilities = {
   operator: ['stall:write', 'dish:write', 'dish:bulk_import'],
@@ -501,6 +502,7 @@ async function refreshTree() {
   let loaded = false;
   try {
     await store.loadAdminCatalogTree({ include: 'dishes', q: searchTerm.value.trim(), limit: 20, offset: 0 });
+    loadedSearchQuery = searchTerm.value.trim();
     loaded = true;
     expandSearchPaths();
     const selectedArea = String(route.query.areaId || '');
@@ -633,13 +635,14 @@ async function applySearch() {
   if (searchTerm.value.trim()) query.q = searchTerm.value.trim();
   else delete query.q;
   internalSearchUpdate = true;
-  lastAppliedSearch = searchTerm.value.trim();
+  pendingSearchQuery = searchTerm.value.trim();
   try {
     await router.replace({ path: '/admin/catalog', query });
   } finally {
     internalSearchUpdate = false;
   }
-  await refreshTree({ query: searchTerm.value });
+  await refreshTree();
+  pendingSearchQuery = '';
   if (searchTerm.value.trim()) {
     for (const venue of venues.value) {
       if (visibleAreas(venue).length || visibleUnassigned(venue).length) setVenueMode(venue.id, 'directory');
@@ -869,9 +872,7 @@ function preferredScrollBehavior() {
 watch(() => route.query.q, async (value) => {
   const next = String(value || '');
   if (next !== searchTerm.value) searchTerm.value = next;
-  const handledByApply = lastAppliedSearch === next;
-  if (handledByApply) lastAppliedSearch = null;
-  if (!internalSearchUpdate && !handledByApply) await refreshTree({ query: next });
+  if (!internalSearchUpdate && next !== pendingSearchQuery && next !== loadedSearchQuery) await refreshTree();
   if (next) {
     for (const venue of venues.value) {
       if (visibleAreas(venue).length || visibleUnassigned(venue).length) setVenueMode(venue.id, 'directory');
