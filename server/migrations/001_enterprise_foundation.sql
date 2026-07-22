@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS dishes (
   image_url TEXT,
   description TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
+  regional_taste TEXT NOT NULL DEFAULT '',
+  allergens_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -105,6 +107,7 @@ CREATE TABLE IF NOT EXISTS health_profiles (
   taste TEXT NOT NULL DEFAULT '不限',
   halal_only INTEGER NOT NULL DEFAULT 0,
   avoid_json TEXT NOT NULL DEFAULT '[]',
+  allergies_json TEXT NOT NULL DEFAULT '[]',
   updated_at TEXT NOT NULL
 );
 

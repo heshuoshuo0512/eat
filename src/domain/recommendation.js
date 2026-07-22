@@ -38,6 +38,7 @@ export function normalizeProfile(profile = {}) {
     mealType: profile.mealType || 'lunch',
     taste: profile.taste || '不限',
     halalOnly: Boolean(profile.halalOnly),
+    allergies: Array.isArray(profile.allergies) ? profile.allergies.filter(Boolean) : String(profile.allergies || '').split(/[，、\s]+/).filter(Boolean),
     avoid: Array.isArray(profile.avoid) ? profile.avoid.filter(Boolean) : String(profile.avoid || '').split(/[，,\s]+/).filter(Boolean),
     dietaryPattern: profile.dietaryPattern || 'balanced',
     spiceLevel: Number.isFinite(Number(profile.spiceLevel)) ? Number(profile.spiceLevel) : 3,
@@ -54,7 +55,8 @@ export function filterDishes(dishes, profile) {
     if (normalized.halalOnly && !dish.halal) return false;
     if (!dish.mealTypes.includes(normalized.mealType)) return false;
     if (normalized.taste !== '不限' && dish.taste !== normalized.taste && !dish.tags.includes(normalized.taste)) return false;
-    if (normalized.avoid.some((word) => dish.ingredients.some((item) => item.includes(word)))) return false;
+    const safetyTerms = [...normalized.avoid, ...normalized.allergies];
+    if (safetyTerms.some((word) => dish.ingredients.some((item) => item.includes(word)) || (dish.allergens || []).some((item) => item.includes(word)))) return false;
     return true;
   });
 }

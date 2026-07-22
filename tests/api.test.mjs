@@ -319,12 +319,13 @@ describe('Health profile and recommendations', () => {
     const { status, data } = await req('/api/health/profile', {
       method: 'POST',
       token: studentToken,
-      body: { goal: 'fatLoss', budgetMax: 15, mealType: 'lunch', halalOnly: true },
+      body: { goal: 'fatLoss', budgetMax: 15, mealType: 'lunch', halalOnly: true, allergies: ['花生'] },
     });
     assert.equal(status, 200);
     assert.equal(data.profile.goal, 'fatLoss');
     assert.equal(data.profile.budgetMax, 15);
     assert.equal(data.profile.halalOnly, true);
+    assert.deepEqual(data.profile.allergies, ['花生']);
     assert.ok(data.recommendation && Array.isArray(data.recommendation.dishes), 'recommendation contains dishes array');
   });
 
@@ -332,6 +333,7 @@ describe('Health profile and recommendations', () => {
     const { data } = await req('/api/bootstrap', { token: studentToken });
     assert.equal(data.profile.goal, 'fatLoss');
     assert.equal(data.profile.halalOnly, true);
+    assert.deepEqual(data.profile.allergies, ['花生']);
   });
 
   it('health profile update without auth returns 401', async () => {

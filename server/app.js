@@ -696,6 +696,8 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   if (!savedRecord || savedRecord.tenant_id !== tenantId) {
     throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), { status: 409, code: 'DISH_ID_TENANT_CONFLICT' });
   }
+  await db.prepare('UPDATE dishes SET regional_taste = ? WHERE tenant_id = ? AND id = ?')
+    .run(String(body.regionalTaste || '').trim(), tenantId, normalizedId);
   const quota = await aiQuotaStatus(db, tenantId);
   await syncDishRetrievalDocument(db, { tenantId, dishId: normalizedId, ...(quota.quota > 0 && quota.remaining <= 0 ? { embeddingProvider: null } : {}) });
   return normalizedId;
@@ -2420,6 +2422,8 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         await db.prepare(`INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(user_id) DO UPDATE SET tenant_id=excluded.tenant_id, goal=excluded.goal, budget_max=excluded.budget_max, meal_type=excluded.meal_type, taste=excluded.taste, halal_only=excluded.halal_only, avoid_json=excluded.avoid_json, dietary_pattern=excluded.dietary_pattern, spice_level=excluded.spice_level, nutrition_focus_json=excluded.nutrition_focus_json, prefer_low_crowd=excluded.prefer_low_crowd, favorite_tags_json=excluded.favorite_tags_json, updated_at=excluded.updated_at`)
           .run(activeUser.id, tenantIdFor(activeUser), profile.goal, profile.budgetMax, profile.mealType, profile.taste, profile.halalOnly ? 1 : 0, serializeJson(profile.avoid), profile.dietaryPattern, profile.spiceLevel, serializeJson(profile.nutritionFocus), profile.preferLowCrowd ? 1 : 0, serializeJson(profile.favoriteTags), now());
+        await db.prepare('UPDATE health_profiles SET allergies_json = ? WHERE tenant_id = ? AND user_id = ?')
+          .run(serializeJson(profile.allergies), tenantIdFor(activeUser), activeUser.id);
         await audit(db, activeUser, 'UPSERT', 'health_profile', activeUser.id);
         const recommendation = compatibleRecommendationResponse(await executeMealRecommendation(db, activeUser, { query: '', options: { mode: 'alternatives', limit: 3 } }));
         return send(res, 200, { profile, recommendation, state: await snapshot(db, activeUser) });

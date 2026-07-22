@@ -425,6 +425,7 @@ components:
         canteenLocation: { type: string, nullable: true }
         taste: { type: string }
         cuisine: { type: string }
+        regionalTaste: { type: string, description: Optional display classification used by regional recommendations. }
         ingredients: { type: array, items: { type: string } }
         allergens: { type: array, items: { type: string } }
         tags: { type: array, items: { type: string } }
@@ -693,11 +694,86 @@ components:
       properties:
         savedId: { type: string }
         savedEntity: { type: object, nullable: true, description: 'Returned for dish writes.' }
+    DishInput:
+      type: object
+      required: [stallId, name, price, taste, cuisine, ingredients, tags, nutrition]
+      properties:
+        id: { type: string }
+        stallId: { type: string }
+        name: { type: string }
+        price: { type: number, minimum: 0 }
+        taste: { type: string }
+        cuisine: { type: string }
+        regionalTaste: { type: string }
+        ingredients: { type: array, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+        allergens: { type: array, items: { type: string } }
+        halal: { type: boolean }
+        mealTypes: { type: array, items: { type: string } }
+        nutrition: { type: object }
+        imageUrl: { type: string, nullable: true }
+        description: { type: string }
     ReviewStatusUpdate:
       type: object
       required: [status]
       properties:
         status: { type: string, enum: [approved, pending, rejected] }
+    HealthProfile:
+      type: object
+      properties:
+        goal: { type: string, enum: [healthy, fatLoss, muscleGain, maintain] }
+        budgetMax: { type: number, minimum: 0 }
+        mealType: { type: string, enum: [breakfast, lunch, dinner] }
+        taste: { type: string }
+        halalOnly: { type: boolean }
+        avoid: { type: array, items: { type: string } }
+        allergies: { type: array, items: { type: string }, description: Allergen terms matched against dish ingredients and allergens_json. }
+        dietaryPattern: { type: string, enum: [balanced, vegetarian, vegan] }
+        spiceLevel: { type: integer, minimum: 0, maximum: 5 }
+        nutritionFocus: { type: array, items: { type: string } }
+        preferLowCrowd: { type: boolean }
+        favoriteTags: { type: array, items: { type: string } }
+    ReviewInput:
+      type: object
+      required: [targetType, targetId, rating, content]
+      properties:
+        targetType: { type: string, enum: [dish, canteen] }
+        targetId: { type: string }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        content: { type: string, minLength: 2, maxLength: 600 }
+    CampusPostInput:
+      type: object
+      required: [targetType, targetId, content]
+      properties:
+        targetType: { type: string, enum: [dish, canteen] }
+        targetId: { type: string }
+        content: { type: string, minLength: 2, maxLength: 600 }
+        imageUrl: { type: string, format: uri, nullable: true }
+        rating: { type: integer, minimum: 1, maximum: 5, nullable: true, description: Only allowed when targetType is dish. }
+    Review:
+      allOf:
+        - $ref: '#/components/schemas/ReviewInput'
+        - type: object
+          properties:
+            id: { type: string }
+            status: { type: string, enum: [pending, approved, rejected] }
+            author: { type: object }
+            dish: { type: object, nullable: true }
+            stall: { type: object, nullable: true }
+            canteen: { type: object, nullable: true }
+            createdAt: { type: string }
+    CampusPost:
+      allOf:
+        - $ref: '#/components/schemas/CampusPostInput'
+        - type: object
+          properties:
+            id: { type: string }
+            status: { type: string, enum: [pending, approved, rejected] }
+            linkedReviewId: { type: string, nullable: true }
+            isOwn: { type: boolean }
+            author: { type: object }
+            createdAt: { type: string }
+            updatedAt: { type: string }
 paths:
   /health:
     get:
@@ -873,8 +949,14 @@ paths:
         '401': { description: Login required }
     post:
       description: Requires review:create.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewInput' }
       responses:
         '201': { description: Updated dish detail }
+        '400': { description: Invalid target, rating or content }
         '401': { description: Login required }
   /posts:
     get:
@@ -888,11 +970,26 @@ paths:
       responses: { '200': { description: Campus post page }, '401': { description: Login required } }
     post:
       description: Create a text post with an optional owned upload and optional dish rating. Requires post:create; all new posts are pending.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CampusPostInput' }
       responses: { '201': { description: Pending campus post }, '400': { description: Invalid target, content, rating or image }, '401': { description: Login required } }
   /health/profile:
     put:
       description: Requires profile:write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HealthProfile' }
       responses: { '200': { description: Updated profile and recommendation } }
+  /admin/reviews/{id}:
+    delete:
+      description: Delete a review and refresh its dish review count. Requires review:moderate.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Review deleted }, '404': { description: Review not found } }
   /uploads:
     post:
       description: Store image upload. Requires upload:create; anonymous uploads are rejected and owner_id is recorded. Storage keys are tenant-scoped as tenant_id/upload-uuid.ext. Set S3_BUCKET to route uploads to S3/MinIO; otherwise UPLOAD_DIR is used.
@@ -938,12 +1035,26 @@ paths:
   /admin/dishes:
     post:
       description: Create dish. Requires dish:write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DishInput' }
       responses:
         '201': { description: Full state plus savedId and savedEntity, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSavedResponse' } } } }
         '409': { description: The requested dish id belongs to another tenant }
   /admin/dishes/import:
     post:
       description: Bulk import dishes. Requires dish:bulk_import.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dishes]
+              properties:
+                dishes: { type: array, items: { $ref: '#/components/schemas/DishInput' } }
       responses: { '200': { description: Import summary and full state } }
   /admin/dishes/vision-import:
     post:
@@ -959,6 +1070,11 @@ paths:
     put:
       description: Edit dish. Requires dish:write.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DishInput' }
       responses: { '200': { description: Full state plus savedId and savedEntity, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSavedResponse' } } } } }
     delete:
       description: Soft-delete dish. Requires dish:delete.
@@ -1201,6 +1317,18 @@ paths:
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: Updated preference } }
   /admin/reviews/{id}/status:
+    put:
+      description: Alias of PATCH for clients using PUT. Requires review:moderate.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewStatusUpdate' }
+      responses:
+        '200': { description: Updated review status }
+        '400': { description: Invalid status }
+        '404': { description: Review not found }
     patch:
       description: Update review moderation status (approve/reject). Requires review:moderate.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]

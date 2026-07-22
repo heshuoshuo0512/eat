@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS dishes (
   image_url TEXT,
   description TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
+  regional_taste TEXT NOT NULL DEFAULT '',
   allergens_json TEXT NOT NULL DEFAULT '[]',
   search_vector tsvector GENERATED ALWAYS AS (
     setweight(to_tsvector('simple', coalesce(name, '')), 'A') ||
@@ -138,6 +139,7 @@ CREATE TABLE IF NOT EXISTS health_profiles (
   taste TEXT NOT NULL DEFAULT '不限',
   halal_only INTEGER NOT NULL DEFAULT 0,
   avoid_json TEXT NOT NULL DEFAULT '[]',
+  allergies_json TEXT NOT NULL DEFAULT '[]',
   dietary_pattern TEXT NOT NULL DEFAULT 'balanced',
   spice_level INTEGER NOT NULL DEFAULT 3 CHECK(spice_level BETWEEN 0 AND 5),
   nutrition_focus_json TEXT NOT NULL DEFAULT '[]',

@@ -95,6 +95,15 @@ describe('filterDishes', () => {
     assert.equal(result.length, 1);
     assert.equal(result[0].id, 'no-tofu');
   });
+
+  it('allergies exclude dishes by explicit allergen metadata', () => {
+    const special = [
+      dish({ id: 'peanut-dish', ingredients: ['鸡肉'], allergens: ['花生'] }),
+      dish({ id: 'safe-dish', ingredients: ['鸡肉'], allergens: [] }),
+    ];
+    const result = filterDishes(special, { allergies: ['花生'] });
+    assert.deepEqual(result.map((item) => item.id), ['safe-dish']);
+  });
 });
 
 /* ================================================================== */
