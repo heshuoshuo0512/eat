@@ -31,8 +31,8 @@
         <button v-if="canBulkImportDishes" class="tool-button" type="button" @click="openImport">
           <span aria-hidden="true">⇧</span><span>批量导入</span>
         </button>
-        <button v-if="canWriteCanteens" class="tool-button primary-action" type="button" @click="openNewArea(activeVenue)">
-          <span aria-hidden="true">＋</span><span>新增{{ activeVenue.areaLabel }}</span>
+        <button v-if="canWriteCanteens" class="tool-button primary-action" type="button" @click="handlePrimaryVenueAction">
+          <span aria-hidden="true">{{ activeVenue.missing ? '⌂' : '＋' }}</span><span>{{ activeVenue.missing ? '配置餐饮场所' : `新增${activeVenue.areaLabel}` }}</span>
         </button>
       </div>
     </header>
@@ -70,23 +70,28 @@
           </div>
 
           <div class="venue-summary" aria-label="场所数据统计">
-            <span><b>{{ venue.counts?.canteens || 0 }}</b>{{ venue.areaLabel }}</span>
+            <span><b>{{ venue.counts?.canteens || 0 }}</b>{{ venue.areaLabel }}（餐饮分区）</span>
             <span><b>{{ venue.counts?.stalls || 0 }}</b>档口</span>
             <span><b>{{ venue.counts?.dishes || 0 }}</b>菜品</span>
-            <span><b>{{ venue.counts?.openStalls || 0 }}</b>营业</span>
+            <span><b>{{ venue.counts?.openStalls || 0 }}</b>营业档口</span>
           </div>
 
           <div class="venue-view-switch" role="tablist" :aria-label="`${venue.name}视图`">
             <button
               type="button"
               role="tab"
+              :id="`venue-${venue.id}-directory-tab`"
+              :aria-controls="`venue-${venue.id}-panel`"
               :aria-selected="modeByVenue[venue.id] === 'directory'"
               :class="{ active: modeByVenue[venue.id] === 'directory' }"
               @click="setVenueMode(venue.id, 'directory')"
             >目录</button>
             <button
+              v-if="!venue.missing"
               type="button"
               role="tab"
+              :id="`venue-${venue.id}-stats-tab`"
+              :aria-controls="`venue-${venue.id}-panel`"
               :aria-selected="modeByVenue[venue.id] === 'stats'"
               :class="{ active: modeByVenue[venue.id] === 'stats' }"
               @click="setVenueMode(venue.id, 'stats')"
@@ -103,6 +108,9 @@
         <div
           :ref="(element) => registerScrollElement(venue.id, element)"
           class="venue-panel-scroll"
+          :id="`venue-${venue.id}-panel`"
+          role="tabpanel"
+          :aria-labelledby="`venue-${venue.id}-${modeByVenue[venue.id] === 'stats' ? 'stats' : 'directory'}-tab`"
           tabindex="0"
           @scroll.passive="rememberScroll(venue.id, $event)"
         >
@@ -110,12 +118,22 @@
             <span v-for="index in 5" :key="index"></span>
           </div>
 
+          <template v-else-if="venue.missing">
+            <div class="catalog-empty">
+              <span class="empty-symbol" aria-hidden="true">＋</span>
+              <strong>该餐饮场所尚未配置</strong>
+              <span>{{ venue.name }}</span>
+              <button v-if="canWriteCanteens" type="button" @click="openVenue(venue, 'create')">配置场所</button>
+            </div>
+          </template>
+
           <template v-else-if="modeByVenue[venue.id] === 'stats'">
             <section class="venue-stats-view">
               <div class="stats-total-line">
+                <div><strong>{{ venue.counts?.canteens || 0 }}</strong><span>{{ venue.areaLabel }}</span></div>
+                <div><strong>{{ venue.counts?.stalls || 0 }}</strong><span>档口总数</span></div>
                 <div><strong>{{ venue.counts?.dishes || 0 }}</strong><span>菜品总数</span></div>
-                <div><strong>{{ venue.counts?.stalls || 0 }}</strong><span>全部档口</span></div>
-                <div><strong>{{ openRate(venue) }}%</strong><span>营业率</span></div>
+                <div><strong>{{ venue.counts?.openStalls || 0 }}</strong><span>营业档口</span></div>
               </div>
 
               <div v-if="visibleAreas(venue).length" class="area-chart" aria-label="餐饮分区档口与菜品对比">
@@ -141,15 +159,6 @@
 
               <div class="chart-legend" aria-label="图例"><span><i class="legend-stalls"></i>档口</span><span><i class="legend-dishes"></i>菜品</span></div>
             </section>
-          </template>
-
-          <template v-else-if="venue.missing">
-            <div class="catalog-empty">
-              <span class="empty-symbol" aria-hidden="true">＋</span>
-              <strong>该餐饮场所尚未配置</strong>
-              <span>{{ venue.name }}</span>
-              <button v-if="canWriteCanteens" type="button" @click="openVenue(venue, 'create')">配置场所</button>
-            </div>
           </template>
 
           <template v-else-if="visibleAreas(venue).length || visibleUnassigned(venue).length">
@@ -217,7 +226,10 @@
                         :data-node-key="`dish:${dish.id}`"
                       >
                         <button class="dish-name" type="button" @click="openDish(venue, areaNode, row.node, dish, 'view')">
-                          <span class="dish-thumb" aria-hidden="true">{{ dish.image || '餐' }}</span>
+                          <span class="dish-thumb" aria-hidden="true">
+                            <span>{{ dish.image || '餐' }}</span>
+                            <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="'dish thumbnail'" loading="lazy" @error="$event.currentTarget.hidden = true" />
+                          </span>
                           <span>
                             <strong><HighlightText :text="dish.name" :query="searchTerm" /></strong>
                             <small><HighlightText :text="dishMeta(dish)" :query="searchTerm" /></small>
@@ -281,8 +293,11 @@
                         :class="nodeClasses('dish', dish.id)"
                         :data-node-key="`dish:${dish.id}`"
                       >
-                        <button class="dish-name" type="button" @click="openUnassignedDish(venue, row.node, dish)">
-                          <span class="dish-thumb" aria-hidden="true">{{ dish.image || '餐' }}</span>
+                        <button class="dish-name" type="button" @click="openUnassignedDish(venue, row.node, dish, 'view')">
+                          <span class="dish-thumb" aria-hidden="true">
+                            <span>{{ dish.image || '餐' }}</span>
+                            <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="'dish thumbnail'" loading="lazy" @error="$event.currentTarget.hidden = true" />
+                          </span>
                           <span>
                             <strong><HighlightText :text="dish.name" :query="searchTerm" /></strong>
                             <small><HighlightText :text="dishMeta(dish)" :query="searchTerm" /></small>
@@ -291,7 +306,10 @@
                         </button>
                         <span class="dish-price">¥{{ formatPrice(dish.price) }}</span>
                         <span :class="['dish-state', dish.status === 'hidden' ? 'hidden' : 'active']">{{ dish.status === 'hidden' ? '已隐藏' : '上架中' }}</span>
-                        <span class="dish-actions"><button type="button" @click="openUnassignedDish(venue, row.node, dish)">查看</button></span>
+                        <span class="dish-actions">
+                          <button type="button" @click="openUnassignedDish(venue, row.node, dish, 'view')">查看</button>
+                          <button v-if="canWriteDishes" type="button" @click="openUnassignedDish(venue, row.node, dish, 'edit')">编辑</button>
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -371,6 +389,8 @@ let searchTimer = null;
 let messageTimer = null;
 let highlightTimer = null;
 let internalSelectionUpdate = false;
+let internalSearchUpdate = false;
+let lastAppliedSearch = null;
 
 const roleCapabilities = {
   operator: ['stall:write', 'dish:write', 'dish:bulk_import'],
@@ -478,19 +498,27 @@ async function refreshTree() {
   if (firstLoad) loading.value = true;
   else refreshing.value = true;
   errorMessage.value = '';
+  let loaded = false;
   try {
-    await store.loadAdminCatalogTree({ include: 'dishes', limit: 20, offset: 0 });
+    await store.loadAdminCatalogTree({ include: 'dishes', q: searchTerm.value.trim(), limit: 20, offset: 0 });
+    loaded = true;
     expandSearchPaths();
     const selectedArea = String(route.query.areaId || '');
     if (selectedArea) setAreaExpanded(selectedArea, true, false);
-    await restoreScrollPositions();
+    await normalizeDeepLink();
     return true;
   } catch (error) {
-    errorMessage.value = error?.message || '目录加载失败，请稍后重试。';
+    errorMessage.value = formatCatalogError(error, '目录加载失败，请稍后重试。');
     return false;
   } finally {
     loading.value = false;
     refreshing.value = false;
+    // Restore after the real tree has rendered.  Restoring against the five
+    // skeleton rows clamps scrollTop to zero and loses a user's position.
+    if (loaded) {
+      await nextTick();
+      await restoreScrollPositions();
+    }
   }
 }
 
@@ -510,17 +538,22 @@ function setAreaExpanded(areaId, expanded, persist = true) {
 function toggleArea(areaId) { setAreaExpanded(areaId, !isAreaExpanded(areaId)); }
 
 function normalizedQuery() { return searchTerm.value.trim().toLocaleLowerCase(); }
+function asList(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).map((entry) => String(entry));
+  return String(value || '').split(/[，,\s]+/).map((entry) => entry.trim()).filter(Boolean);
+}
 function textMatches(...values) {
   const query = normalizedQuery();
   return !query || values.some((value) => String(value || '').toLocaleLowerCase().includes(query));
 }
-function dishMatches(dish) { return textMatches(dish.name, dish.taste, dish.cuisine, ...(dish.tags || []), ...(dish.ingredients || [])); }
+function dishMatches(dish) { return textMatches(dish.name, dish.taste, dish.cuisine, ...asList(dish.tags), ...asList(dish.ingredients), ...asList(dish.allergens)); }
 function dishSearchDetail(dish) {
   const query = normalizedQuery();
   if (!query) return '';
   const details = [
-    ...(dish.tags || []).map((value) => `标签：${value}`),
-    ...(dish.ingredients || []).map((value) => `食材：${value}`)
+    ...asList(dish.tags).map((value) => `标签：${value}`),
+    ...asList(dish.ingredients).map((value) => `食材：${value}`),
+    ...asList(dish.allergens).map((value) => `过敏原：${value}`)
   ];
   return details.find((value) => value.toLocaleLowerCase().includes(query)) || '';
 }
@@ -599,7 +632,14 @@ async function applySearch() {
   const query = { ...route.query };
   if (searchTerm.value.trim()) query.q = searchTerm.value.trim();
   else delete query.q;
-  await router.replace({ path: '/admin/catalog', query });
+  internalSearchUpdate = true;
+  lastAppliedSearch = searchTerm.value.trim();
+  try {
+    await router.replace({ path: '/admin/catalog', query });
+  } finally {
+    internalSearchUpdate = false;
+  }
+  await refreshTree({ query: searchTerm.value });
   if (searchTerm.value.trim()) {
     for (const venue of venues.value) {
       if (visibleAreas(venue).length || visibleUnassigned(venue).length) setVenueMode(venue.id, 'directory');
@@ -610,6 +650,56 @@ async function applySearch() {
 function clearSearch() {
   searchTerm.value = '';
   applySearch();
+}
+
+function formatCatalogError(error, fallback) {
+  if (!error) return fallback;
+  const prefix = {
+    permission: '当前账号没有执行此操作的权限',
+    validation: '请检查表单中的字段',
+    conflict: '数据存在冲突，请先处理关联记录',
+    network: '网络连接失败，已保留当前页面内容',
+    server: '服务暂时不可用'
+  }[error.kind];
+  const detail = String(error.message || '').trim();
+  if (!prefix) return detail || fallback;
+  return detail && detail !== prefix ? `${prefix}：${detail}` : prefix;
+}
+
+function findDeepLinkSelection() {
+  const requestedArea = String(route.query.areaId || '');
+  const requestedStall = String(route.query.stallId || '');
+  const requestedDish = String(route.query.dishId || '');
+  if (!requestedArea && !requestedStall && !requestedDish) return null;
+  const visit = (node) => {
+    if (requestedStall && node.stall?.id === requestedStall) return { stallId: requestedStall };
+    if (requestedDish && (node.directDishes || []).some((dish) => dish.id === requestedDish)) return { stallId: node.stall.id, dishId: requestedDish };
+    for (const child of node.children || []) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return null;
+  };
+  for (const venue of venues.value) {
+    for (const areaNode of venue.canteens || []) {
+      if (requestedArea === areaNode.canteen.id) return { venueId: venue.id, areaId: areaNode.canteen.id };
+      for (const stallNode of areaNode.stalls || []) {
+        const found = visit(stallNode);
+        if (found) return { venueId: venue.id, areaId: areaNode.canteen.id, ...found };
+      }
+    }
+    for (const stallNode of venue.unassignedStalls || []) {
+      const found = visit(stallNode);
+      if (found) return { venueId: venue.id, ...found };
+    }
+  }
+  return null;
+}
+
+async function normalizeDeepLink() {
+  if (route.query.venueId) return;
+  const inferred = findDeepLinkSelection();
+  if (inferred) await setRouteSelection(inferred);
 }
 
 async function confirmDrawerChange() {
@@ -639,6 +729,11 @@ function venueDescriptor(venue, mode) {
     canEdit: canWriteCanteens.value
   };
 }
+function handlePrimaryVenueAction() {
+  if (!activeVenue.value) return;
+  if (activeVenue.value.missing) openVenue(activeVenue.value, 'create');
+  else openNewArea(activeVenue.value);
+}
 function openVenue(venue, mode = 'view') {
   if (mode !== 'view' && !canWriteCanteens.value) return;
   showDrawer(venueDescriptor(venue, mode), { venueId: venue.id });
@@ -666,8 +761,9 @@ function openUnassignedStall(venue, stallNode, mode = 'view') {
   if (mode !== 'view' && !canWriteStalls.value) return;
   showDrawer({ mode, type: 'stall', venue, area: null, stall: stallNode.stall, item: stallNode.stall, needsClassification: true, canEdit: canWriteStalls.value }, { venueId: venue.id, stallId: stallNode.stall.id });
 }
-function openUnassignedDish(venue, stallNode, dish) {
-  showDrawer({ mode: 'view', type: 'dish', venue, area: null, stall: stallNode.stall, item: dish, canEdit: false }, { venueId: venue.id, stallId: stallNode.stall.id, dishId: dish.id });
+function openUnassignedDish(venue, stallNode, dish, mode = 'view') {
+  if (mode !== 'view' && !canWriteDishes.value) return;
+  showDrawer({ mode, type: 'dish', venue, area: null, stall: stallNode.stall, item: dish, canEdit: canWriteDishes.value }, { venueId: venue.id, stallId: stallNode.stall.id, dishId: dish.id });
 }
 function openNewDish(venue, areaNode, stallNode) {
   if (!canWriteDishes.value) return;
@@ -770,9 +866,12 @@ function preferredScrollBehavior() {
   return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
 }
 
-watch(() => route.query.q, (value) => {
+watch(() => route.query.q, async (value) => {
   const next = String(value || '');
   if (next !== searchTerm.value) searchTerm.value = next;
+  const handledByApply = lastAppliedSearch === next;
+  if (handledByApply) lastAppliedSearch = null;
+  if (!internalSearchUpdate && !handledByApply) await refreshTree({ query: next });
   if (next) {
     for (const venue of venues.value) {
       if (visibleAreas(venue).length || visibleUnassigned(venue).length) setVenueMode(venue.id, 'directory');
@@ -938,7 +1037,7 @@ onBeforeUnmount(() => {
 .warning-symbol { width: 1.45rem; height: 1.45rem; display: grid; place-items: center; border-radius: 50%; background: #f4c76d; color: #62420a; font-weight: 850; }
 .unassigned-table .stall-table-row { background: #fffdf8; }
 .venue-stats-view { min-height: 100%; display: flex; flex-direction: column; padding: .75rem; }
-.stats-total-line { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4rem; padding-bottom: .65rem; border-bottom: 1px solid #e1e9e1; }
+.stats-total-line { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .4rem; padding-bottom: .65rem; border-bottom: 1px solid #e1e9e1; }
 .stats-total-line div { text-align: center; }
 .stats-total-line strong, .stats-total-line span { display: block; }
 .stats-total-line strong { color: #234e36; font-size: 1.08rem; font-variant-numeric: tabular-nums; }
@@ -1028,7 +1127,7 @@ mark { border-radius: .12rem; padding: 0 .08rem; background: #ffe19a; color: inh
 
 @media (hover: none), (pointer: coarse) {
   .area-actions, .stall-actions, .dish-actions { opacity: 1; }
-  .icon-action, .area-actions button, .stall-actions button, .dish-actions button { min-height: 2.25rem; padding-inline: .55rem; }
+  .icon-action, .area-actions button, .stall-actions button, .dish-actions button { min-width: 2.75rem; min-height: 2.75rem; padding-inline: .55rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -4,6 +4,31 @@ function tokenStore() {
   return window.localStorage;
 }
 
+/**
+ * Keep the server's backwards-compatible flat error response while exposing a
+ * stable client-side contract to forms and drawers.  Older API responses use
+ * `{ error: string, code }`; newer endpoints may return `{ error: { message,
+ * code } }`.  Consumers should only need `message`, `code`, `status`, and
+ * `kind`.
+ */
+export function normalizeApiError(data = {}, status = 0) {
+  const payload = data?.error && typeof data.error === 'object' ? data.error : null;
+  const message = String(payload?.message || (typeof data?.error === 'string' ? data.error : data?.message) || `请求失败：${status || '网络错误'}`);
+  const code = String(payload?.code || data?.code || '');
+  let kind = 'unknown';
+  if (!status) kind = 'network';
+  else if (status === 401 || status === 403 || /permission|forbidden|unauthor/i.test(code)) kind = 'permission';
+  else if (status === 409 || /conflict|duplicate|has_|tenant_conflict|parent_/i.test(code)) kind = 'conflict';
+  else if (status >= 400 && status < 500) kind = 'validation';
+  else if (status >= 500) kind = 'server';
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.kind = kind;
+  error.requestId = data?.requestId || '';
+  return error;
+}
+
 async function request(path, options = {}) {
   const token = tokenStore().getItem(TOKEN_KEY);
   const { timeoutMs = 20_000, signal, ...fetchOptions } = options;
@@ -17,10 +42,19 @@ async function request(path, options = {}) {
   try {
     const response = await fetch(path, { ...fetchOptions, headers: { ...headers, ...fetchOptions.headers }, signal: signal || controller?.signal });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
+    if (!response.ok) throw normalizeApiError(data, response.status);
     return data;
   } catch (error) {
-    if (error.name === 'AbortError') throw new Error('请求超时或已取消，请稍后重试。');
+    if (error.name === 'AbortError') {
+      const timeoutError = normalizeApiError({}, 0);
+      timeoutError.message = '请求超时或已取消，请稍后重试。';
+      throw timeoutError;
+    }
+    if (!error.kind) {
+      error.status = Number(error.status || 0);
+      error.code = String(error.code || '');
+      error.kind = 'network';
+    }
     throw error;
   } finally {
     if (timer) window.clearTimeout(timer);

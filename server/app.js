@@ -77,6 +77,11 @@ function catalogTextMatches(value, query) {
   return !query || String(value || '').toLocaleLowerCase().includes(query);
 }
 
+function catalogListText(value) {
+  if (Array.isArray(value)) return value.join(' ');
+  return String(value || '');
+}
+
 async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '', stallId = '', query = '', includeDishes = false, limit = 20, offset = 0 }) {
   const normalizedQuery = String(query || '').trim().toLocaleLowerCase();
   const canteenRows = await db.prepare('SELECT * FROM canteens WHERE tenant_id = ? ORDER BY name ASC, id ASC').all(tenantId);
@@ -137,7 +142,15 @@ async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '
     return !normalizedQuery
       || catalogTextMatches(node.stall.name, normalizedQuery)
       || catalogTextMatches(node.stall.category, normalizedQuery)
-      || node.allDirectDishes.some((dish) => catalogTextMatches(dish.name, normalizedQuery))
+      || catalogTextMatches(node.stall.floor, normalizedQuery)
+      || node.allDirectDishes.some((dish) => [
+        dish.name,
+        dish.taste,
+        dish.cuisine,
+        catalogListText(dish.tags),
+        catalogListText(dish.ingredients),
+        catalogListText(dish.allergens)
+      ].some((value) => catalogTextMatches(value, normalizedQuery)))
       || node.children.some((child) => matchesStall(child));
   }
 
@@ -153,13 +166,15 @@ async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '
     .map((definition) => {
       const region = canteenById.get(definition.id) || null;
       const children = canteens.filter((canteen) => canteen.parentId === definition.id);
+      const venueMatches = normalizedQuery && [definition.name, region?.name, region?.location]
+        .some((value) => catalogTextMatches(value, normalizedQuery));
       const canteenNodes = children.map((canteen) => buildCanteen(canteen, definition.areaType, definition.areaLabel)).filter((node) => {
         if (canteenId && node.canteen.id !== canteenId) return false;
         if (stallId && !node.stalls.some((stall) => stall.stall.id === stallId || stall.children.some((child) => child.stall.id === stallId))) return false;
-        return matchesCanteen(node);
+        return venueMatches || matchesCanteen(node);
       });
       const unassignedStalls = region
-        ? (stallsByCanteen.get(region.id) || []).filter((stall) => !stall.parentId).map(buildStall).filter((node) => matchesStall(node))
+        ? (stallsByCanteen.get(region.id) || []).filter((stall) => !stall.parentId).map(buildStall).filter((node) => venueMatches || matchesStall(node))
         : [];
       const unassignedMatchesFilter = !canteenId || canteenId === definition.id;
       const visibleUnassignedStalls = unassignedMatchesFilter
