@@ -1,113 +1,50 @@
 {
   "pages": [
-    {
-      "path": "pages/login/login",
-      "style": {
-        "navigationBarTitleText": "智慧食堂",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/home/home",
-      "style": {
-        "navigationBarTitleText": "今日食堂",
-        "navigationStyle": "custom",
-        "enablePullDownRefresh": true
-      }
-    },
-    {
-      "path": "pages/canteens/canteens",
-      "style": {
-        "navigationBarTitleText": "食堂导航",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/dishes/dishes",
-      "style": {
-        "navigationBarTitleText": "菜品检索",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/recommend/recommend",
-      "style": {
-        "navigationBarTitleText": "健康推荐",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/vision/vision",
-      "style": {
-        "navigationBarTitleText": "拍照识餐",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/health/health",
-      "style": {
-        "navigationBarTitleText": "健康中心",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/agent/agent",
-      "style": {
-        "navigationBarTitleText": "智能顾问",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/privacy/privacy",
-      "style": {
-        "navigationBarTitleText": "隐私保护指引",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/terms/terms",
-      "style": {
-        "navigationBarTitleText": "用户服务协议",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/profile/profile",
-      "style": {
-        "navigationBarTitleText": "我的",
-        "navigationStyle": "custom"
-      }
-    },
-    {
-      "path": "pages/dish-detail/dish-detail",
-      "style": {
-        "navigationBarTitleText": "菜品详情",
-        "navigationStyle": "custom"
-      }
-    }
+    { "path": "pages/login/login", "style": { "navigationBarTitleText": "智慧食堂", "navigationStyle": "custom" } },
+    { "path": "pages/home/home", "style": { "navigationBarTitleText": "首页", "navigationStyle": "custom", "enablePullDownRefresh": true } },
+    { "path": "pages/dishes/dishes", "style": { "navigationBarTitleText": "找菜", "navigationStyle": "custom", "enablePullDownRefresh": true } },
+    { "path": "pages/community/community", "style": { "navigationBarTitleText": "社区", "navigationStyle": "custom", "enablePullDownRefresh": true, "onReachBottomDistance": 120 } },
+    { "path": "pages/profile/profile", "style": { "navigationBarTitleText": "我的", "navigationStyle": "custom", "enablePullDownRefresh": true } },
+
+    { "path": "pages/recommend/recommend", "style": { "navigationBarTitleText": "智能推荐", "navigationStyle": "custom" } },
+    { "path": "pages/vision/vision", "style": { "navigationBarTitleText": "拍照识餐", "navigationStyle": "custom" } },
+    { "path": "pages/canteens/canteens", "style": { "navigationBarTitleText": "食堂导航", "navigationStyle": "custom", "enablePullDownRefresh": true } },
+    { "path": "pages/canteen-detail/canteen-detail", "style": { "navigationBarTitleText": "食堂详情", "navigationStyle": "custom" } },
+    { "path": "pages/stall-detail/stall-detail", "style": { "navigationBarTitleText": "档口详情", "navigationStyle": "custom" } },
+    { "path": "pages/rankings/rankings", "style": { "navigationBarTitleText": "排行榜", "navigationStyle": "custom", "enablePullDownRefresh": true } },
+    { "path": "pages/regions/regions", "style": { "navigationBarTitleText": "区域推荐", "navigationStyle": "custom" } },
+    { "path": "pages/region-detail/region-detail", "style": { "navigationBarTitleText": "区域菜品", "navigationStyle": "custom" } },
+    { "path": "pages/dish-detail/dish-detail", "style": { "navigationBarTitleText": "菜品详情", "navigationStyle": "custom" } },
+    { "path": "pages/health-profile/health-profile", "style": { "navigationBarTitleText": "健康档案", "navigationStyle": "custom" } },
+    { "path": "pages/saved/saved", "style": { "navigationBarTitleText": "收藏与吃过", "navigationStyle": "custom" } },
+    { "path": "pages/orders/orders", "style": { "navigationBarTitleText": "今日点餐", "navigationStyle": "custom" } },
+    { "path": "pages/community-publish/community-publish", "style": { "navigationBarTitleText": "发布帖子", "navigationStyle": "custom" } },
+
+    { "path": "pages/health/health", "style": { "navigationBarTitleText": "健康档案", "navigationStyle": "custom" } },
+    { "path": "pages/agent/agent", "style": { "navigationBarTitleText": "智能推荐", "navigationStyle": "custom" } },
+    { "path": "pages/privacy/privacy", "style": { "navigationBarTitleText": "隐私保护指引", "navigationStyle": "custom" } },
+    { "path": "pages/terms/terms", "style": { "navigationBarTitleText": "用户服务协议", "navigationStyle": "custom" } }
   ],
   "tabBar": {
-    "color": "#8997a6",
-    "selectedColor": "#58cfa0",
+    "color": "#66736c",
+    "selectedColor": "#237a57",
     "backgroundColor": "#ffffff",
     "borderStyle": "white",
     "list": [
       { "pagePath": "pages/home/home", "text": "首页", "iconPath": "static/tab/home-normal.png", "selectedIconPath": "static/tab/home-active.png" },
-      { "pagePath": "pages/canteens/canteens", "text": "菜单", "iconPath": "static/tab/dishes-normal.png", "selectedIconPath": "static/tab/dishes-active.png" },
-      { "pagePath": "pages/health/health", "text": "健康", "iconPath": "static/tab/recommend-normal.png", "selectedIconPath": "static/tab/recommend-active.png" },
+      { "pagePath": "pages/dishes/dishes", "text": "找菜", "iconPath": "static/tab/dishes-normal.png", "selectedIconPath": "static/tab/dishes-active.png" },
+      { "pagePath": "pages/community/community", "text": "社区", "iconPath": "static/tab/community-normal.png", "selectedIconPath": "static/tab/community-active.png" },
       { "pagePath": "pages/profile/profile", "text": "我的", "iconPath": "static/tab/profile-normal.png", "selectedIconPath": "static/tab/profile-active.png" }
     ]
   },
   "globalStyle": {
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "智慧食堂",
-    "navigationBarBackgroundColor": "#f7fbf7",
-    "backgroundColor": "#f7fbf7"
+    "navigationBarBackgroundColor": "#f6f7f5",
+    "backgroundColor": "#f6f7f5"
   },
   "easycom": {
     "autoscan": true,
-    "custom": {
-      "sc-(.*)": "@/components/sc-$1/sc-$1.vue"
-    }
+    "custom": { "sc-(.*)": "@/components/sc-$1/sc-$1.vue" }
   }
 }

@@ -14,12 +14,7 @@
       "postcss": true,
       "minified": true
     },
-    "usingComponents": true,
-    "permission": {
-      "scope.camera": {
-        "desc": "用于拍照识餐，分析餐食营养并推荐真实可购买菜品。"
-      }
-    }
+    "usingComponents": true
   },
   "vueVersion": "3"
 }

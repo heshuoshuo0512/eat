@@ -55,6 +55,8 @@ bash --login -c "node -v && npm -v"
 
 ## 编译与微信开发者工具
 
+项目只维护 `miniapp/src`，统一使用 CLI 构建。HBuilderX 不再直接运行源码项目。
+
 在项目目录执行：
 
 ```bat
@@ -66,5 +68,7 @@ npm run build:mp-weixin
 ```text
 miniapp/dist/build/mp-weixin
 ```
+
+不要导入 `miniapp` 或 `miniapp/src`，也不要修改 `miniapp/dist` 中的生成文件。
 
 正式发布前仍需配置真实 AppID、HTTPS API 域名和微信公众平台合法域名；本地账号密码演示不等于正式微信登录配置已完成。

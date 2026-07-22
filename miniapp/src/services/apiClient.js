@@ -1,6 +1,7 @@
 import { API_BASE_URL } from '../config.js';
 
 const TOKEN_KEY = 'smart-canteen-token';
+let redirectingToLogin = false;
 
 function tokenStore() {
   return {
@@ -12,19 +13,35 @@ function tokenStore() {
 
 function normalizeUrl(path) {
   if (/^https?:\/\//.test(path)) return path;
-  return `${API_BASE_URL}${path}`;
+  return `${String(API_BASE_URL || '').replace(/\/$/, '')}${path}`;
 }
 
-function normalizeError(response) {
+function queryString(params = {}) {
+  const query = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join('&');
+  return query ? `?${query}` : '';
+}
+
+function apiError(response) {
   const data = response.data || {};
-  if (response.statusCode === 401) {
-    tokenStore().removeItem(TOKEN_KEY);
-    return new Error(data.error || '登录已失效，请重新登录。');
-  }
-  if (response.statusCode === 403) return new Error(data.error || '当前账号无权访问该功能。');
-  if (response.statusCode === 429) return new Error(data.error || '请求过于频繁，请稍后重试。');
-  if (response.statusCode >= 500) return new Error(data.error || '服务暂时不可用，请稍后重试。');
-  return new Error(data.error || `请求失败：${response.statusCode}`);
+  const error = new Error(data.error || `请求失败：${response.statusCode}`);
+  error.statusCode = response.statusCode;
+  error.code = data.code || '';
+  return error;
+}
+
+function handleUnauthorized(path) {
+  tokenStore().removeItem(TOKEN_KEY);
+  if (path.startsWith('/api/auth/') || redirectingToLogin) return;
+  redirectingToLogin = true;
+  uni.reLaunch({
+    url: '/pages/login/login',
+    complete() {
+      setTimeout(() => { redirectingToLogin = false; }, 300);
+    }
+  });
 }
 
 function request(path, options = {}) {
@@ -34,66 +51,124 @@ function request(path, options = {}) {
     uni.request({
       url: normalizeUrl(path),
       method,
-      data: body ? JSON.parse(body) : undefined,
+      data: body,
       timeout: timeoutMs,
       header: {
         Accept: 'application/json',
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...headers
       },
       success(response) {
-        const data = response.data || {};
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          reject(normalizeError(response));
+          if (response.statusCode === 401) handleUnauthorized(path);
+          reject(apiError(response));
           return;
         }
-        resolve(data);
+        resolve(response.data || {});
       },
       fail(error) {
-        reject(new Error(error.errMsg || '网络请求失败，请稍后重试。'));
+        const requestError = new Error(error?.errMsg || '网络请求失败，请稍后重试。');
+        requestError.code = 'NETWORK_ERROR';
+        reject(requestError);
       }
     });
   });
 }
 
+async function authenticate(path, payload) {
+  const result = await request(path, { method: 'POST', body: payload, timeoutMs: 15000 });
+  tokenStore().setItem(TOKEN_KEY, result.token);
+  redirectingToLogin = false;
+  return result;
+}
+
 export const apiClient = {
-  async bootstrap() {
+  hasToken() {
+    return Boolean(tokenStore().getItem(TOKEN_KEY));
+  },
+  bootstrap() {
     return request('/api/bootstrap');
   },
-  async login(payload) {
-    const result = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) });
-    tokenStore().setItem(TOKEN_KEY, result.token);
-    return result;
+  login(payload) {
+    return authenticate('/api/auth/login', payload);
   },
-  async wechatLogin(payload) {
-    const result = await request('/api/auth/wechat-login', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 15000 });
-    tokenStore().setItem(TOKEN_KEY, result.token);
-    return result;
+  wechatLogin(payload) {
+    return authenticate('/api/auth/wechat-login', payload);
   },
   logout() {
     tokenStore().removeItem(TOKEN_KEY);
   },
-  async addReview(payload) {
-    return request('/api/reviews', { method: 'POST', body: JSON.stringify(payload) });
-  },
-  async saveProfile(payload) {
-    return request('/api/health/profile', { method: 'PUT', body: JSON.stringify(payload) });
-  },
-  async todayMenu(mealType) {
-    const query = mealType ? `?mealType=${encodeURIComponent(mealType)}` : '';
-    return request(`/api/menus/today${query}`);
-  },
-  async ragSearch(query) {
-    return request(`/api/rag/search?q=${encodeURIComponent(query)}`);
-  },
-  async askMealAdvisor(payload) {
-    return request('/api/agent/meal-advisor', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60000 });
-  },
-  async dishDetail(id) {
+  dishDetail(id) {
     return request(`/api/dishes/${encodeURIComponent(id)}`);
   },
-  async analyzeMealImage(payload) {
-    return request('/api/vision/meal-analyze', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60000 });
+  searchDishes(payload) {
+    return request('/api/dishes/search', { method: 'POST', body: payload, timeoutMs: 60000 });
+  },
+  todayMenu(mealType) {
+    return request(`/api/menus/today${queryString({ mealType })}`);
+  },
+  loadRankings() {
+    return request('/api/rankings');
+  },
+  loadRecommendation() {
+    return request('/api/recommend', { timeoutMs: 60000 });
+  },
+  requestRecommendation(payload) {
+    return request('/api/recommend', { method: 'POST', body: payload, timeoutMs: 60000 });
+  },
+  runAgent(payload) {
+    return request('/api/agent/assistant', { method: 'POST', body: payload, timeoutMs: 60000 });
+  },
+  loadAgentMemory() {
+    return request('/api/agent/memory');
+  },
+  saveAgentMemory(payload) {
+    return request('/api/agent/memory', { method: 'PUT', body: payload });
+  },
+  clearAgentMemory() {
+    return request('/api/agent/memory', { method: 'DELETE' });
+  },
+  confirmAgentAction(id) {
+    return request(`/api/agent/actions/${encodeURIComponent(id)}/confirm`, { method: 'POST' });
+  },
+  rejectAgentAction(id) {
+    return request(`/api/agent/actions/${encodeURIComponent(id)}/reject`, { method: 'POST' });
+  },
+  listReviews(params = {}) {
+    return request(`/api/reviews${queryString(params)}`);
+  },
+  addReview(payload) {
+    return request('/api/reviews', { method: 'POST', body: payload });
+  },
+  listPosts(params = {}) {
+    return request(`/api/posts${queryString(params)}`);
+  },
+  createPost(payload) {
+    return request('/api/posts', { method: 'POST', body: payload });
+  },
+  uploadImage(payload) {
+    return request('/api/uploads', { method: 'POST', body: payload, timeoutMs: 60000 });
+  },
+  saveProfile(payload) {
+    return request('/api/health/profile', { method: 'PUT', body: payload });
+  },
+  listPreferences() {
+    return request('/api/preferences/dishes');
+  },
+  setDishPreference(payload) {
+    return request('/api/preferences/dishes', { method: 'PUT', body: payload });
+  },
+  recordDishDrawn(id) {
+    return request(`/api/preferences/dishes/${encodeURIComponent(id)}/drawn`, { method: 'POST' });
+  },
+  recordDishEaten(id) {
+    return request(`/api/preferences/dishes/${encodeURIComponent(id)}/eaten`, { method: 'POST' });
+  },
+  listOrders() {
+    return request('/api/orders');
+  },
+  analyzeMealImage(payload) {
+    return request('/api/vision/meal-analyze', { method: 'POST', body: payload, timeoutMs: 60000 });
   }
 };

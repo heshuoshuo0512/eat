@@ -1,5 +1,5 @@
 <template>
-  <sc-page-shell back title="拍照识餐" subtitle="识别 · 营养 · 匹配" tone="blue">
+  <sc-page-shell back title="拍照识餐" subtitle="识别 · 营养 · 匹配" tone="core">
     <view class="page-intro">
       <text class="intro-title">拍一下，知道怎么吃。</text>
       <text class="intro-desc">先识别餐盘，再匹配真实菜品和健康替代推荐。</text>
@@ -15,7 +15,7 @@
 
       <image v-if="imagePath" class="camera-preview" :src="imagePath" mode="aspectFill" />
       <view v-else class="camera-placeholder">
-        <image class="camera-placeholder__icon" src="/static/icons/camera.png" mode="aspectFit" />
+          <image class="camera-placeholder__icon" src="/static/icons/camera-line.png" mode="aspectFit" />
         <text class="camera-placeholder__title">添加餐盘图片</text>
         <text class="camera-placeholder__desc">支持拍照或相册，建议光线充足。</text>
       </view>
@@ -55,7 +55,7 @@
         <text class="matches-title">真实菜品匹配</text>
       </view>
       <view class="dish-stack">
-        <sc-dish-card v-for="dish in matchedDishes" :key="dish.id" :dish="dish" badge="可买" @tap="openDishes" />
+        <sc-dish-card v-for="dish in matchedDishes" :key="dish.id" :dish="dish" badge="真实匹配" @tap="openDish(dish.id)" />
       </view>
     </view>
 
@@ -76,10 +76,14 @@ const message = ref('');
 const loading = ref(false);
 const matchedDishes = computed(() => result.value?.matches || result.value?.recommendations || result.value?.dishes || []);
 
-onShow(() => {
-  if (!store.user.value) uni.redirectTo({ url: '/pages/login/login' });
+onShow(async () => {
+  try {
+    await store.refreshIfStale();
+    if (!store.user.value) uni.reLaunch({ url: '/pages/login/login' });
+  } catch {}
 });
 function openDishes() { uni.switchTab({ url: '/pages/dishes/dishes' }); }
+function openDish(id) { uni.navigateTo({ url: `/pages/dish-detail/dish-detail?id=${encodeURIComponent(id)}` }); }
 
 function chooseImage() {
   uni.chooseImage({
@@ -119,35 +123,30 @@ async function analyze() {
 </script>
 
 <style scoped>
-.page-intro { margin-bottom: 24rpx; padding: 28rpx 30rpx; border-radius: 28rpx; background: linear-gradient(135deg, #f0f8ff, #e4f0fa); }
-.intro-title { display: block; font-size: 34rpx; font-weight: 900; color: #18251f; line-height: 1.25; }
-.intro-desc { display: block; margin-top: 10rpx; font-size: 23rpx; color: #70877b; line-height: 1.5; }
-
-.camera-card { margin-bottom: 24rpx; border-radius: 28rpx; background: #fff; border: 1rpx solid #e5ece8; box-shadow: 0 4rpx 20rpx rgba(0,0,0,.04); overflow: hidden; }
-.camera-card__header { padding: 28rpx 28rpx 0; }
-.camera-card__eyebrow { display: block; font-size: 20rpx; font-weight: 800; color: #84918a; letter-spacing: 2rpx; }
-.camera-card__title { display: block; margin-top: 4rpx; font-size: 28rpx; font-weight: 900; color: #18251f; }
-.camera-preview { display: block; width: 100%; height: 420rpx; margin-top: 20rpx; }
-.camera-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 420rpx; margin: 20rpx 28rpx 0; border-radius: 26rpx; background: linear-gradient(135deg, #eef7ff, #e9f8ef); color: #70877b; }
-.camera-placeholder__icon { width: 72rpx; height: 72rpx; margin-bottom: 16rpx; }
-.camera-placeholder__title { color: #20342b; font-size: 30rpx; font-weight: 950; }
-.camera-placeholder__desc { margin-top: 8rpx; font-size: 23rpx; }
-.camera-card__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 16rpx; padding: 20rpx 28rpx 28rpx; }
-
-.result-card { }
-.result-card__header { margin-bottom: 18rpx; }
-.result-card__eyebrow { display: block; font-size: 20rpx; font-weight: 800; color: #1f9f72; letter-spacing: 2rpx; }
-.result-card__title { display: block; margin-top: 4rpx; font-size: 30rpx; font-weight: 900; color: #18251f; }
-.result-card__desc { display: block; margin-top: 6rpx; font-size: 23rpx; color: #70877b; line-height: 1.5; }
-
-.result-nutrition { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14rpx; }
-.nutrition-item { padding: 22rpx; border-radius: 26rpx; background: #f4fbef; text-align: center; }
-.nutrition-num { display: block; color: #1f9f72; font-size: 34rpx; font-weight: 950; }
-.nutrition-unit { display: block; margin-top: 4rpx; color: #70877b; font-size: 22rpx; }
-
-.matches-header { margin-bottom: 18rpx; }
-.matches-eyebrow { display: block; font-size: 20rpx; font-weight: 800; color: #84918a; letter-spacing: 2rpx; }
-.matches-title { display: block; margin-top: 4rpx; font-size: 28rpx; font-weight: 900; color: #18251f; }
-.dish-stack { display: flex; flex-direction: column; gap: 18rpx; }
-.notice { display: block; margin-top: 14rpx; padding: 0 28rpx 28rpx; color: #70877b; font-size: 23rpx; }
+.page-intro { margin-bottom:24rpx; padding:22rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.intro-title { display:block; color:var(--ink); font-size:32rpx; font-weight:600; line-height:1.3; }
+.intro-desc { display:block; margin-top:8rpx; color:var(--muted); font-size:24rpx; line-height:1.5; }
+.camera-card { margin-bottom:24rpx; overflow:hidden; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.camera-card__header { padding:24rpx 24rpx 0; }
+.camera-card__eyebrow { display:block; color:var(--info); font-size:22rpx; font-weight:500; }
+.camera-card__title { display:block; margin-top:4rpx; color:var(--ink); font-size:28rpx; font-weight:600; }
+.camera-preview { display:block; width:100%; height:420rpx; margin-top:20rpx; }
+.camera-placeholder { display:flex; height:420rpx; margin:20rpx 24rpx 0; flex-direction:column; align-items:center; justify-content:center; border-radius:var(--radius); color:var(--muted); background:var(--info-soft); }
+.camera-placeholder__icon { width:68rpx; height:68rpx; margin-bottom:16rpx; }
+.camera-placeholder__title { color:var(--ink); font-size:30rpx; font-weight:600; }
+.camera-placeholder__desc { margin-top:8rpx; font-size:24rpx; }
+.camera-card__actions { display:grid; grid-template-columns:1fr 1fr; gap:14rpx; padding:20rpx 24rpx 24rpx; }
+.result-card__header { margin-bottom:18rpx; }
+.result-card__eyebrow { display:block; color:var(--brand); font-size:22rpx; font-weight:500; }
+.result-card__title { display:block; margin-top:4rpx; color:var(--ink); font-size:30rpx; font-weight:600; }
+.result-card__desc { display:block; margin-top:6rpx; color:var(--muted); font-size:24rpx; line-height:1.5; }
+.result-nutrition { display:grid; grid-template-columns:repeat(3,1fr); gap:10rpx; }
+.nutrition-item { padding:20rpx 8rpx; border-radius:12rpx; background:var(--surface-soft); text-align:center; }
+.nutrition-num { display:block; color:var(--ink); font-size:32rpx; font-weight:600; }
+.nutrition-unit { display:block; margin-top:4rpx; color:var(--muted); font-size:22rpx; }
+.matches-header { margin-bottom:18rpx; }
+.matches-eyebrow { display:block; color:var(--brand); font-size:22rpx; font-weight:500; }
+.matches-title { display:block; margin-top:4rpx; color:var(--ink); font-size:28rpx; font-weight:600; }
+.dish-stack { display:flex; flex-direction:column; gap:14rpx; }
+.notice { display:block; margin-top:14rpx; padding:0 24rpx 24rpx; color:var(--muted); font-size:24rpx; }
 </style>

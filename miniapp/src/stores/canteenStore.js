@@ -1,6 +1,10 @@
 import { computed, reactive, ref } from 'vue';
 import { buildMealPlan, calculateRanking, normalizeProfile } from '../domain/recommendation.js';
+import { DEFAULT_DATA_MAX_AGE_MS, isDataCacheStale } from '../domain/cachePolicy.js';
+import { normalizeRecommendationResult } from '../domain/studentDiscovery.js';
 import { apiClient } from '../services/apiClient.js';
+
+const MOTION_KEY = 'smart-canteen-reduced-motion';
 
 function emptyState() {
   return {
@@ -9,47 +13,118 @@ function emptyState() {
     stalls: [],
     dishes: [],
     reviews: [],
-    profile: normalizeProfile({ goal: 'fatLoss', budgetMax: 18, mealType: 'lunch' })
+    dishPreferences: [],
+    profile: normalizeProfile({ goal: 'healthy', budgetMax: 20, mealType: 'lunch' })
   };
 }
 
-function filterDishes(dishes, filters = {}) {
-  const keyword = String(filters.keyword || '').trim().toLowerCase();
-  const maxPrice = Number(filters.maxPrice || 999);
-  const taste = filters.taste || '不限';
-  const halalOnly = Boolean(filters.halalOnly);
-  return dishes.filter((dish) => {
-    const haystack = [dish.name, dish.cuisine, dish.taste, ...dish.tags, ...dish.ingredients].join(' ').toLowerCase();
-    if (keyword && !haystack.includes(keyword)) return false;
-    if (dish.price > maxPrice) return false;
-    if (taste !== '不限' && dish.taste !== taste && !dish.tags.includes(taste)) return false;
-    if (halalOnly && !dish.halal) return false;
-    return true;
-  });
+function emptyMenu() {
+  return { date: '', mealType: 'lunch', menus: [], dishes: [], source: 'fallback' };
+}
+
+function localRankings(source) {
+  const reviewsByTarget = new Map();
+  for (const review of source.reviews || []) {
+    reviewsByTarget.set(review.targetId, [...(reviewsByTarget.get(review.targetId) || []), review]);
+  }
+  const dishes = calculateRanking(source.dishes || [], reviewsByTarget);
+  const stalls = (source.stalls || []).map((stall) => {
+    const items = dishes.filter((dish) => dish.stallId === stall.id);
+    const rankScore = items.length ? items.reduce((sum, dish) => sum + dish.rankScore, 0) / items.length : Number(stall.rating || 0);
+    return { ...stall, rankScore: Number(rankScore.toFixed(2)), dishCount: items.length };
+  }).sort((left, right) => right.rankScore - left.rankScore);
+  const canteens = (source.canteens || []).map((canteen) => {
+    const items = stalls.filter((stall) => stall.canteenId === canteen.id);
+    const rankScore = items.length ? items.reduce((sum, stall) => sum + stall.rankScore, 0) / items.length : 0;
+    return { ...canteen, rankScore: Number(rankScore.toFixed(2)), stallCount: items.length };
+  }).sort((left, right) => right.rankScore - left.rankScore);
+  return { dishes, stalls, canteens };
 }
 
 const state = ref(emptyState());
 const loading = ref(false);
 const error = ref('');
 const loaded = ref(false);
-const searchFilters = reactive({ keyword: '', maxPrice: 25, taste: '不限', halalOnly: false });
-const todayMenu = ref({ date: '', mealType: 'lunch', menus: [], dishes: [], source: 'fallback' });
+const lastLoadedAt = ref(0);
+const todayMenu = ref(emptyMenu());
+const remoteRankings = ref(null);
+const contextualRecommendation = ref(normalizeRecommendationResult());
+const recommendationLoading = ref(false);
+const communitySection = ref('posts');
+const motionReduced = ref(Boolean(uni.getStorageSync(MOTION_KEY)));
+const searchFilters = reactive({ keyword: '', maxPrice: 999, taste: '不限', halalOnly: false });
+let loadPromise = null;
 
-function setState(nextState) {
-  state.value = { ...emptyState(), ...nextState, profile: normalizeProfile(nextState?.profile) };
+function setState(nextState = {}) {
+  state.value = {
+    ...emptyState(),
+    ...nextState,
+    session: nextState.session || { user: null },
+    canteens: Array.isArray(nextState.canteens) ? nextState.canteens : [],
+    stalls: Array.isArray(nextState.stalls) ? nextState.stalls : [],
+    dishes: Array.isArray(nextState.dishes) ? nextState.dishes : [],
+    reviews: Array.isArray(nextState.reviews) ? nextState.reviews : [],
+    dishPreferences: Array.isArray(nextState.dishPreferences) ? nextState.dishPreferences : [],
+    profile: normalizeProfile(nextState.profile)
+  };
 }
 
-async function load() {
-  loading.value = true;
-  error.value = '';
+function setPreferences(preferences = []) {
+  state.value.dishPreferences = Array.isArray(preferences) ? preferences : [];
+}
+
+async function hydrateExtras() {
+  const mealType = state.value.profile.mealType;
+  const results = await Promise.allSettled([apiClient.todayMenu(mealType), apiClient.loadRankings()]);
+  if (results[0].status === 'fulfilled') todayMenu.value = results[0].value;
+  if (results[1].status === 'fulfilled') remoteRankings.value = results[1].value;
+}
+
+async function load(force = false) {
+  if (!apiClient.hasToken()) {
+    setState();
+    loaded.value = false;
+    lastLoadedAt.value = 0;
+    return state.value;
+  }
+  if (loadPromise) return loadPromise;
+  loadPromise = (async () => {
+    loading.value = true;
+    error.value = '';
+    try {
+      setState(await apiClient.bootstrap());
+      loaded.value = true;
+      await hydrateExtras();
+      lastLoadedAt.value = Date.now();
+      return state.value;
+    } catch (err) {
+      error.value = err.message || '数据加载失败';
+      if (err.statusCode === 401) {
+        setState();
+        loaded.value = false;
+        lastLoadedAt.value = 0;
+      }
+      throw err;
+    } finally {
+      loading.value = false;
+      loadPromise = null;
+    }
+  })();
+  return loadPromise;
+}
+
+async function ensureLoaded() {
+  if (loaded.value && state.value.session.user) return state.value;
+  return load();
+}
+
+async function refreshIfStale(maxAgeMs = DEFAULT_DATA_MAX_AGE_MS) {
+  if (!loaded.value || !state.value.session.user) return load();
+  if (!isDataCacheStale(lastLoadedAt.value, Date.now(), maxAgeMs)) return state.value;
   try {
-    setState(await apiClient.bootstrap());
-    todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
-    loaded.value = true;
-  } catch (err) {
-    error.value = err.message;
-  } finally {
-    loading.value = false;
+    return await load(true);
+  } catch {
+    return state.value;
   }
 }
 
@@ -58,119 +133,154 @@ const canteens = computed(() => state.value.canteens);
 const stalls = computed(() => state.value.stalls);
 const dishes = computed(() => state.value.dishes);
 const profile = computed(() => state.value.profile);
-const searchedDishes = computed(() => filterDishes(state.value.dishes, searchFilters));
-const rankings = computed(() => {
-  const reviewsByTarget = new Map();
-  for (const review of state.value.reviews) {
-    reviewsByTarget.set(review.targetId, [...(reviewsByTarget.get(review.targetId) || []), review]);
-  }
-  const rankedDishes = calculateRanking(state.value.dishes, reviewsByTarget);
-  const rankedStalls = state.value.stalls.map((stall) => {
-    const stallDishes = rankedDishes.filter((dish) => dish.stallId === stall.id);
-    const rankScore = stallDishes.length ? stallDishes.reduce((sum, dish) => sum + dish.rankScore, 0) / stallDishes.length : stall.rating;
-    return { ...stall, rankScore: Number(rankScore.toFixed(2)), dishCount: stallDishes.length };
-  }).sort((left, right) => right.rankScore - left.rankScore);
-  const rankedCanteens = state.value.canteens.map((canteen) => {
-    const canteenStalls = rankedStalls.filter((stall) => stall.canteenId === canteen.id);
-    const rankScore = canteenStalls.length ? canteenStalls.reduce((sum, stall) => sum + stall.rankScore, 0) / canteenStalls.length : 0;
-    return { ...canteen, rankScore: Number(rankScore.toFixed(2)), stallCount: canteenStalls.length };
-  }).sort((left, right) => right.rankScore - left.rankScore);
-  return { dishes: rankedDishes, stalls: rankedStalls, canteens: rankedCanteens };
-});
-const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
+const dishPreferences = computed(() => state.value.dishPreferences);
+const rankings = computed(() => remoteRankings.value || localRankings(state.value));
+const searchedDishes = computed(() => state.value.dishes.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive'));
+const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes?.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
 
 async function login(payload) {
   const result = await apiClient.login(payload);
   setState(result.state);
-  await loadTodayMenu(state.value.profile.mealType);
+  loaded.value = true;
+  await hydrateExtras();
+  lastLoadedAt.value = Date.now();
   return result.user;
 }
 
-async function wechatLogin(profile = {}) {
+async function wechatLogin(profilePayload = {}) {
   const code = await new Promise((resolve, reject) => {
-    uni.login({
-      provider: 'weixin',
-      success: (result) => resolve(result.code),
-      fail: (error) => reject(new Error(error.errMsg || '微信登录失败。'))
-    });
+    uni.login({ provider: 'weixin', success: (result) => resolve(result.code), fail: (err) => reject(new Error(err?.errMsg || '微信登录失败。')) });
   });
-  const result = await apiClient.wechatLogin({ code, profile });
+  const result = await apiClient.wechatLogin({ code, profile: profilePayload });
   setState(result.state);
-  await loadTodayMenu(state.value.profile.mealType);
+  loaded.value = true;
+  await hydrateExtras();
+  lastLoadedAt.value = Date.now();
   return result.user;
 }
 
 function logout() {
   apiClient.logout();
-  state.value.session.user = null;
+  setState();
+  todayMenu.value = emptyMenu();
+  remoteRankings.value = null;
+  contextualRecommendation.value = normalizeRecommendationResult();
+  loaded.value = false;
+  lastLoadedAt.value = 0;
 }
 
 function getDishDetail(id) {
-  const dish = state.value.dishes.find((item) => item.id === id);
+  const dish = state.value.dishes.find((item) => String(item.id) === String(id));
   if (!dish) return null;
-  const stall = state.value.stalls.find((item) => item.id === dish.stallId);
-  const canteen = state.value.canteens.find((item) => item.id === stall?.canteenId);
-  const detailReviews = state.value.reviews.filter((review) => review.targetType === 'dish' && review.targetId === id);
-  return { ...dish, stall, canteen, reviews: detailReviews };
+  const stall = state.value.stalls.find((item) => String(item.id) === String(dish.stallId));
+  const canteen = state.value.canteens.find((item) => String(item.id) === String(stall?.canteenId));
+  const reviews = state.value.reviews.filter((review) => review.targetType === 'dish' && String(review.targetId) === String(id));
+  return { ...dish, stall, canteen, reviews };
 }
 
 async function addReview(payload) {
-  const detail = await apiClient.addReview(payload);
-  await load();
-  return detail;
+  return apiClient.addReview(payload);
 }
 
 async function saveProfile(payload) {
   const result = await apiClient.saveProfile(payload);
-  setState(result.state);
+  if (result.state) setState(result.state);
+  else state.value.profile = normalizeProfile(result.profile || payload);
+  contextualRecommendation.value = normalizeRecommendationResult(result.recommendation || {});
   await loadTodayMenu(state.value.profile.mealType);
-  return result.profile;
+  return state.value.profile;
 }
 
 async function loadTodayMenu(mealType = state.value.profile.mealType) {
-  loading.value = true;
-  error.value = '';
   try {
     todayMenu.value = await apiClient.todayMenu(mealType);
-    loaded.value = true;
+    return todayMenu.value;
   } catch (err) {
-    error.value = err.message;
-  } finally {
-    loading.value = false;
+    error.value = err.message || '今日菜单加载失败';
+    throw err;
   }
-  return todayMenu.value;
 }
 
-async function fetchDishDetail(id) {
-  return apiClient.dishDetail(id);
+async function loadRecommendation() {
+  recommendationLoading.value = true;
+  try {
+    contextualRecommendation.value = normalizeRecommendationResult(await apiClient.loadRecommendation());
+    return contextualRecommendation.value;
+  } catch (err) {
+    contextualRecommendation.value = normalizeRecommendationResult({ error: err.message });
+    contextualRecommendation.value.error = err.message;
+    throw err;
+  } finally {
+    recommendationLoading.value = false;
+  }
+}
+
+async function requestRecommendation(payload) {
+  recommendationLoading.value = true;
+  try {
+    contextualRecommendation.value = normalizeRecommendationResult(await apiClient.requestRecommendation(payload));
+    return contextualRecommendation.value;
+  } finally {
+    recommendationLoading.value = false;
+  }
+}
+
+async function searchDishes(payload) {
+  return apiClient.searchDishes(payload);
+}
+
+async function toggleFavorite(dishId) {
+  const current = state.value.dishPreferences.find((item) => String(item.dishId) === String(dishId));
+  const result = await apiClient.setDishPreference({ dishId, favorite: !current?.favorite });
+  setPreferences(result.preferences);
+  return result.preferences;
+}
+
+async function markDishEaten(dishId) {
+  const result = await apiClient.recordDishEaten(dishId);
+  const index = state.value.dishPreferences.findIndex((item) => String(item.dishId) === String(dishId));
+  if (index >= 0) state.value.dishPreferences.splice(index, 1, result.preference);
+  else state.value.dishPreferences.push(result.preference);
+  return result.preference;
+}
+
+async function markDishDrawn(dishId) {
+  const result = await apiClient.recordDishDrawn(dishId);
+  const index = state.value.dishPreferences.findIndex((item) => String(item.dishId) === String(dishId));
+  if (index >= 0) state.value.dishPreferences.splice(index, 1, result.preference);
+  else state.value.dishPreferences.push(result.preference);
+  return result.preference;
+}
+
+function openCommunitySection(section) {
+  communitySection.value = section === 'reviews' ? 'reviews' : 'posts';
+}
+
+function setMotionReduced(value) {
+  motionReduced.value = Boolean(value);
+  uni.setStorageSync(MOTION_KEY, motionReduced.value ? '1' : '');
 }
 
 export function useCanteenStore() {
   return {
-    state,
-    loading,
-    error,
-    loaded,
-    searchFilters,
-    todayMenu,
-    user,
-    canteens,
-    stalls,
-    dishes,
-    profile,
-    searchedDishes,
-    rankings,
-    recommendation,
-    load,
-    login,
-    wechatLogin,
-    logout,
-    getDishDetail,
-    addReview,
-    fetchDishDetail,
-    loadTodayMenu,
-    ragSearch: apiClient.ragSearch,
-    askMealAdvisor: apiClient.askMealAdvisor,
+    state, loading, error, loaded, lastLoadedAt, todayMenu, remoteRankings, contextualRecommendation, recommendationLoading,
+    communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
+    rankings, searchedDishes, recommendation,
+    load, ensureLoaded, refreshIfStale, login, wechatLogin, logout, getDishDetail, addReview, saveProfile,
+    loadTodayMenu, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
+    markDishDrawn, openCommunitySection, setMotionReduced,
+    fetchDishDetail: apiClient.dishDetail,
+    runAgent: apiClient.runAgent,
+    loadAgentMemory: apiClient.loadAgentMemory,
+    saveAgentMemory: apiClient.saveAgentMemory,
+    clearAgentMemory: apiClient.clearAgentMemory,
+    confirmAgentAction: apiClient.confirmAgentAction,
+    rejectAgentAction: apiClient.rejectAgentAction,
+    listReviews: apiClient.listReviews,
+    listPosts: apiClient.listPosts,
+    createPost: apiClient.createPost,
+    uploadImage: apiClient.uploadImage,
+    listOrders: apiClient.listOrders,
     analyzeMealImage: apiClient.analyzeMealImage
   };
 }

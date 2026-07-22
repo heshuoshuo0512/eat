@@ -1,118 +1,102 @@
 <template>
-  <sc-page-shell back title="菜单检索" subtitle="搜索 · 筛选 · 评价" tone="orange">
-    <view class="hero-panel dishes-hero">
-      <text class="hero-kicker">DISH DISCOVERY</text>
-      <text class="hero-title">找得到，也买得到。</text>
-      <text class="hero-subtitle">从真实菜品库筛选价格、口味和清真条件，减少选择成本。</text>
+  <sc-page-shell title="找菜">
+    <view class="mode-row">
+      <sc-segmented-control :model-value="'search'" :options="modeOptions" block @update:model-value="changeMode" />
+      <button class="camera-button" aria-label="拍照识餐" @tap="openVision"><image src="/static/icons/camera-line.png" mode="aspectFit" /></button>
     </view>
 
-    <view class="filter-panel panel-card">
-      <input class="search-input" v-model="store.searchFilters.keyword" placeholder="搜菜名、食材、口味" />
-      <view class="filter-row">
-        <input class="input half" type="number" v-model="store.searchFilters.maxPrice" placeholder="最高价" />
-        <picker class="select-box half" :range="tastes" :value="tasteIndex" @change="setTaste">
-          <view>{{ store.searchFilters.taste }}</view>
-        </picker>
-      </view>
-      <label class="check-row">
-        <checkbox :checked="store.searchFilters.halalOnly" color="#58cfa0" @tap="toggleHalal" />
-        <text>只看清真</text>
-      </label>
+    <sc-smart-composer
+      v-model="query" v-model:memory-draft="memoryDraft" title="帮我找菜"
+      subtitle="快捷问题会随健康档案、预算和忌口变化。" :prompts="prompts" :loading="searching"
+      :memory-open="memoryOpen" :memory-saving="memorySaving" @submit="submitSearch" @prompt="runPrompt"
+      @toggle-memory="memoryOpen=!memoryOpen" @save-memory="saveMemory" @clear-memory="clearMemory"
+    />
+
+    <view class="explore-shortcuts">
+      <button v-for="entry in exploreEntries" :key="entry.id" @tap="openExplore(entry)">
+        <view><image :src="entry.icon" mode="aspectFit" /></view><text>{{ entry.shortLabel }}</text>
+      </button>
     </view>
 
-    <sc-state-card v-if="store.loading.value" type="loading" title="正在同步菜品库" desc="价格、口味和评分正在更新。" />
-    <sc-state-card v-else-if="store.error.value" type="error" title="菜品数据加载失败" :desc="store.error.value" action-text="重试" @action="reload" />
+    <view v-if="searchResult" class="search-summary panel-card">
+      <view class="summary-head"><text class="source-badge">{{ searchResult.meta?.semanticUsed ? '语义检索' : '规则检索' }}</text><text class="ui-strong">检索结论</text><button @tap="clearSearch">查看全部</button></view>
+      <text class="summary-copy">{{ resultSummary }}</text>
+      <view v-if="searchResult.suggestedRelaxations?.length" class="relaxations"><text v-for="item in searchResult.suggestedRelaxations" :key="relaxationLabel(item)">{{ relaxationLabel(item) }}</text></view>
+    </view>
+    <text v-if="message" class="page-message" :class="{ error:isError }">{{ message }}</text>
 
-    <sc-section eyebrow="MENU RESULT" :title="`共 ${store.searchedDishes.value.length} 道菜`" desc="点击菜品可在下方写评价。" />
-    <view class="dish-stack">
-      <sc-dish-card v-for="dish in store.searchedDishes.value" :key="dish.id" :dish="dish" :badge="dish.rating.toFixed(1)" @tap="selectDish(dish.id)" />
-      <sc-state-card v-if="!store.searchedDishes.value.length" type="empty" title="没有匹配菜品" desc="试试放宽价格、口味或清真筛选条件。" />
+    <view class="result-head">
+      <view><text class="result-eyebrow">{{ searchResult ? '检索结果' : '全部有效菜品' }}</text><text class="result-title">{{ sortedDishes.length }} 道菜</text></view>
+      <sc-segmented-control v-model="sortDirection" :options="sortOptions" density="compact" />
+    </view>
+    <sc-state-card v-if="store.loading.value&&!store.loaded.value" type="loading" title="正在加载菜品" />
+    <view v-else class="dish-list">
+      <sc-dish-card v-for="dish in sortedDishes" :key="dish.id" :dish="dish" :location="dishLocation(dish)" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" @tap="openDish(dish.id)" />
+      <sc-state-card v-if="!sortedDishes.length" type="empty" title="没有匹配菜品" desc="调整描述后重新搜索。" action-text="查看全部" @action="clearSearch" />
     </view>
 
-    <view v-if="detail" class="panel-card detail-card">
-      <view class="detail-hero">
-        <view>
-          <text class="eyebrow">当前选择</text>
-          <text class="detail-title">{{ detail.name }}</text>
-          <text class="detail-location">{{ detail.canteen?.name }} · {{ detail.stall?.name }}</text>
-        </view>
-        <image class="detail-icon" :src="detailIconSrc" mode="aspectFit" />
-      </view>
-      <view class="tag-row">
-        <text v-for="tag in detail.tags" :key="tag" class="pill">{{ tag }}</text>
-      </view>
-      <textarea class="textarea" v-model="review.content" maxlength="240" placeholder="写一句真实评价，帮助同学选餐" />
-      <button class="primary-btn" @tap="submitReview">提交评价</button>
-      <text v-if="message" class="notice">{{ message }}</text>
-      <view class="button-row detail-actions">
-        <button class="secondary-btn" @tap="openRecommend">按健康目标配餐</button>
-        <button class="secondary-btn" @tap="openAgent">问智能顾问</button>
-      </view>
-    </view>
+    <sc-citation-list v-if="searchResult" :citations="searchResult.items||[]" :expanded="citationsExpanded" @toggle="citationsExpanded=!citationsExpanded" @select="selectCitation" />
   </sc-page-shell>
 </template>
 
 <script setup>
-import { computed, reactive, ref, watchEffect } from 'vue';
-import { onShow } from '@dcloudio/uni-app';
-import { validateReviewForm } from '../../domain/validation.js';
+import { computed, ref } from 'vue';
+import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
+import { buildProfilePrompts, createRatingMap, sortDishesByRating } from '../../domain/studentDiscovery.js';
+import { EXPLORE_ENTRY_IDS, getStudentEntries } from '../../domain/studentNavigation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
-
-const store = useCanteenStore();
-const tastes = ['不限', '清淡', '鲜香', '香辣', '浓郁', '酸甜'];
-const selectedId = ref('');
-const review = reactive({ rating: 5, content: '' });
-const message = ref('');
-const detail = computed(() => store.getDishDetail(selectedId.value));
-const detailIconMap = ['menu', 'meal-plan', 'order-dish'];
-const detailIconSrc = computed(() => `/static/icons/${detailIconMap[Math.abs(hashCode(detail.value?.id || detail.value?.name)) % detailIconMap.length]}.png`);
-const tasteIndex = computed(() => Math.max(0, tastes.indexOf(store.searchFilters.taste)));
-
-onShow(() => {
-  if (!store.user.value) uni.redirectTo({ url: '/pages/login/login' });
-});
-
-watchEffect(() => {
-  if (!store.searchedDishes.value.some((dish) => dish.id === selectedId.value)) {
-    selectedId.value = store.searchedDishes.value[0]?.id || '';
-  }
-});
-
-function setTaste(event) {
-  store.searchFilters.taste = tastes[Number(event.detail.value)] || '不限';
-}
-function toggleHalal() {
-  store.searchFilters.halalOnly = !store.searchFilters.halalOnly;
-}
-function selectDish(id) {
-  selectedId.value = id;
-}
-async function reload() { await store.load(); }
-function openRecommend() { uni.navigateTo({ url: '/pages/recommend/recommend' }); }
-function openAgent() { uni.navigateTo({ url: '/pages/agent/agent' }); }
-async function submitReview() {
-  message.value = validateReviewForm({ targetId: selectedId.value, rating: review.rating, content: review.content });
-  if (message.value) return;
-  try {
-    await store.addReview({ targetId: selectedId.value, rating: review.rating, content: review.content });
-    review.content = '';
-    message.value = '评价已保存，排行榜会同步更新。';
-  } catch (error) {
-    message.value = error.message;
-  }
-}
-function hashCode(value) {
-  let hash = 0;
-  const text = String(value || 'dish');
-  for (let index = 0; index < text.length; index += 1) hash = ((hash << 5) - hash) + text.charCodeAt(index);
-  return hash;
-}
+const store=useCanteenStore();
+const exploreEntries=getStudentEntries(EXPLORE_ENTRY_IDS);
+const modeOptions=[{value:'search',label:'菜品检索'},{value:'recommend',label:'智能推荐'}];
+const sortOptions=[{value:'desc',label:'高分优先'},{value:'asc',label:'低分优先'}];
+const query=ref(''); const searching=ref(false); const searchResult=ref(null); const sortDirection=ref('desc'); const message=ref(''); const isError=ref(false); const citationsExpanded=ref(false);
+const memoryOpen=ref(false); const memoryDraft=ref(''); const memoryPreferences=ref({}); const memorySaving=ref(false); let memoryLoaded=false;
+const prompts=computed(()=>buildProfilePrompts(store.profile.value,'search'));
+const ratingMap=computed(()=>createRatingMap(store.rankings.value.dishes));
+const sourceDishes=computed(()=>searchResult.value?.items || store.dishes.value.filter((dish)=>dish.status!=='archived'&&dish.status!=='inactive'));
+const sortedDishes=computed(()=>sortDishesByRating(sourceDishes.value,ratingMap.value,sortDirection.value));
+const resultSummary=computed(()=>{ const result=searchResult.value;if(!result)return'';const total=Number(result.availability?.totalCount??result.items?.length??0);const orderable=Number(result.availability?.orderableCount??result.items?.filter((dish)=>dish.availability?.orderable).length??0);return total?`找到 ${total} 道真实菜品，其中 ${orderable} 道当前可点。`:'没有满足全部条件的真实菜品，可参考放宽建议。'; });
+  onShow(async()=>{ try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}if(!memoryLoaded){memoryLoaded=true;await loadMemory();}}catch{} });
+onPullDownRefresh(async()=>{try{await store.load(true);}catch{}finally{uni.stopPullDownRefresh();}});
+function changeMode(value){if(value==='recommend')uni.navigateTo({url:'/pages/recommend/recommend'});}
+function openVision(){uni.navigateTo({url:'/pages/vision/vision'});}
+function openExplore(entry){uni.navigateTo({url:entry.route});}
+function runPrompt(text){query.value=text;submitSearch();}
+async function submitSearch(){const text=query.value.trim();if(!text)return;searching.value=true;message.value='';isError.value=false;citationsExpanded.value=false;try{searchResult.value=await store.searchDishes({query:text,filters:{budgetMax:store.profile.value.budgetMax,taste:store.profile.value.taste!=='不限'?store.profile.value.taste:undefined,halalOnly:store.profile.value.halalOnly,mealType:store.profile.value.mealType,avoidIngredients:[...(store.profile.value.allergies||[]),...(store.profile.value.avoid||[])]},sort:'relevance',limit:50,offset:0});}catch(error){isError.value=true;message.value=error.message||'检索失败，请稍后重试。';}finally{searching.value=false;}}
+function clearSearch(){searchResult.value=null;query.value='';citationsExpanded.value=false;message.value='';}
+function relaxationLabel(item){return typeof item==='string'?item:item?.label||item?.message||item?.field||'调整条件';}
+function dishLocation(dish){const stall=store.stalls.value.find((item)=>item.id===dish.stallId);const canteen=store.canteens.value.find((item)=>item.id===stall?.canteenId);return[canteen?.name,stall?.name].filter(Boolean).join(' · ');}
+function supplyState(dish){if(dish.availability){return{label:dish.availability.reason||({available:'今日可点',limited:'库存紧张',sold_out:'今日售罄',off_menu:'非今日供应'}[dish.availability.status]||'当前不可点'),canOrder:dish.availability.orderable===true};}const menu=store.todayMenu.value.dishes?.find((item)=>String(item.id)===String(dish.id));if(!menu)return{label:'非今日供应',canOrder:false};if(menu.supplyStatus==='sold_out')return{label:'今日售罄',canOrder:false};return{label:menu.supplyStatus==='limited'?'库存紧张':'今日可点',canOrder:true};}
+function openDish(id){uni.navigateTo({url:`/pages/dish-detail/dish-detail?id=${encodeURIComponent(id)}`});}
+function selectCitation(item){openDish(item.id||item.dishId||item.sourceId);}
+async function loadMemory(){try{const result=await store.loadAgentMemory();const memory=result.memory||result;memoryDraft.value=memory.summary||'';memoryPreferences.value=memory.preferences||{};}catch{}}
+async function saveMemory(){memorySaving.value=true;try{const result=await store.saveAgentMemory({summary:memoryDraft.value.trim(),preferences:memoryPreferences.value});const memory=result.memory||result;memoryDraft.value=memory.summary||'';message.value='饮食记忆已保存。';isError.value=false;}catch(error){message.value=error.message;isError.value=true;}finally{memorySaving.value=false;}}
+async function clearMemory(){memorySaving.value=true;try{await store.clearAgentMemory();memoryDraft.value='';memoryPreferences.value={};message.value='饮食记忆已清除。';isError.value=false;}catch(error){message.value=error.message;isError.value=true;}finally{memorySaving.value=false;}}
 </script>
 
 <style scoped>
-.dishes-hero { margin-bottom:18rpx; }
-.filter-panel { display:flex; flex-direction:column; gap:14rpx; padding:20rpx; border-radius:24rpx; }
-.search-input { width:100%; min-height:82rpx; padding:0 22rpx; border:1rpx solid #e5ece8; border-radius:18rpx; background:#f7faf8; color:#18251f; font-size:27rpx; box-sizing:border-box; }
-.filter-row { display:flex; gap:10rpx; }.half { flex:1; }.check-row { display:flex; align-items:center; gap:10rpx; color:#486257; font-size:24rpx; }
-.dish-stack { display:flex; flex-direction:column; gap:10rpx; margin-bottom:20rpx; }.detail-card { margin-bottom:100rpx; border-radius:26rpx; }.detail-hero { display:flex; align-items:center; justify-content:space-between; gap:18rpx; }.detail-title { display:block; margin-top:6rpx; color:#18251f; font-size:36rpx; font-weight:900; }.detail-location { display:block; margin-top:6rpx; color:#84918a; font-size:22rpx; }.detail-icon { width:96rpx; height:96rpx; border-radius:22rpx; background:#eaf5ef; padding:20rpx; box-sizing:border-box; }.tag-row { display:flex; flex-wrap:wrap; gap:8rpx; margin:18rpx 0; }.button-row { display:grid; grid-template-columns:1fr 1fr; gap:10rpx; margin-top:14rpx; }.detail-actions { margin-top:12rpx; }
+.mode-row { display:grid; grid-template-columns:minmax(0,1fr) 88rpx; gap:12rpx; margin-bottom:24rpx; }
+.camera-button { display:flex; align-items:center; justify-content:center; width:88rpx; height:88rpx; padding:0; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.camera-button image { width:38rpx; height:38rpx; }
+.explore-shortcuts { display:grid; grid-template-columns:repeat(3,1fr); gap:12rpx; margin:-2rpx 0 28rpx; }
+.explore-shortcuts button { display:flex; align-items:center; justify-content:center; gap:10rpx; min-width:0; min-height:88rpx; padding:0 10rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.explore-shortcuts button:active { transform:scale(.98); background:var(--brand-soft); }
+.explore-shortcuts view { display:flex; align-items:center; justify-content:center; width:40rpx; height:40rpx; flex:0 0 40rpx; }
+.explore-shortcuts image { width:34rpx; height:34rpx; }
+.explore-shortcuts text { overflow:hidden; color:var(--ink); font-size:24rpx; font-weight:500; white-space:nowrap; text-overflow:ellipsis; }
+.search-summary { padding:22rpx; }
+.summary-head { display:flex; align-items:center; gap:10rpx; }
+.summary-head .ui-strong { flex:1; color:var(--ink); font-size:26rpx; font-weight:600; }
+.summary-head button { display:flex; align-items:center; justify-content:center; min-height:60rpx; padding:0 10rpx; border-radius:10rpx; color:var(--brand); background:var(--brand-soft); font-size:24rpx; font-weight:500; }
+.source-badge { min-height:40rpx; padding:0 9rpx; border-radius:8rpx; color:var(--info); background:var(--info-soft); font-size:22rpx; line-height:40rpx; }
+.summary-copy { display:block; margin-top:10rpx; color:var(--ink-2); font-size:24rpx; line-height:1.55; }
+.relaxations { display:flex; flex-wrap:wrap; gap:8rpx; margin-top:12rpx; }
+.relaxations text { min-height:40rpx; padding:0 9rpx; border-radius:8rpx; color:#966218; background:var(--rating-soft); font-size:22rpx; line-height:40rpx; }
+.page-message { display:block; margin:12rpx 0; color:var(--brand); font-size:24rpx; }
+.page-message.error { color:var(--danger); }
+.result-head { display:flex; align-items:flex-end; justify-content:space-between; gap:14rpx; margin:30rpx 0 16rpx; }
+.result-eyebrow,.result-title { display:block; }
+.result-eyebrow { color:var(--brand); font-size:22rpx; font-weight:500; }
+.result-title { margin-top:4rpx; color:var(--ink); font-size:30rpx; font-weight:600; }
+.dish-list { display:flex; flex-direction:column; gap:12rpx; margin-bottom:22rpx; }
 </style>

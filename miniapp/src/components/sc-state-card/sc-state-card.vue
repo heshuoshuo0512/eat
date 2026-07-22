@@ -1,69 +1,26 @@
 <template>
   <view class="state-card" :class="`state-${type}`">
     <view class="state-icon">{{ icon }}</view>
-    <view class="state-body">
-      <text class="state-title">{{ title }}</text>
-      <text v-if="desc" class="state-desc">{{ desc }}</text>
-    </view>
+    <view class="state-body"><text class="state-title">{{ title }}</text><text v-if="desc" class="state-desc">{{ desc }}</text></view>
     <button v-if="actionText" class="state-action" @tap="$emit('action')">{{ actionText }}</button>
   </view>
 </template>
 
 <script setup>
 import { computed } from 'vue';
-
-const props = defineProps({
-  type: { type: String, default: 'info' },
-  title: { type: String, required: true },
-  desc: { type: String, default: '' },
-  actionText: { type: String, default: '' }
-});
-
+const props = defineProps({ type: { type: String, default: 'info' }, title: { type: String, required: true }, desc: { type: String, default: '' }, actionText: { type: String, default: '' } });
 defineEmits(['action']);
-
-const iconMap = { loading: '...', error: '!', empty: '-', info: 'i', success: 'OK' };
+const iconMap = { loading: '…', error: '!', empty: '—', info: 'i', success: '✓' };
 const icon = computed(() => iconMap[props.type] || iconMap.info);
 </script>
 
 <style scoped>
-.state-card {
-  display: flex;
-  align-items: center;
-  gap: 16rpx;
-  margin: 0 0 22rpx;
-  padding: 20rpx;
-  border-radius: 30rpx;
-  background: rgba(255,255,255,.84);
-  border: 1rpx solid rgba(255,255,255,.58);
-  box-shadow: 0 12rpx 32rpx rgba(21,62,43,.06);
-  backdrop-filter: blur(22rpx) saturate(1.2);
-}
-.state-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 48rpx;
-  height: 48rpx;
-  flex: 0 0 48rpx;
-  border-radius: 999rpx;
-  color: #fff;
-  background: #58cfa0;
-  font-size: 25rpx;
-  font-weight: 850;
-}
-.state-error .state-icon { background: #d9544d; }
-.state-empty .state-icon { background: #70877b; }
-.state-success .state-icon { background: #1f9f72; }
-.state-body { flex: 1; min-width: 0; }
-.state-title { display:block; color:#20342b; font-size:26rpx; font-weight:850; }
-.state-desc { display:block; margin-top:4rpx; color:#70877b; font-size:22rpx; line-height:1.42; }
-.state-action {
-  flex: 0 0 auto;
-  padding: 8rpx 16rpx;
-  border-radius: 999rpx;
-  color: #1f9f72;
-  background: #e9f8ef;
-  font-size: 22rpx;
-  font-weight: 750;
-}
+.state-card { display:flex; align-items:center; gap:16rpx; margin:0 0 20rpx; padding:22rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.state-icon { display:flex; align-items:center; justify-content:center; width:48rpx; height:48rpx; flex:0 0 48rpx; border-radius:50%; color:var(--brand); background:var(--brand-soft); font-size:24rpx; font-weight:600; }
+.state-error .state-icon { color:var(--danger); background:var(--danger-soft); }
+.state-empty .state-icon { color:var(--muted); background:var(--surface-soft); }
+.state-body { flex:1; min-width:0; }
+.state-title { display:block; color:var(--ink); font-size:26rpx; font-weight:600; }
+.state-desc { display:block; margin-top:4rpx; color:var(--muted); font-size:24rpx; line-height:1.45; }
+.state-action { display:flex; align-items:center; justify-content:center; flex:0 0 auto; min-height:64rpx; padding:0 16rpx; border-radius:10rpx; color:var(--brand); background:var(--brand-soft); font-size:24rpx; font-weight:500; }
 </style>

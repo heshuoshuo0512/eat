@@ -21,7 +21,7 @@ export function imageToBase64(path) {
       filePath: path,
       encoding: 'base64',
       success: (result) => resolve(result.data),
-      fail: (error) => reject(new Error(error.errMsg || '读取图片失败。'))
+      fail: (error) => reject(new Error(error?.errMsg || '读取图片失败。'))
     });
   });
 }

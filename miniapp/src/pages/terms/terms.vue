@@ -30,6 +30,6 @@
 .legal-card { margin-bottom: 80rpx; }
 .legal-section { padding: 22rpx 0; border-bottom: 1rpx solid var(--line); }
 .legal-section:last-child { border-bottom: 0; }
-.legal-title { display:block; color:#20342b; font-size:30rpx; font-weight:850; }
-.legal-text { display:block; margin-top:12rpx; color:#426052; font-size:25rpx; line-height:1.72; }
+.legal-title { display:block; color:var(--ink); font-size:30rpx; font-weight:600; }
+.legal-text { display:block; margin-top:12rpx; color:var(--ink-2); font-size:26rpx; line-height:1.7; }
 </style>

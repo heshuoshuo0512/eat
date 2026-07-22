@@ -1,128 +1,115 @@
 <template>
-  <sc-page-shell title="轻食食堂" subtitle="校园中心食堂 · 健康午餐" status="营业中">
-    <template #action>
-      <button class="nav-action" @tap="logout">退出</button>
-    </template>
+  <sc-page-shell title="智慧食堂">
+    <sc-state-card v-if="store.loading.value && !store.loaded.value" type="loading" title="正在同步食堂数据" desc="菜单、评分和供应状态正在更新。" />
+    <sc-state-card v-else-if="store.error.value && !store.loaded.value" type="error" title="数据同步失败" :desc="store.error.value" action-text="重试" @action="reload" />
 
-    <view class="search-card" @tap="openDishes">
-      <image class="search-icon" src="/static/icons/menu.png" mode="aspectFit" />
-      <text class="search-placeholder">搜索低卡、鸡胸、沙拉、清真窗口</text>
-      <text class="search-tag">智能推荐</text>
-    </view>
+    <sc-reveal-card
+      :dish="revealDish" :index="revealState.index" :total="revealDishes.length" :phase="revealState.phase"
+      :location="dishLocation(revealDish)" :reason="dishReason(revealDish)" :supply="supplyLabel(revealDish)"
+      :reduced-motion="store.motionReduced.value" @action="handleReveal" @reset="resetReveal" @detail="openDishDetail"
+    />
 
-    <sc-state-card v-if="store.loading.value" type="loading" title="正在同步食堂数据" desc="菜单、推荐和评分正在更新。" />
-    <sc-state-card v-else-if="store.error.value" type="error" title="数据同步失败" :desc="store.error.value" action-text="重试" @action="reload" />
-
-    <view class="hero-shop-card">
-      <view class="hero-copy">
-        <text class="hero-kicker">LIGHT MEAL TODAY</text>
-        <text class="hero-title">今天吃得轻一点</text>
-        <text class="hero-subtitle">轻松吃好每一餐 · 健康无负担</text>
-        <view class="hero-chips">
-          <text>低脂</text>
-          <text>高蛋白</text>
-          <text>少油</text>
-        </view>
-      </view>
-    </view>
-    <view class="quick-actions">
-      <view class="quick-action" :class="{ active: currentAction === 'recommend' }" @tap="openRecommend"><image class="quick-icon" src="/static/icons/meal-plan.png" mode="aspectFit" /><text>智能配餐</text></view>
-      <view class="quick-action" :class="{ active: currentAction === 'vision' }" @tap="openVision"><image class="quick-icon" src="/static/icons/camera.png" mode="aspectFit" /><text>拍照识餐</text></view>
-      <view class="quick-action" :class="{ active: currentAction === 'eat' }" @tap="openEat"><image class="quick-icon" src="/static/icons/order-dish.png" mode="aspectFit" /><text>吃什么</text></view>
-    </view>
-
-    <view class="panel-card swipe-panel">
-      <sc-section :eyebrow="menuSourceLabel" title="为你推荐">
-        <template #right><text class="pill">{{ progressText }}</text></template>
-      </sc-section>
-      <sc-state-card v-if="!totalCards && !store.loading.value" type="empty" title="暂无推荐" desc="先去逛逛菜单，推荐会更精准。" />
-      <view v-if="currentCard" class="swipe-card" @tap="openDishDetail(currentCard.id)">
-        <image class="swipe-cover" :src="dishCoverSrc(currentCard)" mode="aspectFill" />
-        <view class="swipe-body">
-          <text class="swipe-name">{{ currentCard.name }}</text>
-          <text class="swipe-meta">{{ currentCard.taste }} · {{ currentCard.cuisine }} · {{ currentCard.nutrition?.calories || 0 }} kcal</text>
-          <view class="swipe-stats">
-            <text class="stat"><text class="stat-label">评分</text> {{ (currentCard.rating || 0).toFixed(1) }}</text>
-            <text class="stat"><text class="stat-label">热度</text> {{ currentCard.rankScore?.toFixed?.(1) || '—' }}</text>
-            <text class="stat"><text class="stat-label">位置</text> {{ dishLocation(currentCard) }}</text>
-          </view>
-          <view class="swipe-tags">
-            <text v-for="tag in (currentCard.tags || []).slice(0, 3)" :key="tag" class="tag">{{ tag }}</text>
-          </view>
-      </view>
-      </view>
-      <view class="swipe-actions">
-        <button class="secondary-btn" @tap="resetCards">重置</button>
-        <button class="primary-btn" @tap="nextCard">下一张 ›</button>
+    <view class="home-section core-section">
+      <view class="section-heading"><view><text>智能吃饭</text><text class="ui-strong">两个入口，直接开始</text></view></view>
+      <view class="core-actions">
+        <button v-for="entry in coreEntries" :key="entry.id" class="core-action" @tap="openEntry(entry)">
+          <view class="entry-icon"><image :src="entry.icon" mode="aspectFit" /></view>
+          <view class="entry-copy"><text class="ui-strong">{{ entry.label }}</text><text>{{ entry.description }}</text></view>
+          <text class="entry-arrow">›</text>
+        </button>
       </view>
     </view>
 
+    <view class="home-section explore-section">
+      <view class="section-heading"><view><text>更多探索</text><text class="ui-strong">常用功能，直接打开</text></view></view>
+      <view class="explore-grid">
+        <button v-for="entry in exploreEntries" :key="entry.id" class="explore-card" @tap="openEntry(entry)">
+          <view class="explore-icon"><image :src="entry.icon" mode="aspectFit" /></view>
+          <text class="ui-strong">{{ entry.label }}</text>
+          <text class="explore-note">{{ exploreDescription(entry) }}</text>
+        </button>
+      </view>
+    </view>
   </sc-page-shell>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, reactive } from 'vue';
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
+import { CORE_ENTRY_IDS, EXPLORE_ENTRY_IDS, getStudentEntries } from '../../domain/studentNavigation.js';
+import { nextRevealState, resetRevealState } from '../../domain/studentDiscovery.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 
 const store = useCanteenStore();
-const greeting = computed(() => store.user.value?.nickname || store.user.value?.username || '欢迎回来');
-const menuSourceLabel = computed(() => store.todayMenu.value.dishes.length ? '今日供应优先' : '菜品库兜底');
-const coverMap = ['bowl', 'rice', 'noodle', 'protein', 'soup'];
-const cardIndex = ref(0);
-const currentAction = ref('recommend');
-const currentCard = computed(() => store.recommendation.value.dishes[cardIndex.value] || null);
-const totalCards = computed(() => store.recommendation.value.dishes.length);
-const progressText = computed(() => totalCards.value ? `${cardIndex.value + 1}/${totalCards.value}` : '0/0');
-function dishCoverSrc(dish) { return `/static/food/${coverMap[Math.abs(hashCode(dish?.id || dish?.name)) % coverMap.length]}.svg`; }
-function nextCard() { if (!totalCards.value) return; cardIndex.value = (cardIndex.value + 1) % totalCards.value; }
-function resetCards() { cardIndex.value = 0; }
+const revealState = reactive(resetRevealState());
+const drawnThisVisit = new Set();
+const coreEntries = getStudentEntries(CORE_ENTRY_IDS);
+const exploreEntries = getStudentEntries(EXPLORE_ENTRY_IDS);
+const revealDishes = computed(() => {
+  const picks = store.contextualRecommendation.value?.recommendations || [];
+  const catalog = new Map(store.dishes.value.map((dish) => [String(dish.id), dish]));
+  const hydrated = picks.map((item) => ({ ...(catalog.get(String(item.id || item.dishId)) || {}), ...item, id: item.id || item.dishId })).filter((item) => item.id);
+  return hydrated.length ? hydrated : store.recommendation.value.dishes;
+});
+const revealDish = computed(() => revealDishes.value[revealState.index] || revealDishes.value[0] || null);
 
 onShow(async () => {
-  await store.load();
-  if (!store.user.value) uni.redirectTo({ url: '/pages/login/login' });
+  try {
+    await store.refreshIfStale();
+    if (!store.user.value) { uni.reLaunch({ url: '/pages/login/login' }); return; }
+    if (!store.contextualRecommendation.value.recommendations?.length) await store.loadRecommendation().catch(() => {});
+  } catch {}
 });
+onPullDownRefresh(async () => { await reload(); uni.stopPullDownRefresh(); });
 
-onPullDownRefresh(async () => {
-  await store.load();
-  uni.stopPullDownRefresh();
-});
-
-function logout() { store.logout(); uni.redirectTo({ url: '/pages/login/login' }); }
-async function reload() { await store.load(); }
-function openRecommend() { currentAction.value = 'recommend'; uni.navigateTo({ url: '/pages/recommend/recommend' }); }
-function openVision() { currentAction.value = 'vision'; uni.navigateTo({ url: '/pages/vision/vision' }); }
-function openEat() { currentAction.value = 'eat'; uni.switchTab({ url: '/pages/dishes/dishes' }); }
-function openDishDetail(id) { uni.navigateTo({ url: `/pages/dish-detail/dish-detail?id=${encodeURIComponent(id)}` }); }
-function dishLocation(dish) {
-  const stall = store.stalls.value.find((s) => s.id === dish.stallId);
-  if (!stall) return '—';
-  const canteen = store.canteens.value.find((c) => c.id === stall.canteenId);
-  return canteen ? `${canteen.name} · ${stall.name}` : stall.name;
+async function reload() {
+  try { await store.load(true); await store.loadRecommendation().catch(() => {}); Object.assign(revealState, resetRevealState()); drawnThisVisit.clear(); } catch {}
 }
-function hashCode(value) {
-  let hash = 0;
-  const text = String(value || 'dish');
-  for (let index = 0; index < text.length; index += 1) hash = ((hash << 5) - hash) + text.charCodeAt(index);
-  return hash;
+async function handleReveal() {
+  if (!revealDish.value) return;
+  const wasCovered = revealState.phase === 'covered';
+  Object.assign(revealState, nextRevealState(revealState, revealDishes.value.length));
+  if (wasCovered && !drawnThisVisit.has(revealDish.value.id)) { drawnThisVisit.add(revealDish.value.id); store.markDishDrawn(revealDish.value.id).catch(() => {}); }
+}
+function resetReveal() { Object.assign(revealState, resetRevealState()); }
+function dishLocation(dish) { if (!dish) return ''; const stall = store.stalls.value.find((item) => item.id === dish.stallId); const canteen = store.canteens.value.find((item) => item.id === stall?.canteenId); return [canteen?.name, stall?.name].filter(Boolean).join(' · ') || '校园档口'; }
+function dishReason(dish) { if (!dish) return ''; if (Array.isArray(dish.why)) return dish.why.slice(0, 2).join(' · '); return dish.reason || '结合健康档案、评分与当前供应推荐。'; }
+function supplyLabel(dish) { if (!dish) return ''; if (dish.availability?.reason) return dish.availability.reason; const menu = store.todayMenu.value.dishes?.find((item) => String(item.id) === String(dish.id)); if (!menu) return '非今日供应'; return menu.supplyStatus === 'sold_out' ? '今日售罄' : menu.supplyStatus === 'limited' ? '库存紧张' : '今日可点'; }
+function openDishDetail(id) { uni.navigateTo({ url: `/pages/dish-detail/dish-detail?id=${encodeURIComponent(id)}` }); }
+function exploreDescription(entry) {
+  if (entry.id === 'canteens') return `${store.canteens.value.length} 座食堂`;
+  if (entry.id === 'rankings') return '真实评分榜';
+  return '六种风味';
+}
+function openEntry(entry) {
+  if (!entry) return;
+  if (entry.communitySection) store.openCommunitySection(entry.communitySection);
+  uni[entry.navigationType]({ url: entry.route });
 }
 </script>
+
 <style scoped>
-.nav-action,.text-action { padding:10rpx 18rpx; border-radius:999rpx; color:#167a5b; background:#eaf5ef; font-size:22rpx; font-weight:800; }
-.search-card { display:flex; align-items:center; gap:14rpx; margin-bottom:20rpx; padding:18rpx 20rpx; border:1rpx solid #e5ece8; border-radius:20rpx; background:#fff; box-shadow:0 8rpx 22rpx rgba(24,37,31,.05); }
-.search-icon { width:34rpx; height:34rpx; padding:7rpx; border-radius:12rpx; background:#eaf5ef; }
-.search-placeholder { flex:1; min-width:0; color:#84918a; font-size:24rpx; }
-.search-tag { padding:8rpx 12rpx; border-radius:10rpx; color:#167a5b; background:#eaf5ef; font-size:19rpx; font-weight:800; }
-.hero-shop-card { position:relative; overflow:hidden; min-height:330rpx; margin-bottom:20rpx; padding:28rpx 28rpx 128rpx; border-radius:28rpx; color:#fff; background:linear-gradient(135deg,#167a5b,#0b6047); box-shadow:0 22rpx 48rpx rgba(12,98,72,.2); }
-.hero-copy { position:relative; z-index:2; width:100%; }
-.hero-kicker { display:block; font-size:19rpx; font-weight:800; letter-spacing:2rpx; opacity:.75; }
-.hero-title { display:block; margin-top:14rpx; font-size:42rpx; font-weight:900; line-height:1.12; }
-.hero-subtitle { display:block; margin-top:12rpx; font-size:23rpx; line-height:1.5; opacity:.84; }
-.hero-chips { display:flex; flex-wrap:wrap; gap:8rpx; margin-top:18rpx; }
-.quick-actions { display:grid; grid-template-columns:repeat(3,1fr); gap:10rpx; margin-bottom:20rpx; }
-.quick-action { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8rpx; min-height:108rpx; border:1rpx solid #e5ece8; border-radius:20rpx; color:#486257; background:#fff; font-size:21rpx; font-weight:800; }
-.quick-action.active { color:#fff; background:#0d4d3a; }
-.quick-icon { width:38rpx; height:38rpx; }
-.swipe-panel { margin-bottom:20rpx; }.swipe-card { display:flex; flex-direction:row; gap:18rpx; padding:16rpx 0; }.swipe-cover { width:140rpx; height:130rpx; border-radius:16rpx; object-fit:cover; }.swipe-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:6rpx; }.swipe-name { font-size:30rpx; font-weight:900; color:#18251f; }.swipe-meta { font-size:20rpx; color:#84918a; }.swipe-stats { display:flex; flex-wrap:wrap; gap:10rpx; margin:6rpx 0; font-size:20rpx; color:#6b7d75; }.swipe-stats .stat { display:inline-flex; align-items:center; gap:3rpx; padding:3rpx 8rpx; border-radius:8rpx; background:#f0f4f2; }.swipe-stats .stat-label { color:#84918a; font-size:18rpx; }
-.swipe-tags { display:flex; flex-wrap:wrap; gap:6rpx; margin-top:4rpx; }.swipe-tags .tag { padding:4rpx 10rpx; border-radius:8rpx; background:#eaf5ef; color:#167a5b; font-size:18rpx; }.swipe-actions { display:flex; gap:12rpx; margin-top:16rpx; }
+.home-section { margin-top:28rpx; }
+.section-heading { display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:14rpx; }
+.section-heading text,.section-heading .ui-strong { display:block; }
+.section-heading text { color:var(--section-tone, var(--brand)); font-size:22rpx; font-weight:500; }
+.section-heading .ui-strong { margin-top:4rpx; color:var(--ink); font-size:30rpx; font-weight:600; line-height:1.35; }
+.core-section,.explore-section { --section-tone:var(--brand); }
+.core-actions { display:flex; flex-direction:column; gap:12rpx; }
+.core-action { display:flex; align-items:center; gap:14rpx; width:100%; min-height:96rpx; padding:10rpx 16rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:left; box-shadow:var(--shadow-soft); box-sizing:border-box; }
+.entry-icon { display:flex; align-items:center; justify-content:center; width:54rpx; height:54rpx; flex:0 0 54rpx; border-radius:12rpx; background:var(--brand-soft); }
+.entry-icon image { width:32rpx; height:32rpx; }
+.entry-copy { flex:1; min-width:0; }
+.entry-copy .ui-strong,.entry-copy text { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.entry-copy .ui-strong { color:var(--ink); font-size:27rpx; font-weight:600; }
+.entry-copy text { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
+.entry-arrow { color:#96a199; font-size:36rpx; }
+.explore-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10rpx; }
+.explore-card { display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:0; min-height:144rpx; padding:14rpx 8rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:center; box-shadow:var(--shadow-soft); box-sizing:border-box; }
+.explore-icon { display:flex; align-items:center; justify-content:center; width:50rpx; height:50rpx; margin-bottom:8rpx; border-radius:14rpx; background:var(--brand-soft); }
+.explore-icon image { width:30rpx; height:30rpx; }
+.explore-card .ui-strong,.explore-note { display:block; max-width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.explore-card .ui-strong { color:var(--ink); font-size:24rpx; font-weight:600; }
+.explore-note { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
+.core-action:active,.explore-card:active { transform:scale(.985); opacity:.92; background:var(--surface-soft); }
 </style>

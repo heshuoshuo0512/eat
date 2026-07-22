@@ -32,16 +32,24 @@ const goalProfiles = {
 };
 
 export function normalizeProfile(profile = {}) {
+  const list = (value) => Array.isArray(value)
+    ? value.filter(Boolean)
+    : String(value || '').split(/[，,\s]+/).filter(Boolean);
   return {
     goal: profile.goal || 'healthy',
     budgetMax: Number(profile.budgetMax || 20),
     mealType: profile.mealType || 'lunch',
     taste: profile.taste || '不限',
     halalOnly: Boolean(profile.halalOnly),
-    avoid: Array.isArray(profile.avoid) ? profile.avoid.filter(Boolean) : String(profile.avoid || '').split(/[，,\s]+/).filter(Boolean),
+    avoid: list(profile.avoid),
+    allergies: list(profile.allergies),
+    dietaryPattern: profile.dietaryPattern || 'balanced',
+    spiceLevel: Number(profile.spiceLevel || 3),
+    nutritionFocus: list(profile.nutritionFocus),
+    favoriteTags: list(profile.favoriteTags),
+    preferLowCrowd: Boolean(profile.preferLowCrowd),
     activityLevel: profile.activityLevel || 'moderate',
-    conditions: Array.isArray(profile.conditions) ? profile.conditions.filter(Boolean) : String(profile.conditions || '').split(/[，,\s]+/).filter(Boolean),
-    allergies: Array.isArray(profile.allergies) ? profile.allergies.filter(Boolean) : String(profile.allergies || '').split(/[，,\s]+/).filter(Boolean),
+    conditions: list(profile.conditions),
     weight: profile.weight ? Number(profile.weight) : null,
     height: profile.height ? Number(profile.height) : null
   };
@@ -54,7 +62,9 @@ export function filterDishes(dishes, profile) {
     if (normalized.halalOnly && !dish.halal) return false;
     if (!dish.mealTypes.includes(normalized.mealType)) return false;
     if (normalized.taste !== '不限' && dish.taste !== normalized.taste && !dish.tags.includes(normalized.taste)) return false;
-    if (normalized.avoid.some((word) => dish.ingredients.some((item) => item.includes(word)))) return false;
+    const unsafeWords = [...normalized.avoid, ...normalized.allergies];
+    const dishSafetyText = [...(dish.ingredients || []), ...(dish.allergens || [])].join(' ');
+    if (unsafeWords.some((word) => dishSafetyText.includes(word))) return false;
     return true;
   });
 }
