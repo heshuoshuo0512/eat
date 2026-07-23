@@ -19,7 +19,10 @@
 
     <view v-if="mealPicks.length" class="recommend-list">
       <view class="list-head"><text>推荐菜品</text><sc-segmented-control v-model="sortDirection" :options="sortOptions" density="compact" /></view>
-      <sc-dish-card v-for="dish in mealPicks" :key="dish.id" :dish="dish" :location="dishLocation(dish)" badge="推荐" @tap="openDish(dish.id)" />
+      <sc-dish-card v-for="dish in visibleMealPicks" :key="dish.id" :dish="dish" :location="dishLocation(dish)" badge="推荐" @tap="openDish(dish.id)" />
+      <button v-if="mealPicks.length > 1" class="result-toggle" type="button" @tap="resultsExpanded = !resultsExpanded">
+        {{ resultsExpanded ? '收起排名菜品' : `查看全部 ${mealPicks.length} 道排名菜品` }}
+      </button>
     </view>
     <sc-state-card v-else-if="result&&!loading" type="empty" title="暂无推荐结果" desc="调整健康档案或换一种描述。" />
 
@@ -39,16 +42,17 @@ import { buildProfilePrompts, createRatingMap, sortDishesByRating } from '../../
 import { validateQuestion } from '../../domain/validation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 const store=useCanteenStore();const modeOptions=[{value:'search',label:'菜品检索'},{value:'recommend',label:'智能推荐'}];const sortOptions=[{value:'desc',label:'高分优先'},{value:'asc',label:'低分优先'}];
-const question=ref('');const loading=ref(false);const result=ref(null);const conversation=ref([]);const citations=ref([]);const pendingActions=ref([]);const sessionId=ref('');const message=ref('');const isError=ref(false);const sortDirection=ref('desc');const citationsExpanded=ref(false);
+const question=ref('');const loading=ref(false);const result=ref(null);const conversation=ref([]);const citations=ref([]);const pendingActions=ref([]);const sessionId=ref('');const message=ref('');const isError=ref(false);const sortDirection=ref('desc');const citationsExpanded=ref(false);const resultsExpanded=ref(false);
 const memoryOpen=ref(false);const memoryDraft=ref('');const memoryPreferences=ref({});const memorySaving=ref(false);let initialized=false;
 const prompts=computed(()=>buildProfilePrompts(store.profile.value,'recommend'));const ratingMap=computed(()=>createRatingMap(store.rankings.value.dishes));
 const mealPicks=computed(()=>{const raw=result.value?.recommendations||result.value?.mealPlan?.dishes||result.value?.mealPlan?.picks||result.value?.ranked||[];const catalog=new Map(store.dishes.value.map((dish)=>[String(dish.id),dish]));const hydrated=raw.map((pick)=>{const id=pick.id||pick.dishId;return{...(catalog.get(String(id))||{}),...pick,id};}).filter((dish)=>dish.id);return sortDishesByRating(hydrated,ratingMap.value,sortDirection.value);});
+const visibleMealPicks=computed(()=>resultsExpanded.value ? mealPicks.value : mealPicks.value.slice(0,1));
 onLoad(()=>{});onShow(async()=>{try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}if(!initialized){initialized=true;await Promise.all([loadMemory(),loadInitial()]);}}catch{}});
 function changeMode(value){if(value==='search')uni.switchTab({url:'/pages/dishes/dishes'});}function openProfile(){uni.navigateTo({url:'/pages/health-profile/health-profile'});}function openDish(id){uni.navigateTo({url:`/pages/dish-detail/dish-detail?id=${encodeURIComponent(id)}`});}
 function deterministicSummary(data){const picks=data.recommendations||data.ranked||[];if(!picks.length)return'当前没有满足全部条件且可点的菜品，请调整条件。';return`已根据健康档案与今日真实供应找到 ${picks.length} 个选择：${picks.slice(0,3).map((dish)=>dish.name).join('、')}。`;}
 function recommendationCitations(data){const evidence=data.evidence?.dishes||[];if(evidence.length)return evidence;return(data.recommendations||data.ranked||[]).map((dish)=>({id:dish.id,name:dish.name,score:dish.recommendationScore,snippet:Array.isArray(dish.why)?dish.why.slice(0,2).join(' · '):'来源于当前校园菜品库与已发布菜单。'}));}
-async function loadInitial(){loading.value=true;message.value='';try{const data=await store.loadRecommendation();result.value=data;citations.value=recommendationCitations(data);conversation.value=[{role:'assistant',content:deterministicSummary(data)}];}catch(error){isError.value=true;message.value=error.message||'推荐加载失败。';}finally{loading.value=false;}}
-async function runPrompt(raw){const text=String(raw||'').trim();const validation=validateQuestion(text);if(validation){message.value=validation;isError.value=true;return;}loading.value=true;message.value='';isError.value=false;conversation.value.push({role:'user',content:text});question.value='';await nextTick();try{const data=await store.runAgent({query:text,sessionId:sessionId.value||undefined});result.value=data;sessionId.value=data.sessionId||sessionId.value;citations.value=data.citations||recommendationCitations(data);pendingActions.value=(data.actions||[]).filter((item)=>item.requiresConfirmation);conversation.value.push({role:'assistant',content:data.answer||data.summary?.text||'推荐已生成。'});}catch(error){isError.value=true;message.value=error.message||'智能推荐暂时不可用。';conversation.value.push({role:'assistant',content:'本次推荐没有完成，请稍后重试。'});}finally{loading.value=false;}}
+async function loadInitial(){loading.value=true;message.value='';resultsExpanded.value=false;try{const data=await store.loadRecommendation();result.value=data;citations.value=recommendationCitations(data);conversation.value=[{role:'assistant',content:deterministicSummary(data)}];}catch(error){isError.value=true;message.value=error.message||'推荐加载失败。';}finally{loading.value=false;}}
+async function runPrompt(raw){const text=String(raw||'').trim();const validation=validateQuestion(text);if(validation){message.value=validation;isError.value=true;return;}loading.value=true;message.value='';isError.value=false;resultsExpanded.value=false;conversation.value.push({role:'user',content:text});question.value='';await nextTick();try{const data=await store.runAgent({query:text,sessionId:sessionId.value||undefined});result.value=data;sessionId.value=data.sessionId||sessionId.value;citations.value=data.citations||recommendationCitations(data);pendingActions.value=(data.actions||[]).filter((item)=>item.requiresConfirmation);conversation.value.push({role:'assistant',content:data.answer||data.summary?.text||'推荐已生成。'});}catch(error){isError.value=true;message.value=error.message||'智能推荐暂时不可用。';conversation.value.push({role:'assistant',content:'本次推荐没有完成，请稍后重试。'});}finally{loading.value=false;}}
 function dishLocation(dish){const stall=store.stalls.value.find((item)=>item.id===dish.stallId);const canteen=store.canteens.value.find((item)=>item.id===stall?.canteenId);return[canteen?.name,stall?.name].filter(Boolean).join(' · ');}
 function openCitation(source){const id=source.sourceId||source.dishId||source.id;if(id)openDish(id);}function isOrderAction(action){return String(action.type||'').includes('order')||String(action.actionType||'').includes('order');}
 async function confirmAction(action){try{await store.confirmAgentAction(action.id);pendingActions.value=pendingActions.value.filter((item)=>item.id!==action.id);message.value='操作已确认。';isError.value=false;}catch(error){message.value=error.message;isError.value=true;}}
@@ -90,4 +94,6 @@ async function clearMemory(){memorySaving.value=true;try{await store.clearAgentM
 .pending-action text { color:#966218; font-size:22rpx; }
 .action-buttons { display:grid; grid-template-columns:1fr 1fr; gap:10rpx; margin-top:12rpx; }
 .action-buttons button:disabled { grid-column:1/3; min-height:88rpx; border-radius:var(--radius); color:var(--muted); background:var(--surface-soft); font-size:24rpx; }
+.result-toggle { display:flex; align-items:center; justify-content:center; width:100%; min-height:76rpx; margin-top:2rpx; border:1rpx solid var(--line); border-radius:var(--radius); color:var(--brand); background:var(--surface); font-size:24rpx; font-weight:500; }
+.result-toggle:active { background:var(--brand-soft); transform:scale(.985); }
 </style>

@@ -7,6 +7,7 @@
         <view class="post-filter"><sc-segmented-control v-model="postType" :options="postTypeOptions" density="compact" block /></view>
         <button class="publish-button" aria-label="发布帖子" @tap="openPublish"><view class="publish-visual"><image src="/static/icons/message-square.png" mode="aspectFit" /><text>发布帖子</text></view></button>
       </view>
+      <view class="keyword-search"><input v-model="postQuery" confirm-type="search" placeholder="搜索帖子内容、菜品或食堂" /><button v-if="postQuery" type="button" @tap="postQuery=''">清除</button></view>
       <sc-state-card v-if="loading" type="loading" title="正在加载校园动态" />
       <sc-state-card v-else-if="error" type="error" title="动态加载失败" :desc="error" action-text="重试" @action="loadPosts(true)" />
       <view v-else-if="posts.length" class="post-list">
@@ -23,6 +24,7 @@
     </template>
 
     <template v-else>
+      <view class="keyword-search"><input v-model="reviewQuery" confirm-type="search" placeholder="搜索评价内容、菜品或食堂" /><button v-if="reviewQuery" type="button" @tap="reviewQuery=''">清除</button></view>
       <view class="review-controls">
         <sc-segmented-control v-model="reviewFilters.targetType" :options="reviewTypeOptions" block density="compact" />
         <view class="picker-grid">
@@ -49,18 +51,18 @@ import { computed, reactive, ref, watch } from 'vue';
 import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 const store=useCanteenStore();const sectionOptions=[{value:'posts',label:'校园帖子'},{value:'reviews',label:'菜品评价'}];const postTypeOptions=[{value:'',label:'全部'},{value:'dish',label:'菜品'},{value:'canteen',label:'食堂'}];const reviewTypeOptions=[{value:'dish',label:'菜品评价'},{value:'canteen',label:'食堂评价'}];const sortOptions=[{value:'rating_desc',label:'评分优先'},{value:'rating_asc',label:'低分优先'},{value:'latest',label:'最新评价'}];
-const section=ref('posts');const postType=ref('');const posts=ref([]);const postTotal=ref(0);const reviews=ref([]);const reviewTotal=ref(0);const reviewSummary=ref({});const loading=ref(false);const loadingMore=ref(false);const error=ref('');const pageSize=20;
+const section=ref('posts');const postType=ref('');const postQuery=ref('');const posts=ref([]);const postTotal=ref(0);const reviews=ref([]);const reviewQuery=ref('');const reviewTotal=ref(0);const reviewSummary=ref({});const loading=ref(false);const loadingMore=ref(false);const error=ref('');const pageSize=20;
 const reviewFilters=reactive({targetType:'dish',canteenId:'',stallId:'',dishId:'',sort:'rating_desc'});
 const canteenOptions=computed(()=>[{id:'',name:'全部食堂'},...store.canteens.value]);const selectedCanteen=computed(()=>store.canteens.value.find((item)=>item.id===reviewFilters.canteenId));const canteenIndex=computed(()=>Math.max(0,canteenOptions.value.findIndex((item)=>item.id===reviewFilters.canteenId)));
 const stallOptions=computed(()=>[{id:'',name:'全部档口'},...store.stalls.value.filter((item)=>!reviewFilters.canteenId||item.canteenId===reviewFilters.canteenId)]);const selectedStall=computed(()=>store.stalls.value.find((item)=>item.id===reviewFilters.stallId));const stallIndex=computed(()=>Math.max(0,stallOptions.value.findIndex((item)=>item.id===reviewFilters.stallId)));
 const dishOptions=computed(()=>[{id:'',name:'全部菜品'},...store.dishes.value.filter((dish)=>reviewFilters.stallId?dish.stallId===reviewFilters.stallId:!reviewFilters.canteenId||stallOptions.value.some((stall)=>stall.id===dish.stallId))]);const selectedDish=computed(()=>store.dishes.value.find((item)=>item.id===reviewFilters.dishId));const dishIndex=computed(()=>Math.max(0,dishOptions.value.findIndex((item)=>item.id===reviewFilters.dishId)));
 const selectedSort=computed(()=>sortOptions.find((item)=>item.value===reviewFilters.sort)||sortOptions[0]);const sortIndex=computed(()=>sortOptions.findIndex((item)=>item.value===reviewFilters.sort));
-let ready=false;
+let ready=false;let postSearchTimer=0;let reviewSearchTimer=0;
   onShow(async()=>{try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}section.value=store.communitySection.value;if(!ready)ready=true;await loadCurrent(true);}catch{}});
   onPullDownRefresh(async()=>{try{await store.load(true);await loadCurrent(true);}catch{}finally{uni.stopPullDownRefresh();}});onReachBottom(()=>{if(section.value==='posts')loadMorePosts();else loadMoreReviews();});
-watch(section,(value)=>{store.openCommunitySection(value);if(ready)loadCurrent(true);});watch(postType,()=>{if(ready)loadPosts(true);});watch(()=>[reviewFilters.targetType,reviewFilters.canteenId,reviewFilters.stallId,reviewFilters.dishId,reviewFilters.sort],()=>{if(ready&&section.value==='reviews')loadReviews(true);},{deep:true});
-async function loadCurrent(reset){return section.value==='posts'?loadPosts(reset):loadReviews(reset);}async function loadPosts(reset=false){if(reset){loading.value=true;posts.value=[];}else loadingMore.value=true;error.value='';try{const data=await store.listPosts({targetType:postType.value,limit:pageSize,offset:reset?0:posts.value.length});posts.value=reset?(data.posts||[]):[...posts.value,...(data.posts||[])];postTotal.value=Number(data.total||0);}catch(err){error.value=err.message||'帖子加载失败';}finally{loading.value=false;loadingMore.value=false;}}
-async function loadReviews(reset=false){if(reset){loading.value=true;reviews.value=[];}else loadingMore.value=true;error.value='';try{const data=await store.listReviews({...reviewFilters,limit:pageSize,offset:reset?0:reviews.value.length});reviews.value=reset?(data.reviews||[]):[...reviews.value,...(data.reviews||[])];reviewTotal.value=Number(data.total||0);reviewSummary.value=data.summary||{};}catch(err){error.value=err.message||'评价加载失败';}finally{loading.value=false;loadingMore.value=false;}}
+watch(section,(value)=>{store.openCommunitySection(value);if(ready)loadCurrent(true);});watch(postType,()=>{if(ready)loadPosts(true);});watch(postQuery,()=>{if(!ready)return;clearTimeout(postSearchTimer);postSearchTimer=setTimeout(()=>loadPosts(true),280);});watch(reviewQuery,()=>{if(!ready)return;clearTimeout(reviewSearchTimer);reviewSearchTimer=setTimeout(()=>{if(section.value==='reviews')loadReviews(true);},280);});watch(()=>[reviewFilters.targetType,reviewFilters.canteenId,reviewFilters.stallId,reviewFilters.dishId,reviewFilters.sort],()=>{if(ready&&section.value==='reviews')loadReviews(true);},{deep:true});
+async function loadCurrent(reset){return section.value==='posts'?loadPosts(reset):loadReviews(reset);}async function loadPosts(reset=false){if(reset){loading.value=true;posts.value=[];}else loadingMore.value=true;error.value='';try{const data=await store.listPosts({targetType:postType.value,q:postQuery.value.trim(),limit:pageSize,offset:reset?0:posts.value.length});posts.value=reset?(data.posts||[]):[...posts.value,...(data.posts||[])];postTotal.value=Number(data.total||0);}catch(err){error.value=err.message||'帖子加载失败';}finally{loading.value=false;loadingMore.value=false;}}
+async function loadReviews(reset=false){if(reset){loading.value=true;reviews.value=[];}else loadingMore.value=true;error.value='';try{const data=await store.listReviews({...reviewFilters,q:reviewQuery.value.trim(),limit:pageSize,offset:reset?0:reviews.value.length});reviews.value=reset?(data.reviews||[]):[...reviews.value,...(data.reviews||[])];reviewTotal.value=Number(data.total||0);reviewSummary.value=data.summary||{};}catch(err){error.value=err.message||'评价加载失败';}finally{loading.value=false;loadingMore.value=false;}}
 function loadMorePosts(){if(!loadingMore.value&&posts.value.length<postTotal.value)return loadPosts(false);}function loadMoreReviews(){if(!loadingMore.value&&reviews.value.length<reviewTotal.value)return loadReviews(false);}function openPublish(){uni.navigateTo({url:'/pages/community-publish/community-publish'});}
 function selectCanteen(event){reviewFilters.canteenId=canteenOptions.value[Number(event.detail.value)]?.id||'';reviewFilters.stallId='';reviewFilters.dishId='';}function selectStall(event){reviewFilters.stallId=stallOptions.value[Number(event.detail.value)]?.id||'';reviewFilters.dishId='';}function selectDish(event){reviewFilters.dishId=dishOptions.value[Number(event.detail.value)]?.id||'';}function selectSort(event){reviewFilters.sort=sortOptions[Number(event.detail.value)]?.value||'rating_desc';}
 function openPostTarget(post){if(post.dish?.id)uni.navigateTo({url:`/pages/dish-detail/dish-detail?id=${encodeURIComponent(post.dish.id)}`});else if(post.canteen?.id)uni.navigateTo({url:`/pages/canteen-detail/canteen-detail?id=${encodeURIComponent(post.canteen.id)}`});}function openReviewTarget(review){openPostTarget(review);}
@@ -70,6 +72,9 @@ function statusLabel(status){return{pending:'审核中',approved:'已公开',rej
 <style scoped>
 .community-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12rpx; margin:18rpx 0; }
 .post-filter { flex:1; min-width:0; }
+.keyword-search { display:flex; align-items:center; gap:8rpx; min-height:76rpx; margin:0 0 14rpx; padding:0 14rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.keyword-search input { flex:1; min-width:0; height:64rpx; color:var(--ink); font-size:24rpx; }
+.keyword-search button { flex:0 0 auto; min-height:52rpx; padding:0 10rpx; border-radius:8rpx; color:var(--brand); background:var(--brand-soft); font-size:22rpx; }
 .publish-button { display:flex; align-items:center; justify-content:center; min-height:88rpx; flex:0 0 auto; padding:0; background:transparent; }
 .publish-visual { display:flex; align-items:center; justify-content:center; gap:8rpx; height:64rpx; padding:0 16rpx; border-radius:10rpx; color:#fff; background:var(--brand); font-size:24rpx; font-weight:500; box-sizing:border-box; }
 .publish-visual image { width:28rpx; height:28rpx; filter:brightness(0) invert(1); }

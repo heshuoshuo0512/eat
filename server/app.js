@@ -2328,6 +2328,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const canteenId = String(url.searchParams.get('canteenId') || '').trim();
         const stallId = String(url.searchParams.get('stallId') || '').trim();
         const dishId = String(url.searchParams.get('dishId') || '').trim();
+        const q = String(url.searchParams.get('q') || '').trim().slice(0, 80).toLocaleLowerCase();
         const sort = String(url.searchParams.get('sort') || 'rating_desc');
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 100);
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
@@ -2338,6 +2339,11 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           if (canteenId && review.canteen?.id !== canteenId) return false;
           if (stallId && review.stall?.id !== stallId) return false;
           if (dishId && review.dish?.id !== dishId) return false;
+          if (q) {
+            const haystack = [review.content, review.user, review.dish?.name, review.stall?.name, review.canteen?.name]
+              .filter(Boolean).join(' ').toLocaleLowerCase();
+            if (!haystack.includes(q)) return false;
+          }
           return true;
         });
         filtered.sort((left, right) => {
@@ -2387,12 +2393,18 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         const targetType = String(url.searchParams.get('targetType') || '').trim();
         const canteenId = String(url.searchParams.get('canteenId') || '').trim();
         const dishId = String(url.searchParams.get('dishId') || '').trim();
+        const q = String(url.searchParams.get('q') || '').trim().slice(0, 80).toLocaleLowerCase();
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 100);
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
         const posts = rows.map(rowToPost).map((post) => enrichPost(post, catalog, activeUser.id)).filter((post) => {
           if (targetType && post.targetType !== targetType) return false;
           if (canteenId && post.canteen?.id !== canteenId) return false;
           if (dishId && post.dish?.id !== dishId) return false;
+          if (q) {
+            const haystack = [post.content, post.user, post.dish?.name, post.stall?.name, post.canteen?.name]
+              .filter(Boolean).join(' ').toLocaleLowerCase();
+            if (!haystack.includes(q)) return false;
+          }
           return true;
         });
         return send(res, 200, { posts: posts.slice(offset, offset + limit), total: posts.length });

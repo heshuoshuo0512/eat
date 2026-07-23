@@ -1,15 +1,14 @@
 <template>
   <sc-page-shell hide-nav>
     <view class="login-hero">
-      <image class="login-logo" src="/static/brand/logo-mark-reversed.svg" mode="aspectFit" />
-      <text class="login-kicker">SMART CANTEEN</text>
+      <view class="login-brandline"><image class="login-logo" src="/static/brand/logo-mark-reversed.svg" mode="aspectFit" /><view><text class="login-kicker">SMART CANTEEN</text><text class="login-brand-name">智慧食堂</text></view></view>
       <text class="login-title">校园每一餐，都有真实依据。</text>
       <text class="login-subtitle">菜单、评分、营养与校园口碑统一在这里。</text>
+      <view class="login-benefits"><view><text class="benefit-value">真实</text><text>菜品数据</text></view><view><text class="benefit-value">可查</text><text>评价与引用</text></view><view><text class="benefit-value">更懂</text><text>个人偏好</text></view></view>
     </view>
 
     <view class="login-card panel-card">
-      <text class="section-eyebrow">学生登录</text>
-      <text class="section-title">进入智慧食堂</text>
+      <view class="login-card-head"><text class="section-eyebrow">学生端入口</text><text class="section-title">进入智慧食堂</text><text class="login-card-hint">登录后同步你的健康档案、收藏和用餐记录。</text></view>
       <button class="wechat-btn" :loading="loadingMode === 'wechat'" :disabled="Boolean(loadingMode)" @tap="loginWithWechat">
         <text class="wechat-mark">微</text><text>微信一键登录</text>
       </button>
@@ -72,5 +71,19 @@ function openTerms() { uni.navigateTo({ url:'/pages/terms/terms' }); }
 .consent button { display:inline-flex; align-items:center; min-height:48rpx; padding:0 2rpx; color:var(--brand); background:transparent; font-size:22rpx; line-height:1.35; }
 .login-message { display:block; margin-top:18rpx; color:var(--brand); font-size:24rpx; text-align:center; }
 .login-message.error { color:var(--danger); }
+.login-hero { min-height:0; margin:0 calc(var(--page-gutter) * -1) 18rpx; padding:42rpx var(--page-gutter) 34rpx; border-radius:0 0 28rpx 28rpx; background:#215f48; box-shadow:0 14rpx 28rpx rgba(24,72,43,.12); }
+.login-brandline { display:flex; align-items:center; gap:16rpx; }
+.login-brandline .login-logo { width:64rpx; height:64rpx; }
+.login-brand-name { display:block; margin-top:4rpx; color:#fff; font-size:28rpx; font-weight:600; }
+.login-brandline .login-kicker { margin-top:0; color:rgba(255,255,255,.72); font-size:22rpx; letter-spacing:2rpx; }
+.login-title { margin-top:28rpx; font-size:38rpx; line-height:1.28; }
+.login-subtitle { max-width:620rpx; margin-top:10rpx; color:rgba(255,255,255,.82); }
+.login-benefits { display:grid; grid-template-columns:repeat(3,1fr); gap:10rpx; margin-top:26rpx; }
+.login-benefits view { display:grid; gap:4rpx; padding:14rpx 10rpx; border:1rpx solid rgba(255,255,255,.18); border-radius:14rpx; background:rgba(255,255,255,.1); text-align:center; }
+.login-benefits text { color:rgba(255,255,255,.72); font-size:22rpx; }
+.login-benefits .benefit-value { color:#fff; font-size:25rpx; font-weight:600; }
+.login-card { position:relative; z-index:1; margin:0 4rpx; padding:28rpx; border:1rpx solid rgba(31,122,77,.12); box-shadow:0 12rpx 30rpx rgba(24,72,43,.08); }
+.login-card-head { display:grid; gap:4rpx; }
+.login-card-hint { margin-top:6rpx; color:var(--muted); font-size:22rpx; line-height:1.5; }
 @keyframes account-in { from { opacity:0; transform:translateY(-6rpx); } to { opacity:1; transform:none; } }
 </style>

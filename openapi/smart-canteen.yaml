@@ -941,6 +941,7 @@ paths:
         - { name: canteenId, in: query, schema: { type: string } }
         - { name: stallId, in: query, schema: { type: string } }
         - { name: dishId, in: query, schema: { type: string } }
+        - { name: q, in: query, description: Keyword matched against review text and author/dish/stall/canteen names, schema: { type: string, maxLength: 80 } }
         - { name: sort, in: query, schema: { type: string, enum: [rating_desc, rating_asc, latest], default: rating_desc } }
         - { name: limit, in: query, schema: { type: integer, maximum: 100, default: 30 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
@@ -965,6 +966,7 @@ paths:
         - { name: targetType, in: query, schema: { type: string, enum: [dish, canteen] } }
         - { name: canteenId, in: query, schema: { type: string } }
         - { name: dishId, in: query, schema: { type: string } }
+        - { name: q, in: query, description: Keyword matched against post text and author/dish/stall/canteen names, schema: { type: string, maxLength: 80 } }
         - { name: limit, in: query, schema: { type: integer, maximum: 100, default: 30 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses: { '200': { description: Campus post page }, '401': { description: Login required } }

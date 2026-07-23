@@ -77,6 +77,11 @@ describe('student review overview and campus post moderation', () => {
     assert.ok(created[0].stall?.id);
     assert.equal(created[0].canteen.id, canteenId);
     assert.ok(response.data.summary.averageRating > 0);
+
+    const keyword = await req(`/api/reviews?q=${encodeURIComponent('五星测试')}`, { token: studentToken });
+    assert.equal(keyword.status, 200);
+    assert.ok(keyword.data.reviews.length >= 1);
+    assert.ok(keyword.data.reviews.every((item) => item.content.includes('五星测试')));
   });
 
   it('keeps a pending post private except for its author', async () => {
@@ -90,6 +95,8 @@ describe('student review overview and campus post moderation', () => {
 
     const mine = await req('/api/posts', { token: studentToken });
     assert.ok(mine.data.posts.some((post) => post.id === created.data.post.id && post.status === 'pending'));
+    const keyword = await req(`/api/posts?q=${encodeURIComponent('待审核可见性')}`, { token: studentToken });
+    assert.ok(keyword.data.posts.some((post) => post.id === created.data.post.id));
     const other = await req('/api/posts', { token: otherToken });
     assert.ok(!other.data.posts.some((post) => post.id === created.data.post.id));
     const moderation = await req(`/api/admin/posts?status=pending&targetType=dish&canteenId=${encodeURIComponent(canteenId)}&stallId=${encodeURIComponent(stallId)}&dishId=${encodeURIComponent(dishId)}`, { token: adminToken });
