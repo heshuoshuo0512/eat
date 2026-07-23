@@ -1,6 +1,6 @@
 export const STUDENT_ENTRIES = Object.freeze([
-  { id: 'dishes', label: '菜品检索', shortLabel: '找菜', description: '按评分、营养和供应快速找菜', eyebrow: '智能吃饭', route: '/pages/dishes/dishes', navigationType: 'switchTab', icon: '/static/icons/search.png', group: 'core', tone: 'core' },
-  { id: 'recommend', label: '智能推荐', shortLabel: '推荐', description: '结合档案与今日供应生成建议', eyebrow: '智能吃饭', route: '/pages/recommend/recommend', navigationType: 'navigateTo', icon: '/static/icons/sparkles.png', group: 'core', tone: 'core' },
+  { id: 'dishes', label: '菜品检索', shortLabel: '找菜', description: '按评分、营养和供应快速找菜', eyebrow: '智能吃饭', route: '/pages/dishes/dishes', navigationType: 'switchTab', icon: '/static/icons/search.png', group: 'core', tone: 'core', discoveryMode: 'search' },
+  { id: 'recommend', label: '智能推荐', shortLabel: '推荐', description: '结合档案与今日供应生成建议', eyebrow: '智能吃饭', route: '/pages/dishes/dishes', navigationType: 'switchTab', icon: '/static/icons/sparkles.png', group: 'core', tone: 'core', discoveryMode: 'recommend' },
   { id: 'canteens', label: '食堂导航', shortLabel: '食堂', description: '找到食堂、楼层和真实档口', eyebrow: '更多探索', route: '/pages/canteens/canteens', navigationType: 'navigateTo', icon: '/static/icons/map-pin.png', group: 'explore', tone: 'explore' },
   { id: 'rankings', label: '校园排行榜', shortLabel: '排行', description: '看看真实评分与校园热度', eyebrow: '更多探索', route: '/pages/rankings/rankings', navigationType: 'navigateTo', icon: '/static/icons/trophy.png', group: 'explore', tone: 'explore' },
   { id: 'regions', label: '区域推荐', shortLabel: '风味', description: '从六种风味里发现下一餐', eyebrow: '更多探索', route: '/pages/regions/regions', navigationType: 'navigateTo', icon: '/static/icons/compass.png', group: 'explore', tone: 'explore' },

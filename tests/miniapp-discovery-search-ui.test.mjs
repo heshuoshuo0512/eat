@@ -11,20 +11,21 @@ const login = read('miniapp/src/pages/login/login.vue');
 const server = read('server/app.js');
 
 describe('miniapp discovery and community search UI contracts', () => {
-  it('keeps direct discovery mode switching on both pages', () => {
+  it('keeps direct discovery mode switching on the unified tab workspace', () => {
     assert.match(dishes, /sc-segmented-control[^>]+modeOptions/);
     assert.match(dishes, /changeMode\(value\)/);
-    assert.match(recommend, /sc-segmented-control[^>]+modeOptions/);
-    assert.match(recommend, /if\(value==='search'\)uni\.switchTab/);
+    assert.match(dishes, /openDiscoveryMode\(mode\.value\)/);
+    assert.match(recommend, /openDiscoveryMode\('recommend'\)/);
+    assert.match(recommend, /switchTab\(\{ url: '\/pages\/dishes\/dishes' \}\)/);
   });
 
   it('shows one ranked dish first and expands only on explicit action', () => {
     assert.match(dishes, /visibleDishes/);
     assert.match(dishes, /resultsExpanded/);
     assert.match(dishes, /查看全部 .*道排名菜品/);
-    assert.match(recommend, /visibleMealPicks/);
-    assert.match(recommend, /resultsExpanded/);
-    assert.match(recommend, /查看全部 .*道排名菜品/);
+    assert.match(dishes, /visibleMealPicks/);
+    assert.match(dishes, /recommendExpanded/);
+    assert.match(dishes, /查看全部 .*道排名菜品/);
   });
 
   it('provides debounced keyword fields for posts and reviews', () => {

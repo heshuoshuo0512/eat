@@ -30,13 +30,24 @@
         </button>
       </view>
     </view>
+
+    <view class="home-section community-section">
+      <view class="section-heading"><view><text>校园互动</text><text class="ui-strong">帖子与评价，一页切换</text></view></view>
+      <view class="community-grid">
+        <button v-for="entry in communityEntries" :key="entry.id" class="community-card" @tap="openEntry(entry)">
+          <view class="community-icon"><image :src="entry.icon" mode="aspectFit" /></view>
+          <view><text class="ui-strong">{{ entry.label }}</text><text>{{ entry.description }}</text></view>
+          <text class="entry-arrow">›</text>
+        </button>
+      </view>
+    </view>
   </sc-page-shell>
 </template>
 
 <script setup>
 import { computed, reactive } from 'vue';
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
-import { CORE_ENTRY_IDS, EXPLORE_ENTRY_IDS, getStudentEntries } from '../../domain/studentNavigation.js';
+import { COMMUNITY_ENTRY_IDS, CORE_ENTRY_IDS, EXPLORE_ENTRY_IDS, getStudentEntries } from '../../domain/studentNavigation.js';
 import { nextRevealState, resetRevealState } from '../../domain/studentDiscovery.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 
@@ -45,6 +56,7 @@ const revealState = reactive(resetRevealState());
 const drawnThisVisit = new Set();
 const coreEntries = getStudentEntries(CORE_ENTRY_IDS);
 const exploreEntries = getStudentEntries(EXPLORE_ENTRY_IDS);
+const communityEntries = getStudentEntries(COMMUNITY_ENTRY_IDS);
 const revealDishes = computed(() => {
   const picks = store.contextualRecommendation.value?.recommendations || [];
   const catalog = new Map(store.dishes.value.map((dish) => [String(dish.id), dish]));
@@ -83,6 +95,7 @@ function exploreDescription(entry) {
 }
 function openEntry(entry) {
   if (!entry) return;
+  if (entry.discoveryMode) store.openDiscoveryMode(entry.discoveryMode);
   if (entry.communitySection) store.openCommunitySection(entry.communitySection);
   uni[entry.navigationType]({ url: entry.route });
 }
@@ -95,6 +108,7 @@ function openEntry(entry) {
 .section-heading text { color:var(--section-tone, var(--brand)); font-size:22rpx; font-weight:500; }
 .section-heading .ui-strong { margin-top:4rpx; color:var(--ink); font-size:30rpx; font-weight:600; line-height:1.35; }
 .core-section,.explore-section { --section-tone:var(--brand); }
+.community-section { --section-tone:var(--community); }
 .core-actions { display:flex; flex-direction:column; gap:12rpx; }
 .core-action { display:flex; align-items:center; gap:14rpx; width:100%; min-height:96rpx; padding:10rpx 16rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:left; box-shadow:var(--shadow-soft); box-sizing:border-box; }
 .entry-icon { display:flex; align-items:center; justify-content:center; width:54rpx; height:54rpx; flex:0 0 54rpx; border-radius:12rpx; background:var(--brand-soft); }
@@ -111,5 +125,14 @@ function openEntry(entry) {
 .explore-card .ui-strong,.explore-note { display:block; max-width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .explore-card .ui-strong { color:var(--ink); font-size:24rpx; font-weight:600; }
 .explore-note { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
+.community-grid { display:flex; flex-direction:column; gap:10rpx; }
+.community-card { display:flex; align-items:center; gap:12rpx; width:100%; min-height:92rpx; padding:10rpx 14rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:left; box-shadow:var(--shadow-soft); box-sizing:border-box; }
+.community-icon { display:flex; align-items:center; justify-content:center; width:50rpx; height:50rpx; flex:0 0 50rpx; border-radius:14rpx; background:var(--community-soft); }
+.community-icon image { width:30rpx; height:30rpx; }
+.community-card>view:nth-child(2) { flex:1; min-width:0; }
+.community-card .ui-strong,.community-card>view:nth-child(2)>text { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.community-card .ui-strong { color:var(--ink); font-size:26rpx; font-weight:600; }
+.community-card>view:nth-child(2)>text { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
 .core-action:active,.explore-card:active { transform:scale(.985); opacity:.92; background:var(--surface-soft); }
+.community-card:active { transform:scale(.985); opacity:.92; background:var(--surface-soft); }
 </style>

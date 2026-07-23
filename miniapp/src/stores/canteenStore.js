@@ -50,6 +50,7 @@ const todayMenu = ref(emptyMenu());
 const remoteRankings = ref(null);
 const contextualRecommendation = ref(normalizeRecommendationResult());
 const recommendationLoading = ref(false);
+const discoveryMode = ref('search');
 const communitySection = ref('posts');
 const motionReduced = ref(Boolean(uni.getStorageSync(MOTION_KEY)));
 const searchFilters = reactive({ keyword: '', maxPrice: 999, taste: '不限', halalOnly: false });
@@ -256,6 +257,10 @@ function openCommunitySection(section) {
   communitySection.value = section === 'reviews' ? 'reviews' : 'posts';
 }
 
+function openDiscoveryMode(mode) {
+  discoveryMode.value = mode === 'recommend' ? 'recommend' : 'search';
+}
+
 function setMotionReduced(value) {
   motionReduced.value = Boolean(value);
   uni.setStorageSync(MOTION_KEY, motionReduced.value ? '1' : '');
@@ -264,11 +269,11 @@ function setMotionReduced(value) {
 export function useCanteenStore() {
   return {
     state, loading, error, loaded, lastLoadedAt, todayMenu, remoteRankings, contextualRecommendation, recommendationLoading,
-    communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
+    discoveryMode, communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
     rankings, searchedDishes, recommendation,
     load, ensureLoaded, refreshIfStale, login, wechatLogin, logout, getDishDetail, addReview, saveProfile,
     loadTodayMenu, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
-    markDishDrawn, openCommunitySection, setMotionReduced,
+    markDishDrawn, openDiscoveryMode, openCommunitySection, setMotionReduced,
     fetchDishDetail: apiClient.dishDetail,
     runAgent: apiClient.runAgent,
     loadAgentMemory: apiClient.loadAgentMemory,

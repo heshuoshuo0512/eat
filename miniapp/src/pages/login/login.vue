@@ -1,29 +1,35 @@
 <template>
   <sc-page-shell hide-nav>
-    <view class="login-hero">
-      <view class="login-brandline"><image class="login-logo" src="/static/brand/logo-mark-reversed.svg" mode="aspectFit" /><view><text class="login-kicker">SMART CANTEEN</text><text class="login-brand-name">智慧食堂</text></view></view>
-      <text class="login-title">校园每一餐，都有真实依据。</text>
-      <text class="login-subtitle">菜单、评分、营养与校园口碑统一在这里。</text>
-      <view class="login-benefits"><view><text class="benefit-value">真实</text><text>菜品数据</text></view><view><text class="benefit-value">可查</text><text>评价与引用</text></view><view><text class="benefit-value">更懂</text><text>个人偏好</text></view></view>
-    </view>
+    <view class="login-screen">
+      <image class="login-poster" src="/static/food/hero-meal.svg" mode="aspectFill" />
+      <view class="login-overlay"></view>
+      <view class="login-content">
+        <view class="login-hero">
+          <view class="login-brandline"><image class="login-logo" src="/static/brand/logo-mark-reversed.svg" mode="aspectFit" /><view><text class="login-kicker">SMART CANTEEN</text><text class="login-brand-name">智慧食堂</text></view></view>
+          <text class="login-title">校园每一餐，都有真实依据。</text>
+          <text class="login-subtitle">菜单、评分、营养与校园口碑统一在这里。</text>
+          <view class="login-benefits"><view><text class="benefit-value">真实</text><text>菜品数据</text></view><view><text class="benefit-value">可查</text><text>评价与引用</text></view><view><text class="benefit-value">更懂</text><text>个人偏好</text></view></view>
+        </view>
 
-    <view class="login-card panel-card">
-      <view class="login-card-head"><text class="section-eyebrow">学生端入口</text><text class="section-title">进入智慧食堂</text><text class="login-card-hint">登录后同步你的健康档案、收藏和用餐记录。</text></view>
-      <button class="wechat-btn" :loading="loadingMode === 'wechat'" :disabled="Boolean(loadingMode)" @tap="loginWithWechat">
-        <text class="wechat-mark">微</text><text>微信一键登录</text>
-      </button>
-      <button class="demo-btn" :loading="loadingMode === 'demo'" :disabled="Boolean(loadingMode)" @tap="loginWithDemo">演示账号登录</button>
-      <button class="account-toggle" @tap="accountOpen = !accountOpen">{{ accountOpen ? '收起账号登录' : '使用账号密码登录' }} ›</button>
-      <view v-if="accountOpen" class="account-panel">
-        <label><text>用户名</text><input v-model="form.username" class="input" maxlength="32" placeholder="请输入用户名" /></label>
-        <label><text>密码</text><input v-model="form.password" class="input" password maxlength="72" placeholder="请输入密码" /></label>
-        <button class="secondary-btn" :loading="loadingMode === 'account'" :disabled="Boolean(loadingMode)" @tap="loginWithAccount">账号登录</button>
+        <view class="login-card panel-card">
+          <view class="login-card-head"><text class="section-eyebrow">学生端入口</text><text class="section-title">进入智慧食堂</text><text class="login-card-hint">登录后同步你的健康档案、收藏和用餐记录。</text></view>
+          <button class="wechat-btn" :loading="loadingMode === 'wechat'" :disabled="Boolean(loadingMode)" @tap="loginWithWechat">
+            <text class="wechat-mark">微</text><text>微信一键登录</text>
+          </button>
+          <button class="demo-btn" :loading="loadingMode === 'demo'" :disabled="Boolean(loadingMode)" @tap="loginWithDemo">演示账号登录</button>
+          <button class="account-toggle" @tap="accountOpen = !accountOpen">{{ accountOpen ? '收起账号登录' : '使用账号密码登录' }} ›</button>
+          <view v-if="accountOpen" class="account-panel">
+            <label><text>用户名</text><input v-model="form.username" class="input" maxlength="32" placeholder="请输入用户名" /></label>
+            <label><text>密码</text><input v-model="form.password" class="input" password maxlength="72" placeholder="请输入密码" /></label>
+            <button class="secondary-btn" :loading="loadingMode === 'account'" :disabled="Boolean(loadingMode)" @tap="loginWithAccount">账号登录</button>
+          </view>
+          <checkbox-group class="consent" @change="consentAccepted = $event.detail.value.includes('accepted')">
+            <label><checkbox value="accepted" :checked="consentAccepted" color="#167a5b" /><text>我已阅读并同意</text></label>
+            <button @tap="openPrivacy">《隐私保护指引》</button><text>与</text><button @tap="openTerms">《用户服务协议》</button>
+          </checkbox-group>
+          <text v-if="message" class="login-message" :class="{ error: isError }">{{ message }}</text>
+        </view>
       </view>
-      <checkbox-group class="consent" @change="consentAccepted = $event.detail.value.includes('accepted')">
-        <label><checkbox value="accepted" :checked="consentAccepted" color="#167a5b" /><text>我已阅读并同意</text></label>
-        <button @tap="openPrivacy">《隐私保护指引》</button><text>与</text><button @tap="openTerms">《用户服务协议》</button>
-      </checkbox-group>
-      <text v-if="message" class="login-message" :class="{ error: isError }">{{ message }}</text>
     </view>
   </sc-page-shell>
 </template>
@@ -48,13 +54,18 @@ function openTerms() { uni.navigateTo({ url:'/pages/terms/terms' }); }
 </script>
 
 <style scoped>
-.login-hero { min-height:350rpx; margin:0 calc(var(--page-gutter) * -1) 24rpx; padding:64rpx var(--page-gutter) 42rpx; color:#fff; background:#245f48; box-sizing:border-box; }
-.login-logo { width:76rpx; height:76rpx; }
+.login-screen { position:relative; display:flex; align-items:center; justify-content:center; width:calc(100% + var(--page-gutter) * 2); min-height:100vh; margin:0 calc(var(--page-gutter) * -1) calc(-56rpx - env(safe-area-inset-bottom)); padding:48rpx var(--page-gutter) calc(48rpx + env(safe-area-inset-bottom)); overflow:hidden; background:#183e31; box-sizing:border-box; }
+.login-poster,.login-overlay { position:absolute; inset:0; width:100%; height:100%; }
+.login-poster { opacity:.72; }
+.login-overlay { background:linear-gradient(145deg,rgba(10,52,37,.94) 0%,rgba(20,86,61,.78) 52%,rgba(11,37,28,.94) 100%); }
+.login-content { position:relative; z-index:1; display:grid; gap:22rpx; width:100%; max-width:680rpx; margin:auto; }
+.login-hero { padding:6rpx 8rpx 0; color:#fff; }
+.login-logo { width:64rpx; height:64rpx; }
 .login-kicker,.login-title,.login-subtitle { display:block; }
-.login-kicker { margin-top:30rpx; font-size:22rpx; font-weight:500; opacity:.76; }
-.login-title { max-width:590rpx; margin-top:10rpx; font-size:40rpx; font-weight:600; line-height:1.25; }
-.login-subtitle { margin-top:12rpx; font-size:24rpx; line-height:1.5; opacity:.86; }
-.login-card { padding:26rpx; }
+.login-kicker { color:rgba(255,255,255,.72); font-size:22rpx; font-weight:500; letter-spacing:2rpx; }
+.login-title { max-width:590rpx; margin-top:28rpx; font-size:38rpx; font-weight:600; line-height:1.28; }
+.login-subtitle { max-width:620rpx; margin-top:10rpx; color:rgba(255,255,255,.82); font-size:24rpx; line-height:1.5; }
+.login-card { padding:28rpx; border-color:rgba(255,255,255,.55); background:rgba(255,255,255,.96); box-shadow:0 20rpx 54rpx rgba(5,30,20,.28); }
 .section-eyebrow,.section-title { display:block; }
 .section-eyebrow { color:var(--brand); font-size:22rpx; font-weight:500; }
 .section-title { margin-top:5rpx; color:var(--ink); font-size:32rpx; font-weight:600; }
@@ -71,13 +82,8 @@ function openTerms() { uni.navigateTo({ url:'/pages/terms/terms' }); }
 .consent button { display:inline-flex; align-items:center; min-height:48rpx; padding:0 2rpx; color:var(--brand); background:transparent; font-size:22rpx; line-height:1.35; }
 .login-message { display:block; margin-top:18rpx; color:var(--brand); font-size:24rpx; text-align:center; }
 .login-message.error { color:var(--danger); }
-.login-hero { min-height:0; margin:0 calc(var(--page-gutter) * -1) 18rpx; padding:42rpx var(--page-gutter) 34rpx; border-radius:0 0 28rpx 28rpx; background:#215f48; box-shadow:0 14rpx 28rpx rgba(24,72,43,.12); }
 .login-brandline { display:flex; align-items:center; gap:16rpx; }
-.login-brandline .login-logo { width:64rpx; height:64rpx; }
 .login-brand-name { display:block; margin-top:4rpx; color:#fff; font-size:28rpx; font-weight:600; }
-.login-brandline .login-kicker { margin-top:0; color:rgba(255,255,255,.72); font-size:22rpx; letter-spacing:2rpx; }
-.login-title { margin-top:28rpx; font-size:38rpx; line-height:1.28; }
-.login-subtitle { max-width:620rpx; margin-top:10rpx; color:rgba(255,255,255,.82); }
 .login-benefits { display:grid; grid-template-columns:repeat(3,1fr); gap:10rpx; margin-top:26rpx; }
 .login-benefits view { display:grid; gap:4rpx; padding:14rpx 10rpx; border:1rpx solid rgba(255,255,255,.18); border-radius:14rpx; background:rgba(255,255,255,.1); text-align:center; }
 .login-benefits text { color:rgba(255,255,255,.72); font-size:22rpx; }
@@ -86,4 +92,9 @@ function openTerms() { uni.navigateTo({ url:'/pages/terms/terms' }); }
 .login-card-head { display:grid; gap:4rpx; }
 .login-card-hint { margin-top:6rpx; color:var(--muted); font-size:22rpx; line-height:1.5; }
 @keyframes account-in { from { opacity:0; transform:translateY(-6rpx); } to { opacity:1; transform:none; } }
+@media (max-height: 680px) {
+  .login-screen { align-items:flex-start; padding-top:28rpx; }
+  .login-title { margin-top:18rpx; font-size:34rpx; }
+  .login-benefits { margin-top:16rpx; }
+}
 </style>
