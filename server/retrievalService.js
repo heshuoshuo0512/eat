@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { normalizeProfile } from '../src/domain/recommendation.js';
+import { deriveDishSemanticLabels, interpretCampusDiningQuery } from './campusDiningKnowledgeBase.js';
+import { buildDishFacts, dishDataQuality, evaluateDishSafety, retrievalConfidence } from './diningFacts.js';
+import { parseStructuredDiningQuery } from './queryUnderstanding.js';
+import { businessDateTime } from './time.js';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const SEARCH_SORTS = ['relevance', 'price_asc', 'price_desc', 'rating', 'sales'];
@@ -44,7 +48,7 @@ const filtersSchema = z.object({
   includeIngredients: listSchema.optional(),
   avoidIngredients: listSchema.optional(),
   allergens: listSchema.optional(),
-  dietaryPattern: z.enum(['balanced', 'vegetarian', 'vegan']).optional(),
+  dietaryPattern: z.enum(['unrestricted', 'balanced', 'pescatarian', 'vegetarian', 'vegan']).optional(),
   minProtein: optionalNumber(0, 1000),
   minFiber: optionalNumber(0, 1000),
   maxCalories: optionalNumber(0, 10000),
@@ -52,6 +56,8 @@ const filtersSchema = z.object({
   maxCarbs: optionalNumber(0, 2000),
   maxSodium: optionalNumber(0, 100000),
   maxSugar: optionalNumber(0, 1000),
+  minSpiceLevel: optionalNumber(0, 5),
+  maxSpiceLevel: optionalNumber(0, 5),
   orderableOnly: z.coerce.boolean().optional()
 }).default({});
 
@@ -123,50 +129,52 @@ function extractListAfter(text, pattern) {
     .filter((item) => item.length >= 1 && item.length <= 20);
 }
 
+function looksLikeNamedDishLookup(text) {
+  return /(?:(?:帮我找|整点|来一份|来份|想吃|想来份|有没有|有木有|还有).{1,28}(?:饭|面|粉|粥|汤|饼|套餐|三明治|沙拉)(?:吗|么|呢)?|(?:饭|面|粉|粥|汤|饼|套餐|三明治|沙拉).{0,8}(?:有吗|有没有|有木有|在哪))/u.test(text);
+}
+
 function inferQueryFilters(query) {
   const text = String(query || '').trim();
-  const inferred = {};
-  const detected = [];
+  const namedDishLookup = looksLikeNamedDishLookup(text);
+  const structured = parseStructuredDiningQuery(text);
+  const inferred = { ...structured.filters };
+  const detected = [...structured.detected];
 
   const range = text.match(/(\d+(?:\.\d+)?)\s*(?:到|至|[-~～])\s*(\d+(?:\.\d+)?)\s*元?/);
-  const max = text.match(/(?:预算|不超过|不高于|最多|以内|低于|少于)\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元?|(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元\s*(?:以内|以下)/);
-  const min = text.match(/(?:至少|不低于|最低)\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元?|(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元\s*(?:以上|起)/);
+  const max = text.match(/(?:预算|价格)\s*(?:(?:改成|调整到|设为|变成)\s*)?(?:不超过|不高于|最多|低于|少于)?\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元?|(?:不超过|不高于|最多|低于|少于)\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元|(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元\s*(?:内|以内|以下)/);
+  const min = text.match(/(?:预算|价格)\s*(?:至少|不低于|最低)\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元?|(?:至少|不低于|最低)\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元|(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元\s*(?:以上|起)/);
   if (range) {
     inferred.budgetMin = Math.min(Number(range[1]), Number(range[2]));
     inferred.budgetMax = Math.max(Number(range[1]), Number(range[2]));
     detected.push('budgetRange');
   } else {
-    const maxValue = max && Number(max[1] || max[2]);
-    const minValue = min && Number(min[1] || min[2]);
+    const maxValue = max && Number(max[1] || max[2] || max[3]);
+    const minValue = min && Number(min[1] || min[2] || min[3]);
     if (Number.isFinite(maxValue)) { inferred.budgetMax = maxValue; detected.push('budgetMax'); }
     if (Number.isFinite(minValue)) { inferred.budgetMin = minValue; detected.push('budgetMin'); }
   }
 
-  if (/早餐|早饭|早点/.test(text)) { inferred.mealType = 'breakfast'; detected.push('mealType'); }
-  else if (/晚餐|晚饭|夜宵/.test(text)) { inferred.mealType = 'dinner'; detected.push('mealType'); }
+  if (/早餐|早饭|早点|早八/.test(text)) { inferred.mealType = 'breakfast'; detected.push('mealType'); }
+  else if (/晚餐|晚饭|夜宵|晚上\s*[八九十]?点/.test(text)) { inferred.mealType = 'dinner'; detected.push('mealType'); }
   else if (/午餐|午饭|中饭/.test(text)) { inferred.mealType = 'lunch'; detected.push('mealType'); }
 
   if (/清真/.test(text)) { inferred.halalOnly = true; detected.push('halalOnly'); }
+  if (/(?:当前|现在|今天).{0,4}(?:能点|可点|有供应|可供应|有货|可下单)|(?:只看|只要|仅看|仅要).{0,6}(?:有供应|可供应|有货|可下单)|不要售罄|别要售罄/.test(text)) { inferred.orderableOnly = true; detected.push('orderableOnly'); }
   if (/纯素|全素|vegan/i.test(text)) { inferred.dietaryPattern = 'vegan'; detected.push('dietaryPattern'); }
   else if (/素食|素菜|vegetarian/i.test(text)) { inferred.dietaryPattern = 'vegetarian'; detected.push('dietaryPattern'); }
 
-  const taste = TASTE_WORDS.find((word) => text.includes(word));
+  const taste = !namedDishLookup && TASTE_WORDS.find((word) => text.includes(word));
   if (taste) { inferred.taste = taste; detected.push('taste'); }
 
-  if (/高蛋白|蛋白质多/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.highProtein);
-  if (/高纤维|膳食纤维多/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.highFiber);
-  if (/低卡|低热量|热量低/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.lowCalorie);
-  if (/低脂|少油|脂肪低/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.lowFat);
-  if (/低钠|少盐/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.lowSodium);
-  if (/低糖|少糖/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.lowSugar);
+  if (!namedDishLookup && /高蛋白|蛋白质多/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.highProtein);
+  if (!namedDishLookup && /高纤维|膳食纤维多/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.highFiber);
+  if (!namedDishLookup && /低卡|低热量|热量低/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.lowCalorie);
+  if (!namedDishLookup && /低脂|少油|脂肪低/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.lowFat);
+  if (!namedDishLookup && /低钠|少盐/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.lowSodium);
+  if (!namedDishLookup && /低糖|少糖/.test(text)) Object.assign(inferred, NUTRITION_DEFAULTS.lowSugar);
   if (Object.keys(inferred).some((key) => /^(min|max)(Protein|Fiber|Calories|Fat|Sodium|Sugar)$/.test(key))) detected.push('nutrition');
 
-  const avoid = extractListAfter(text, /(?:不吃|不要|忌口|避开|去掉)\s*([^。！？!?，,]{1,60})/);
-  const allergens = extractListAfter(text, /(?:对|有)?\s*([^。！？!?，,]{1,40})\s*(?:过敏|不能吃)/);
-  if (avoid.length) { inferred.avoidIngredients = avoid; detected.push('avoidIngredients'); }
-  if (allergens.length) { inferred.allergens = allergens; detected.push('allergens'); }
-
-  return { filters: inferred, detected: [...new Set(detected)] };
+  return { filters: inferred, detected: [...new Set(detected)], structured };
 }
 
 function inferRecommendationProfile(query) {
@@ -199,7 +207,9 @@ export function parseDishSearchRequest(input = {}) {
   delete explicitFilters.keyword;
   delete explicitFilters.maxPrice;
   const inferred = inferQueryFilters(query);
-  const filters = mergeFilters(inferred.filters, explicitFilters);
+  const campus = interpretCampusDiningQuery(query);
+  const conceptHardFilters = looksLikeNamedDishLookup(query) ? {} : campus.hardFilters;
+  const filters = mergeFilters(mergeFilters(conceptHardFilters, inferred.filters), explicitFilters);
   if (filters.budgetMin != null && filters.budgetMax != null && filters.budgetMin > filters.budgetMax) {
     throw Object.assign(new Error('最低预算不能高于最高预算'), { status: 400, code: 'INVALID_BUDGET_RANGE' });
   }
@@ -211,17 +221,84 @@ export function parseDishSearchRequest(input = {}) {
       query,
       normalizedQuery: normalizedText(query),
       filters,
+      hardConstraints: filters,
       detected: inferred.detected,
-      sort: parsed.data.sort
+      constraints: inferred.structured.constraints,
+      conflicts: inferred.structured.conflicts,
+      pendingConfirmations: inferred.structured.pendingConfirmations,
+      parserVersion: inferred.structured.parserVersion,
+      sort: parsed.data.sort,
+      concepts: campus.concepts,
+      conceptIds: campus.conceptIds,
+      softSignals: campus.softSignals,
+      expandedTerms: campus.expandedTerms,
+      ruleVersion: campus.ruleVersion,
     }
   };
+}
+
+/** Merge explicit conversation turns while keeping declared safety constraints sticky. */
+export function mergeDiningConversationState(previous = {}, query = '') {
+  const prior = previous?.filters || previous || {};
+  const parsed = parseDishSearchRequest({ query: String(query || '') });
+  const current = parsed.filters;
+  const filters = { ...prior, ...current };
+  filters.allergens = uniqueStrings(prior.allergens, current.allergens);
+  filters.avoidIngredients = uniqueStrings(prior.avoidIngredients, current.avoidIngredients);
+  filters.includeIngredients = uniqueStrings(prior.includeIngredients, current.includeIngredients);
+  if (!filters.allergens.length) delete filters.allergens;
+  if (!filters.avoidIngredients.length) delete filters.avoidIngredients;
+  if (!filters.includeIngredients.length) delete filters.includeIngredients;
+  if (prior.halalOnly) filters.halalOnly = true;
+
+  const text = String(query || '');
+  const relativeBudget = text.match(/(?:预算)?\s*(?:可以)?\s*(?:提高|增加|加)\s*(\d+(?:\.\d+)?)\s*元?/);
+  if (relativeBudget && Number.isFinite(Number(prior.budgetMax))) {
+    filters.budgetMax = Number(prior.budgetMax) + Number(relativeBudget[1]);
+  }
+  if (/(?:口味不限|不限制口味|撤销口味偏好)/.test(text)) delete filters.taste;
+  if (/(?:可以|能接受|来点|稍微|有点)辣/.test(text)) {
+    delete filters.taste;
+    delete filters.maxSpiceLevel;
+  }
+
+  const attemptedSafetyRemoval = asSafetyRemoval(text, filters.allergens || []);
+  const conflicts = [...parsed.interpreted.conflicts];
+  const pendingConfirmations = [...parsed.interpreted.pendingConfirmations];
+  if (attemptedSafetyRemoval.length) {
+    conflicts.push({
+      code: 'SAFETY_CONSTRAINT_REMOVAL_REJECTED',
+      fields: ['allergens'],
+      values: attemptedSafetyRemoval,
+      message: `本轮不会撤销已声明过敏原：${attemptedSafetyRemoval.join('、')}。请在健康档案中明确修改后再重试。`,
+    });
+    pendingConfirmations.push({ code: 'CONFIRM_PROFILE_SAFETY_CHANGE', message: '过敏原只能通过明确的健康档案修改流程撤销。' });
+  }
+
+  return {
+    filters,
+    interpreted: {
+      ...parsed.interpreted,
+      filters,
+      hardConstraints: filters,
+      conflicts,
+      pendingConfirmations,
+      conversationMerged: true,
+    },
+  };
+}
+
+function asSafetyRemoval(text, allergens) {
+  if (/(?:不能|不可|别)\s*(?:忽略|取消|撤销).{0,8}(?:过敏|忌口)/.test(text)) return [];
+  if (!/(?:忽略|取消|撤销|不用管|不算).{0,8}(?:过敏|忌口)/.test(text)) return [];
+  return allergens.filter((allergen) => text.includes(allergen) || !/[\u4e00-\u9fff]/.test(allergen));
 }
 
 function mapCandidate(raw, tenantId) {
   const nutrition = raw.nutrition || {};
   const menuItem = raw.menuItem || raw.menu_item || null;
   const explicitAvailability = raw.availability && typeof raw.availability === 'object' ? raw.availability : null;
-  return {
+  const candidate = {
     ...raw,
     id: String(raw.id || raw.dishId || raw.dish_id || ''),
     tenantId: String(raw.tenantId || raw.tenant_id || tenantId),
@@ -241,6 +318,7 @@ function mapCandidate(raw, tenantId) {
     ingredients: parseJson(raw.ingredients || raw.ingredients_json, []),
     tags: parseJson(raw.tags || raw.tags_json, []),
     allergens: parseJson(raw.allergens || raw.allergens_json, []),
+    dietaryLabels: parseJson(raw.dietaryLabels || raw.dietary_labels_json, []),
     halal: Boolean(raw.halal),
     mealTypes: parseJson(raw.mealTypes || raw.meal_types_json, ['lunch', 'dinner']),
     nutrition: {
@@ -259,10 +337,14 @@ function mapCandidate(raw, tenantId) {
     sales: Number(raw.sales ?? 0),
     status: String(raw.status ?? '').trim().toLowerCase(),
     description: String(raw.description || ''),
+    semanticLabels: deriveDishSemanticLabels(raw),
     _menuEntries: parseJson(raw._menuEntries || raw.menuEntries || [], []),
     _menuItem: menuItem,
     _explicitAvailability: explicitAvailability
   };
+  candidate.facts = buildDishFacts(raw);
+  candidate.spiceLevel = candidate.facts.spiceLevel;
+  return candidate;
 }
 
 function mapMenuEntry(row) {
@@ -279,16 +361,6 @@ function mapMenuEntry(row) {
     soldOut: Boolean(row.soldOut ?? row.sold_out),
     servingStart: row.servingStart || row.serving_start || '00:00',
     servingEnd: row.servingEnd || row.serving_end || '23:59'
-  };
-}
-
-function localDateAndTime(value) {
-  const date = value instanceof Date ? value : new Date(value || Date.now());
-  const pad = (part) => String(part).padStart(2, '0');
-  return {
-    date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
-    time: `${pad(date.getHours())}:${pad(date.getMinutes())}`,
-    hour: date.getHours()
   };
 }
 
@@ -388,7 +460,7 @@ async function loadCandidatesFromDatabase(db, tenantId, { date, mealType }) {
 
 function candidateSearchText(candidate) {
   return [candidate.name, candidate.cuisine, candidate.taste, candidate.description, candidate.stallName, candidate.canteenName,
-    ...candidate.ingredients, ...candidate.tags].filter(Boolean).join(' ');
+    ...candidate.ingredients, ...candidate.tags, ...(candidate.dietaryLabels || []), ...(candidate.semanticLabels || [])].filter(Boolean).join(' ');
 }
 
 function chineseBigrams(text) {
@@ -457,11 +529,13 @@ export function reciprocalRankFusion(resultLists, { k = 60, weights = [] } = {})
   return [...fused.values()].sort((left, right) => right.rrfScore - left.rrfScore || left.id.localeCompare(right.id));
 }
 
-function vegetarianConflict(candidate, vegan = false) {
-  const text = normalizedText([...candidate.ingredients, ...candidate.tags, candidate.name].join(' '));
-  const animal = /猪|牛|羊|鸡|鸭|鹅|鱼|虾|蟹|贝|肉|火腿|培根|海鲜/;
-  const animalProduct = /蛋|奶|乳|芝士|黄油|蜂蜜/;
-  return animal.test(text) || (vegan && animalProduct.test(text));
+function matchesDietaryLabels(candidate, pattern) {
+  if (!pattern || pattern === 'balanced' || pattern === 'unrestricted') return true;
+  const labels = new Set(candidate.dietaryLabels || []);
+  if (pattern === 'vegan') return labels.has('vegan');
+  if (pattern === 'vegetarian') return labels.has('vegetarian') || labels.has('vegan');
+  if (pattern === 'pescatarian') return labels.has('pescatarian') || labels.has('vegetarian') || labels.has('vegan');
+  return true;
 }
 
 /** Apply database-truth hard constraints and report why rows were rejected. */
@@ -483,10 +557,17 @@ export function applyDishHardConstraints(candidates, filters = {}, { requireOrde
     if (filters.stallName && !includesTerm(candidate.stallName, filters.stallName)) return reject('stall');
     if (filters.tags?.length && !filters.tags.every((term) => candidate.tags.some((tag) => includesTerm(tag, term)))) return reject('tags');
     if (filters.includeIngredients?.length && !filters.includeIngredients.every((term) => candidate.ingredients.some((item) => includesTerm(item, term)))) return reject('includeIngredients');
-    const safetyTerms = uniqueStrings(filters.avoidIngredients, filters.allergens);
-    if (safetyTerms.some((term) => candidate.ingredients.some((item) => includesTerm(item, term)) || candidate.allergens.some((item) => includesTerm(item, term)))) return reject('safety');
-    if (filters.dietaryPattern === 'vegetarian' && vegetarianConflict(candidate, false)) return reject('dietaryPattern');
-    if (filters.dietaryPattern === 'vegan' && vegetarianConflict(candidate, true)) return reject('dietaryPattern');
+    const avoidTerms = uniqueStrings(filters.avoidIngredients);
+    if (avoidTerms.some((term) => [
+      ...candidate.ingredients,
+      ...(candidate.facts?.seasonings || []),
+      ...(candidate.facts?.additives || []),
+    ].some((item) => includesTerm(item, term)))) return reject('safety');
+    candidate.safety = evaluateDishSafety(candidate, filters.allergens || []);
+    if (candidate.safety.blocked) return reject('safety');
+    if (!matchesDietaryLabels(candidate, filters.dietaryPattern)) return reject('dietaryPattern');
+    if (filters.minSpiceLevel != null && candidate.spiceLevel != null && candidate.spiceLevel < filters.minSpiceLevel) return reject('minSpiceLevel');
+    if (filters.maxSpiceLevel != null && candidate.spiceLevel != null && candidate.spiceLevel > filters.maxSpiceLevel) return reject('maxSpiceLevel');
     if (filters.minProtein != null && candidate.nutrition.protein < filters.minProtein) return reject('minProtein');
     if (filters.minFiber != null && candidate.fiber < filters.minFiber) return reject('minFiber');
     if (filters.maxCalories != null && candidate.nutrition.calories > filters.maxCalories) return reject('maxCalories');
@@ -520,20 +601,25 @@ function semanticId(result) {
 }
 
 async function runSemanticSearch(semanticSearch, { query, tenantId, candidateIds, limit }) {
-  if (!semanticSearch || !query) return { results: [], used: false, degradedReasons: [] };
+  if (!semanticSearch || !query) return { results: [], used: false, degradedReasons: [], trace: null };
   try {
     const allowed = new Set(candidateIds);
     const raw = await semanticSearch({ query, tenantId, limit, candidateIds, sourceType: 'dish' });
     const results = (Array.isArray(raw) ? raw : raw?.items || raw?.results || [])
       .filter((item) => !item.sourceType || item.sourceType === 'dish')
-      .map((item) => ({ id: semanticId(item), score: Number(item.score ?? item.similarity ?? 0), source: 'semantic' }))
+      .map((item) => ({
+        id: semanticId(item),
+        score: Number(item.vectorScore ?? item.similarity ?? item.score ?? 0),
+        fusedScore: Number(item.score ?? 0),
+        source: 'semantic',
+      }))
       .filter((item) => item.id && allowed.has(item.id))
       .sort((left, right) => right.score - left.score);
     const degradedReasons = (raw?.warnings || []).map((warning) => `${warning.code || 'retrieval_warning'}:${warning.message || 'degraded'}`);
     const vectorEnabled = !raw?.meta?.retrievalModes || raw.meta.retrievalModes.includes('vector');
-    return { results, used: vectorEnabled && results.length > 0, degradedReasons };
+    return { results, used: vectorEnabled && results.length > 0, degradedReasons, trace: raw?.meta?.trace || null, retrievalModes: raw?.meta?.retrievalModes || [] };
   } catch (error) {
-    return { results: [], used: false, degradedReasons: [`semantic_search_failed:${error?.message || 'unknown'}`] };
+    return { results: [], used: false, degradedReasons: [`semantic_search_failed:${error?.message || 'unknown'}`], trace: null };
   }
 }
 
@@ -546,7 +632,7 @@ function sortSearchItems(items, sort) {
 }
 
 function executionContext(context, nowProvider, requestedMealType) {
-  const clock = localDateAndTime(context.now || nowProvider());
+  const clock = businessDateTime(context.now || nowProvider());
   return {
     date: String(context.date || clock.date),
     time: String(context.time || clock.time),
@@ -557,6 +643,7 @@ function executionContext(context, nowProvider, requestedMealType) {
 /** Execute catalog search with hard filters, lexical/exact/semantic retrieval and RRF. */
 export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
   const request = parseDishSearchRequest(input);
+  const retrievalQuery = [request.query, ...(request.interpreted.expandedTerms || [])].filter(Boolean).join(' ');
   const nowProvider = dependencies.now || (() => new Date());
   const exec = executionContext(request.context, nowProvider, request.filters.mealType);
   const sourceCandidates = request.candidates
@@ -565,10 +652,11 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
   const candidates = sourceCandidates
     .filter((candidate) => candidate.id && candidate.tenantId === request.tenantId && isActiveDish(candidate))
     .map((candidate) => ({ ...candidate, availability: deriveAvailability(candidate, exec) }));
+  applyCatalogLocationMention(request, candidates);
   const interpretationWarnings = [];
   let llmSupplementUsed = false;
   const preliminaryExact = exactRankDishes(request.query, candidates);
-  const preliminaryLexical = lexicalRankDishes(request.query, candidates);
+  const preliminaryLexical = lexicalRankDishes(retrievalQuery, candidates);
   const shouldInterpret = Boolean(request.query)
     && request.interpreted.detected.length === 0
     && preliminaryExact.length === 0
@@ -599,11 +687,19 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
       interpretationWarnings.push({ code: 'QUERY_INTERPRETATION_FAILED', message: `语义补充不可用，已降级：${error?.message || 'unknown'}` });
     }
   }
-  const constrained = applyDishHardConstraints(candidates, request.filters);
-  const lexical = lexicalRankDishes(request.query, constrained.items);
+  const hasConflicts = request.interpreted.conflicts.length > 0;
+  if (hasConflicts) interpretationWarnings.push(...request.interpreted.conflicts.map((conflict) => ({
+    code: conflict.code,
+    message: conflict.message,
+    requiresConfirmation: true,
+  })));
+  const constrained = hasConflicts
+    ? { items: [], rejections: { conflict: candidates.length } }
+    : applyDishHardConstraints(candidates, request.filters);
+  const lexical = lexicalRankDishes(retrievalQuery, constrained.items);
   const exact = exactRankDishes(request.query, constrained.items).map((item) => ({ ...item, source: 'exact' }));
   const semantic = await runSemanticSearch(dependencies.semanticSearch, {
-    query: request.query,
+    query: retrievalQuery,
     tenantId: request.tenantId,
     candidateIds: constrained.items.map((item) => item.id),
     limit: Math.max(request.limit * 3, 30)
@@ -613,29 +709,70 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
     ? [...constrained.items].sort((a, b) => Number(b.availability.orderable) - Number(a.availability.orderable) || b.rating - a.rating).map((item) => ({ id: item.id, source: 'baseline' }))
     : [];
   const fused = reciprocalRankFusion([exact, lexical.map((item) => ({ ...item, source: 'lexical' })), semantic.results, baseline], { weights: [2.4, 1.5, 1.2, 0.25] });
+  const rerankLimit = Math.min(100, Math.max(20, request.offset + request.limit));
   const byId = new Map(constrained.items.map((candidate) => [candidate.id, candidate]));
   const lexicalById = new Map(lexical.map((item) => [item.id, item]));
   const semanticById = new Map(semantic.results.map((item) => [item.id, item.score]));
-  const ranked = fused.map((entry) => {
+  const ranked = fused.slice(0, rerankLimit).map((entry, index) => {
     const candidate = byId.get(entry.id);
     if (!candidate) return null;
     const exactBoost = exact.findIndex((item) => item.id === entry.id);
     const availabilityBoost = candidate.availability.orderable ? 0.02 : 0;
-    const retrievalScore = entry.rrfScore + availabilityBoost + (exactBoost === 0 ? 0.03 : 0) + Math.max(0, semanticById.get(entry.id) || 0) * 0.01;
+    const exactScore = exactBoost === 0 ? 0.03 : 0;
+    const semanticScore = Math.max(0, semanticById.get(entry.id) || 0) * 0.01;
+    const ratingBoost = Math.max(0, Number(candidate.rating || 0)) / 5 * 0.008
+      + Math.min(0.004, Math.log10(Number(candidate.reviewCount || 0) + 1) * 0.001);
+    const supplyAdjustment = candidate.availability.status === 'limited' ? -0.003 : 0;
+    const retrievalScore = entry.rrfScore + availabilityBoost + exactScore + semanticScore + ratingBoost + supplyAdjustment;
+    const nextRrf = Number(fused[index + 1]?.rrfScore || 0);
+    const rankMargin = entry.rrfScore > 0 ? Math.max(0, (entry.rrfScore - nextRrf) / entry.rrfScore) : 0;
+    const dataQuality = dishDataQuality(candidate, nowProvider());
+    const confidence = retrievalConfidence({
+      lexicalMatched: lexicalById.has(entry.id) || exactBoost >= 0,
+      semanticScore: semanticById.get(entry.id) || 0,
+      rankMargin,
+      quality: dataQuality,
+      sourceVerified: Object.values(candidate.facts?.factStatus || {}).some((status) => status === 'verified'),
+    });
     const matchReasons = uniqueStrings(
       lexicalById.get(entry.id)?.matchReasons,
       semanticById.has(entry.id) ? ['语义相关'] : [],
       candidate.availability.orderable ? ['当前可下单'] : []
     );
-    return { ...publicCandidate(candidate), availability: candidate.availability, matchReasons, retrievalScore: Number(retrievalScore.toFixed(6)) };
+    return {
+      ...publicCandidate(candidate),
+      availability: candidate.availability,
+      safety: candidate.safety || evaluateDishSafety(candidate, request.filters.allergens || []),
+      dataQuality,
+      confidence,
+      matchReasons,
+      retrievalScore: Number(retrievalScore.toFixed(6)),
+      retrievalBreakdown: {
+        rrf: Number(entry.rrfScore.toFixed(6)),
+        exact: Number(exactScore.toFixed(6)),
+        semantic: Number(semanticScore.toFixed(6)),
+        availability: Number(availabilityBoost.toFixed(6)),
+        rating: Number(ratingBoost.toFixed(6)),
+        supply: Number(supplyAdjustment.toFixed(6)),
+      },
+    };
   }).filter(Boolean);
   sortSearchItems(ranked, request.sort);
   const pageItems = ranked.slice(request.offset, request.offset + request.limit);
+  const safetyWarnings = pageItems
+    .filter((item) => item.safety?.status === 'unknown')
+    .map((item) => ({
+      code: 'ALLERGEN_UNVERIFIED',
+      dishId: item.id,
+      allergens: item.safety.unknownAllergens,
+      message: `${item.name}的相关过敏原信息尚未由食堂确认，请现场核实配方和交叉接触风险。`,
+    }));
   const lexicalMiss = Boolean(request.query) && !request.interpreted.detected.length && !exact.length && !lexical.length && !semantic.results.length;
   return {
     interpreted: request.interpreted,
     items: pageItems,
-    warnings: interpretationWarnings,
+    confidence: pageItems[0]?.confidence || retrievalConfidence(),
+    warnings: [...interpretationWarnings, ...safetyWarnings],
     availability: {
       orderableCount: ranked.filter((item) => item.availability.orderable).length,
       totalCount: ranked.length,
@@ -650,10 +787,13 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
       tenantId: request.tenantId,
       retrieval: ['exact', 'lexical', ...(semantic.used ? ['semantic'] : []), ...(baseline.length ? ['baseline'] : [])],
       semanticUsed: semantic.used,
+      retrievalTrace: semantic.trace,
       llmSupplementUsed,
       degradedReasons: semantic.degradedReasons,
       sourceCandidateCount: candidates.length,
       filteredCandidateCount: constrained.items.length,
+      rerankedCandidateCount: ranked.length,
+      hardConstraintRejections: constrained.rejections,
       date: exec.date,
       mealType: exec.mealType,
       indexVersion: dependencies.indexVersion || null
@@ -663,10 +803,12 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
 
 function recommendationFilters(queryFilters, profile, options) {
   const explicitTaste = queryFilters.taste;
+  const profileComplete = profile.onboardingStatus !== 'pending' && profile.onboardingStatus !== 'deferred';
   return {
-    budgetMax: queryFilters.budgetMax ?? profile.budgetMax,
+    budgetMax: queryFilters.budgetMax ?? (profileComplete ? profile.budgetMax : undefined),
     budgetMin: queryFilters.budgetMin,
     mealType: queryFilters.mealType || profile.mealType,
+    orderableOnly: queryFilters.orderableOnly,
     halalOnly: Boolean(queryFilters.halalOnly || profile.halalOnly),
     avoidIngredients: uniqueStrings(profile.avoid, queryFilters.avoidIngredients),
     allergens: uniqueStrings(profile.allergies, queryFilters.allergens),
@@ -678,7 +820,9 @@ function recommendationFilters(queryFilters, profile, options) {
     maxFat: queryFilters.maxFat,
     maxCarbs: queryFilters.maxCarbs,
     maxSodium: queryFilters.maxSodium,
-    maxSugar: queryFilters.maxSugar
+    maxSugar: queryFilters.maxSugar,
+    minSpiceLevel: queryFilters.minSpiceLevel,
+    maxSpiceLevel: queryFilters.maxSpiceLevel
   };
 }
 
@@ -686,7 +830,7 @@ function preferenceFor(preferences, dishId) {
   return preferences.find((item) => (item.dishId || item.dish_id) === dishId) || null;
 }
 
-function scoreRecommendation(candidate, { profile, context, semanticScore = 0 }) {
+function scoreRecommendation(candidate, { profile, context, semanticScore = 0, softSignals = [] }) {
   const nutrition = candidate.nutrition;
   const breakdown = {};
   const why = [];
@@ -707,7 +851,10 @@ function scoreRecommendation(candidate, { profile, context, semanticScore = 0 })
   breakdown.goal = goalScore;
 
   breakdown.rating = candidate.rating * 7 + Math.log10(candidate.reviewCount + 1) * 5;
-  breakdown.budget = Math.max(0, Number(profile.budgetMax || 20) - candidate.availability.price) * 0.7;
+  const budget = Number(profile.budgetMax);
+  breakdown.budget = Number.isFinite(budget) && budget > 0 && profile.onboardingStatus === 'completed'
+    ? Math.max(0, budget - candidate.availability.price) * 0.7
+    : 0;
   breakdown.taste = profile.taste && profile.taste !== '不限' && (candidate.taste === profile.taste || candidate.tags.includes(profile.taste)) ? 9 : 0;
   if (breakdown.taste) why.push(`匹配偏好口味：${profile.taste}`);
 
@@ -731,17 +878,20 @@ function scoreRecommendation(candidate, { profile, context, semanticScore = 0 })
 
   let nutritionFocusScore = 0;
   if (profile.nutritionFocus.includes('highProtein') && nutrition.protein >= 30) { nutritionFocusScore += 8; why.push('高蛋白匹配'); }
+  if (profile.nutritionFocus.includes('lowFat') && nutrition.fat > 0 && nutrition.fat <= 15) { nutritionFocusScore += 6; why.push('低脂匹配'); }
+  if (profile.nutritionFocus.includes('lowCarb') && nutrition.carbs > 0 && nutrition.carbs <= 50) { nutritionFocusScore += 6; why.push('低碳水匹配'); }
   if (profile.nutritionFocus.includes('highFiber') && candidate.fiber >= 3) { nutritionFocusScore += 6; why.push('高纤维匹配'); }
-  if (profile.nutritionFocus.includes('lowSodium') && candidate.sodium < 500) { nutritionFocusScore += 5; why.push('低钠匹配'); }
-  if (profile.nutritionFocus.includes('lowSugar') && candidate.sugar < 5) { nutritionFocusScore += 5; why.push('低糖匹配'); }
+  if (profile.nutritionFocus.includes('lowSodium') && candidate.sodium > 0 && candidate.sodium < 500) { nutritionFocusScore += 5; why.push('低钠匹配'); }
+  if (profile.nutritionFocus.includes('lowSugar') && candidate.sugar > 0 && candidate.sugar < 5) { nutritionFocusScore += 5; why.push('低糖匹配'); }
   if (profile.nutritionFocus.includes('calcium') && candidate.calcium >= 100) { nutritionFocusScore += 5; why.push('高钙匹配'); }
   if (profile.nutritionFocus.includes('iron') && candidate.iron >= 3) { nutritionFocusScore += 5; why.push('高铁匹配'); }
   breakdown.nutritionFocus = nutritionFocusScore;
 
-  const dishSpiceLevel = candidate.taste.includes('麻辣') ? 5 : candidate.taste.includes('辣') ? 4 : candidate.taste.includes('微辣') ? 3 : 1;
-  const spiceDistance = Math.abs(Number(profile.spiceLevel || 3) - dishSpiceLevel);
-  breakdown.spice = -spiceDistance * 2.5;
-  if (spiceDistance === 0) why.push('辣度匹配');
+  const dishSpiceLevel = candidate.taste.includes('微辣') ? 2 : candidate.taste.includes('麻辣') ? 5 : candidate.taste.includes('辣') ? 4 : 1;
+  const preferredSpiceLevel = Number(profile.spiceLevel || 0);
+  const spiceDistance = preferredSpiceLevel > 0 ? Math.abs(preferredSpiceLevel - dishSpiceLevel) : 0;
+  breakdown.spice = preferredSpiceLevel > 0 ? -spiceDistance * 2.5 : 0;
+  if (preferredSpiceLevel > 0 && spiceDistance === 0) why.push('辣度匹配');
 
   const favoriteMatches = candidate.tags.filter((tag) => profile.favoriteTags.includes(tag));
   breakdown.tags = favoriteMatches.length * 4;
@@ -753,6 +903,10 @@ function scoreRecommendation(candidate, { profile, context, semanticScore = 0 })
     : 0;
   breakdown.semantic = Math.max(0, semanticScore) * 30;
   if (semanticScore > 0) why.push('与本次需求语义相关');
+  const candidateText = normalizedText(candidateSearchText(candidate));
+  const matchedCampusSignals = softSignals.filter((signal) => candidateText.includes(normalizedText(signal)));
+  breakdown.campusContext = Math.min(12, matchedCampusSignals.length * 3);
+  if (matchedCampusSignals.length) why.push(`匹配校园语义：${matchedCampusSignals.slice(0, 2).join('、')}`);
   breakdown.supply = candidate.availability.status === 'limited' ? -2 : 0;
 
   const total = Object.values(breakdown).reduce((sum, value) => sum + value, 0);
@@ -800,15 +954,51 @@ function bestCombination(ranked, budget, targetSize) {
 }
 
 function normalizeKnowledgeResults(results = []) {
-  return results.filter((item) => !item.sourceType || item.sourceType !== 'dish').map((item) => ({
-    id: item.id || item.sourceId,
-    sourceId: item.sourceId || item.id,
-    sourceType: item.sourceType || 'knowledge',
-    title: item.title || item.name || '健康知识',
-    snippet: item.snippet || String(item.content || '').slice(0, 180),
-    score: Number(item.score ?? item.similarity ?? 0),
-    metadata: item.metadata || {}
-  }));
+  return results.filter((item) => !item.sourceType || item.sourceType !== 'dish').map((item) => {
+    const metadata = item.metadata || {};
+    return {
+      id: item.id || item.sourceId,
+      sourceId: item.sourceId || item.id,
+      sourceType: item.sourceType || 'knowledge',
+      tenantId: item.tenantId || metadata.tenantId || null,
+      evidenceType: metadata.evidenceType || 'knowledge_reference',
+      title: item.title || item.name || '健康知识',
+      snippet: item.snippet || String(item.content || '').slice(0, 180),
+      score: Number(item.score ?? item.similarity ?? 0),
+      metadata,
+    };
+  });
+}
+
+function applyCatalogLocationMention(request, candidates) {
+  const query = String(request.query || '');
+  const canteens = new Map();
+  for (const candidate of candidates) {
+    if (candidate.canteenId && candidate.canteenName) canteens.set(candidate.canteenId, String(candidate.canteenName));
+  }
+  const matches = [...canteens.entries()].filter(([, name]) => {
+    const aliases = [
+      name,
+      name.replace(/^.*?大学/, ''),
+      name.replace(/^.*?校区/, ''),
+    ].filter((value) => value.length >= 3);
+    return aliases.some((alias) => query.includes(alias));
+  });
+  if (matches.length === 1) {
+    const [canteenId, canteenName] = matches[0];
+    const matchedText = [canteenName, canteenName.replace(/^.*?大学/, ''), canteenName.replace(/^.*?校区/, '')]
+      .find((alias) => alias.length >= 3 && query.includes(alias)) || canteenName;
+    const filters = request.filters || (request.filters = {});
+    const interpreted = request.interpreted || (request.interpreted = {});
+    filters.canteenId = canteenId;
+    interpreted.filters = filters;
+    interpreted.hardConstraints = filters;
+    interpreted.detected = [...new Set([...(interpreted.detected || []), 'canteenId'])];
+    interpreted.constraints = [...(interpreted.constraints || []), {
+      field: 'canteenId', value: canteenId, polarity: 'include', strength: 'hard',
+      scope: 'location', source: 'tenant_catalog', matchedText,
+    }];
+  }
 }
 
 /** Produce a grounded deterministic knowledge answer; callers may replace only the prose with an LLM. */
@@ -822,15 +1012,21 @@ export function buildKnowledgeAnswer({ query = '', results = [] } = {}) {
 }
 
 async function retrieveKnowledge(knowledgeSearch, request) {
-  if (!knowledgeSearch || !request.query) return { results: [], degradedReasons: [] };
+  if (!knowledgeSearch || !request.query) return { results: [], degradedReasons: [], trace: null };
   try {
-    const raw = await knowledgeSearch({ query: request.query, tenantId: request.tenantId, limit: 5, sourceTypes: ['health', 'knowledge'] });
+    const raw = await knowledgeSearch({
+      query: request.query,
+      tenantId: request.tenantId,
+      limit: 5,
+      sourceTypes: ['health_knowledge', 'campus_dining_knowledge'],
+    });
     return {
       results: normalizeKnowledgeResults(Array.isArray(raw) ? raw : raw?.items || raw?.results || []),
-      degradedReasons: (raw?.warnings || []).map((warning) => `${warning.code || 'retrieval_warning'}:${warning.message || 'degraded'}`)
+      degradedReasons: (raw?.warnings || []).map((warning) => `${warning.code || 'retrieval_warning'}:${warning.message || 'degraded'}`),
+      trace: raw?.meta?.trace || null,
     };
   } catch (error) {
-    return { results: [], degradedReasons: [`knowledge_search_failed:${error?.message || 'unknown'}`] };
+    return { results: [], degradedReasons: [`knowledge_search_failed:${error?.message || 'unknown'}`], trace: null };
   }
 }
 
@@ -849,9 +1045,10 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
     }
   };
   const inferred = inferQueryFilters(request.query);
+  const campus = interpretCampusDiningQuery(request.query);
   const inferredProfile = inferRecommendationProfile(request.query);
   const profile = normalizeProfile({ ...request.profile, ...inferredProfile.profile, ...request.profileOverride });
-  const filters = recommendationFilters(inferred.filters, profile, request.options);
+  const filters = recommendationFilters(mergeFilters(campus.hardFilters, inferred.filters), profile, request.options);
   const mode = request.options.mode || (/搭配|套餐|组合|一荤一素|配餐/.test(request.query) ? 'combination' : 'alternatives');
   const nowProvider = dependencies.now || (() => new Date());
   const exec = executionContext(request.context, nowProvider, filters.mealType);
@@ -861,9 +1058,23 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
   const candidates = sourceCandidates
     .filter((candidate) => candidate.id && candidate.tenantId === request.tenantId && isActiveDish(candidate))
     .map((candidate) => ({ ...candidate, availability: deriveAvailability(candidate, exec) }));
-  const hard = applyDishHardConstraints(candidates, filters, { requireOrderable: request.options.requireOrderable });
-  const semanticPromise = runSemanticSearch(dependencies.semanticSearch, {
+  const locationInterpretation = {
     query: request.query,
+    filters,
+    interpreted: {
+      filters,
+      hardConstraints: filters,
+      detected: [...new Set([...inferred.detected, ...inferredProfile.detected])],
+      constraints: inferred.structured.constraints,
+    },
+  };
+  applyCatalogLocationMention(locationInterpretation, candidates);
+  const hasConflicts = inferred.structured.conflicts.length > 0;
+  const hard = hasConflicts
+    ? { items: [], rejections: { conflict: candidates.length } }
+    : applyDishHardConstraints(candidates, filters, { requireOrderable: request.options.requireOrderable });
+  const semanticPromise = runSemanticSearch(dependencies.semanticSearch, {
+    query: [request.query, ...campus.expandedTerms].filter(Boolean).join(' '),
     tenantId: request.tenantId,
     candidateIds: hard.items.map((item) => item.id),
     limit: 30
@@ -872,11 +1083,18 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
   const [semantic, knowledge] = await Promise.all([semanticPromise, knowledgePromise]);
   const semanticScores = new Map(semantic.results.map((item) => [item.id, item.score]));
   let source = 'menu';
-  let warnings = [];
+  let warnings = profile.onboardingStatus === 'pending' || profile.onboardingStatus === 'deferred'
+    ? [{ code: 'PROFILE_INCOMPLETE', message: '健康档案尚未完善，当前使用通用推荐，不应用默认预算或辣度偏好。' }]
+    : [];
+  if (hasConflicts) warnings.push(...inferred.structured.conflicts.map((conflict) => ({
+    code: conflict.code,
+    message: conflict.message,
+    requiresConfirmation: true,
+  })));
   let pool = hard.items;
   let fallbackRejections = hard.rejections;
 
-  if (!pool.length && request.options.requireOrderable) {
+  if (!pool.length && request.options.requireOrderable && !hasConflicts) {
     const fallback = applyDishHardConstraints(candidates, filters, { requireOrderable: false });
     pool = fallback.items;
     fallbackRejections = fallback.rejections;
@@ -884,20 +1102,42 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
     warnings.push({ code: 'NO_ORDERABLE_MENU', message: '当前没有满足条件且可下单的菜单菜品，以下仅为菜品库参考。' });
   }
 
-  const ranked = pool.map((candidate) => scoreRecommendation(candidate, {
+  const rankedBase = pool.map((candidate) => scoreRecommendation(candidate, {
     profile: { ...profile, budgetMax: filters.budgetMax ?? profile.budgetMax },
     context: request.context,
-    semanticScore: semanticScores.get(candidate.id) || 0
+    semanticScore: semanticScores.get(candidate.id) || 0,
+    softSignals: campus.softSignals,
   })).sort((left, right) => right.recommendationScore - left.recommendationScore || right.rating - left.rating);
+  const ranked = rankedBase.map((candidate, index) => {
+    const nextScore = Number(rankedBase[index + 1]?.recommendationScore || 0);
+    const rankMargin = candidate.recommendationScore > 0
+      ? Math.max(0, (candidate.recommendationScore - nextScore) / candidate.recommendationScore)
+      : 0;
+    const dataQuality = dishDataQuality(candidate, nowProvider());
+    return {
+      ...candidate,
+      safety: candidate.safety || evaluateDishSafety(candidate, filters.allergens || []),
+      dataQuality,
+      confidence: retrievalConfidence({
+        lexicalMatched: false,
+        semanticScore: semanticScores.get(candidate.id) || 0,
+        rankMargin,
+        quality: dataQuality,
+        sourceVerified: Object.values(candidate.facts?.factStatus || {}).some((status) => status === 'verified'),
+      }),
+    };
+  });
 
   let recommendations;
   let mealPlan;
   if (mode === 'combination') {
-    const combination = bestCombination(ranked, Number(filters.budgetMax ?? profile.budgetMax), request.options.combinationSize);
+    const combinationBudget = Number(filters.budgetMax ?? profile.budgetMax);
+    const effectiveCombinationBudget = Number.isFinite(combinationBudget) && combinationBudget > 0 ? combinationBudget : 10000;
+    const combination = bestCombination(ranked, effectiveCombinationBudget, request.options.combinationSize);
     recommendations = combination?.dishes || [];
     mealPlan = {
       mode: 'combination',
-      budgetMax: Number(filters.budgetMax ?? profile.budgetMax),
+      budgetMax: filters.budgetMax == null ? null : Number(filters.budgetMax),
       dishes: recommendations,
       totals: combination ? Object.fromEntries(Object.entries(combination.totals).map(([key, value]) => [key, Number(value.toFixed(2))])) : mealTotals([])
     };
@@ -917,9 +1157,27 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
     title: dish.name,
     snippet: `${dish.canteenName || '食堂'} · ${dish.stallName || '档口'} · ¥${dish.availability.price} · ${dish.availability.status}`,
     score: dish.recommendationScore,
-    metadata: { tenantId: request.tenantId, orderable: dish.availability.orderable, menuItemId: dish.availability.menuItemId }
+    metadata: {
+      tenantId: request.tenantId,
+      evidenceType: 'tenant_dish_fact',
+      orderable: dish.availability.orderable,
+      menuItemId: dish.availability.menuItemId,
+      safetyStatus: dish.safety?.status || 'not_applicable',
+      unknownAllergens: dish.safety?.unknownAllergens || [],
+      confidenceLevel: dish.confidence?.level || 'low',
+      dataVersion: dish.dataQuality?.dataVersion || null,
+    }
   }));
   const noResults = recommendations.length === 0;
+  const safetyWarnings = recommendations
+    .filter((dish) => dish.safety?.status === 'unknown')
+    .map((dish) => ({
+      code: 'ALLERGEN_UNVERIFIED',
+      dishId: dish.id,
+      allergens: dish.safety.unknownAllergens,
+      message: `${dish.name}的相关过敏原信息尚未由食堂确认，请现场核实配方和交叉接触风险。`,
+    }));
+  warnings = [...warnings, ...safetyWarnings];
   const suggestedRelaxations = noResults ? relaxationSuggestions({ ...fallbackRejections, ...hard.rejections }, filters) : [];
   const degradedReasons = [...semantic.degradedReasons, ...knowledge.degradedReasons];
   const quotaExhausted = degradedReasons.some((reason) => reason.startsWith('AI_QUOTA_EXHAUSTED:'));
@@ -929,6 +1187,7 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
   return {
     recommendations,
     mealPlan,
+    confidence: recommendations[0]?.confidence || retrievalConfidence(),
     evidence: { dishes: dishEvidence, knowledge: knowledge.results },
     warnings,
     suggestedRelaxations,
@@ -938,6 +1197,10 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
       source,
       orderable: source === 'menu',
       semanticUsed: semantic.used,
+      retrievalTrace: {
+        dish: semantic.trace,
+        knowledge: knowledge.trace,
+      },
       quotaExhausted,
       degradedReasons,
       sourceCandidateCount: candidates.length,
@@ -945,7 +1208,21 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
       date: exec.date,
       mealType: exec.mealType,
       profile,
-      interpreted: { query: request.query, filters, detected: [...new Set([...inferred.detected, ...inferredProfile.detected])] },
+      interpreted: {
+        query: request.query,
+        filters,
+        hardConstraints: filters,
+        detected: locationInterpretation.interpreted.detected,
+        constraints: locationInterpretation.interpreted.constraints,
+        conflicts: inferred.structured.conflicts,
+        pendingConfirmations: inferred.structured.pendingConfirmations,
+        parserVersion: inferred.structured.parserVersion,
+        concepts: campus.concepts,
+        conceptIds: campus.conceptIds,
+        softSignals: campus.softSignals,
+        expandedTerms: campus.expandedTerms,
+        ruleVersion: campus.ruleVersion,
+      },
       indexVersion: dependencies.indexVersion || null
     }
   };

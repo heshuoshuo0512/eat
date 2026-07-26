@@ -1,8 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../server/database.js';
+import { businessDate } from '../server/time.js';
 import {
   applyDishHardConstraints,
+  mergeDiningConversationState,
   parseDishSearchRequest,
   reciprocalRankFusion,
   runDishSearchWorkflow,
@@ -74,6 +76,39 @@ describe('dish search request parsing and fusion', () => {
     assert.throws(() => parseDishSearchRequest({ filters: { budgetMin: 30, budgetMax: 20 } }), /最低预算/);
   });
 
+  it('understands compact Chinese budget ceilings', () => {
+    const parsed = parseDishSearchRequest('午餐20元内，高蛋白、不太辣、避开花生');
+    assert.equal(parsed.filters.budgetMax, 20);
+    assert.deepEqual(parsed.filters.allergens, ['花生']);
+  });
+
+  it('does not turn flavor words inside an explicitly named dish into hard filters', () => {
+    assert.equal(parseDishSearchRequest('黑椒牛肉意面有木有').filters.taste, undefined);
+    assert.equal(parseDishSearchRequest('晚上九点还有黑椒牛肉意面吗').filters.taste, undefined);
+    assert.equal(parseDishSearchRequest('整点低脂卤肉饭呗').filters.maxFat, undefined);
+    assert.equal(parseDishSearchRequest('想吃黑椒牛肉意面，20元以内').filters.taste, undefined);
+    assert.equal(parseDishSearchRequest('减脂想吃低脂少油的').filters.maxFat, 15);
+  });
+
+  it('treats an absolute budget update as the new ceiling', () => {
+    let state = mergeDiningConversationState({}, '午餐20元内');
+    state = mergeDiningConversationState(state, '预算改成25元');
+    assert.equal(state.filters.budgetMax, 25);
+  });
+
+  it('separates currency bounds from nutrition units and availability wording from ingredients', () => {
+    const nutrition = parseDishSearchRequest('别太咸，蛋白质至少25克');
+    const availability = parseDishSearchRequest('不要售罄的，价格最多18元');
+    assert.equal(nutrition.filters.budgetMin, undefined);
+    assert.equal(nutrition.filters.minProtein, 25);
+    assert.equal(availability.filters.budgetMax, 18);
+    assert.equal(availability.filters.orderableOnly, true);
+
+    const currentlySupplied = parseDishSearchRequest('只看现在有供应的菜');
+    assert.equal(currentlySupplied.filters.orderableOnly, true);
+    assert.equal(availability.filters.avoidIngredients, undefined);
+  });
+
   it('uses weighted reciprocal rank fusion without leaking unknown IDs', () => {
     const fused = reciprocalRankFusion([
       [{ id: 'a' }, { id: 'b' }],
@@ -143,6 +178,31 @@ describe('dish search workflow', () => {
     assert.equal(result.items[0].availability.price, 15, 'menu price is database truth');
   });
 
+  it('uses vector support rather than the small RRF score for confidence inputs', async () => {
+    const result = await runDishSearchWorkflow({
+      tenantId: 'tenant-a', query: '运动后恢复', candidates: [candidate()], context: fixedContext,
+    }, {
+      semanticSearch: async () => [{ sourceId: 'dish-1', sourceType: 'dish', score: 0.016, vectorScore: 0.82 }],
+    });
+    assert.ok(result.items[0].confidence.factors.semanticSupport >= 0.8);
+  });
+
+  it('uses a named tenant canteen as a hard search filter', async () => {
+    const result = await runDishSearchWorkflow({
+      tenantId: 'tenant-a',
+      query: '去运动餐厅找午餐',
+      candidates: [
+        candidate({ id: 'north-dish', canteenId: 'north', canteenName: '北苑食堂' }),
+        candidate({ id: 'sports-dish', canteenId: 'sports', canteenName: '运动餐厅' }),
+      ],
+      context: fixedContext,
+    });
+
+    assert.deepEqual(result.items.map((item) => item.id), ['sports-dish']);
+    assert.equal(result.interpreted.filters.canteenId, 'sports');
+    assert.equal(result.interpreted.detected.includes('canteenId'), true);
+  });
+
   it('keeps sold-out catalog matches but marks them non-orderable', async () => {
     const soldOut = candidate({ menuItem: { ...candidate().menuItem, soldOut: true, supplyCount: 50 } });
     const result = await runDishSearchWorkflow({ tenantId: 'tenant-a', query: '香煎鸡胸饭', candidates: [soldOut], context: fixedContext });
@@ -195,7 +255,7 @@ describe('dish search workflow', () => {
       const result = await runDishSearchWorkflow({
         tenantId: 'default',
         query: '鸡腿饭',
-        context: { date: new Date().toISOString().slice(0, 10), time: '12:00', mealType: 'lunch' }
+        context: { date: businessDate(), time: '12:00', mealType: 'lunch' }
       }, { db });
       assert.ok(Array.isArray(result.items));
       assert.ok(result.meta.sourceCandidateCount > 0);
@@ -242,6 +302,24 @@ describe('meal recommendation workflow', () => {
     assert.equal(result.recommendations.length, 3);
     assert.ok(result.mealPlan.totals.price <= 30);
     assert.deepEqual(result.mealPlan.dishes.map((item) => item.id), result.recommendations.map((item) => item.id));
+  });
+
+  it('uses a named tenant canteen as a hard recommendation filter', async () => {
+    const result = await runMealRecommendationWorkflow({
+      tenantId: 'tenant-a',
+      query: '去运动餐厅吃午餐，只看现在有供应的菜',
+      profile: { goal: 'healthy', mealType: 'lunch', budgetMax: 30 },
+      context: fixedContext,
+      candidates: [
+        candidate({ id: 'north-dish', canteenId: 'north', canteenName: '北苑食堂' }),
+        candidate({ id: 'sports-dish', canteenId: 'sports', canteenName: '运动餐厅' }),
+      ],
+    });
+
+    assert.deepEqual(result.recommendations.map((item) => item.id), ['sports-dish']);
+    assert.equal(result.meta.interpreted.filters.canteenId, 'sports');
+    assert.equal(result.meta.interpreted.filters.orderableOnly, true);
+    assert.equal(result.meta.interpreted.detected.includes('canteenId'), true);
   });
 
   it('returns non-orderable catalog references and separated knowledge evidence when no menu item is available', async () => {

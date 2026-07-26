@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
+import { hashPassword } from '../server/security.js';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -114,6 +115,19 @@ describe('E2E — Auth & session lifecycle', () => {
     assert.ok(state);
     assert.ok(state.session, 'state includes session');
     assert.ok(state.session.user, 'session includes user');
+  });
+
+  it('POST /api/auth/login supports a globally unique username outside the default tenant', async () => {
+    const now = new Date().toISOString();
+    _db.prepare('INSERT INTO tenants (id, name, status, plan, ai_quota, storage_quota_mb, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('tenant-login-e2e', '登录测试租户', 'active', 'test', 0, 100, now, now);
+    _db.prepare('INSERT INTO users (id, username, password_hash, nickname, role, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('user-tenant-login-e2e', 'tenant-login-user', hashPassword('tenantPass123'), '租户学生', 'student', 'tenant-login-e2e', now, now);
+
+    const { status, user, token } = await login('tenant-login-user', 'tenantPass123');
+    assert.equal(status, 200);
+    assert.equal(user.tenantId, 'tenant-login-e2e');
+    assert.ok(token);
   });
 
   it('POST /api/auth/login rejects wrong password for existing user', async () => {

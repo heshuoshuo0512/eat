@@ -233,6 +233,9 @@ describe('PostgreSQL retrieval migration', () => {
   it('filters PostgreSQL vector retrieval by the current embedding model', async () => {
     const calls = [];
     const db = {
+      async query(sql, params = []) {
+        return this.pool.query(sql, params);
+      },
       pool: {
         async query(sql, params = []) {
           calls.push({ sql, params });
@@ -265,6 +268,9 @@ describe('PostgreSQL retrieval migration', () => {
   it('counts only live PostgreSQL vectors in index status', async () => {
     let countSql = '';
     const db = {
+      async query(sql) {
+        return this.pool.query(sql);
+      },
       pool: {
         async query(sql) {
           if (sql.includes('FROM pg_extension')) {

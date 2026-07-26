@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
+import { businessDate } from '../server/time.js';
 
 let server;
 let baseUrl;
 let db;
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return businessDate();
 }
 
 async function req(path, { method = 'GET', token, body } = {}) {

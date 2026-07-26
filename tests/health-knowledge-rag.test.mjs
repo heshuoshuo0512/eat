@@ -29,7 +29,9 @@ describe('health knowledge base RAG integration', () => {
         embeddingProvider: null
       });
       assert.ok(result.items.length);
-      assert.equal(result.meta.degraded, true);
+      assert.equal(result.meta.degraded, false);
+      assert.equal(result.meta.vectorMode, 'off');
+      assert.deepEqual(result.meta.retrievalModes, ['lexical']);
       const health = result.items.find((item) => item.sourceType === 'health_knowledge');
       assert.ok(health, 'expected a health knowledge citation');
       assert.equal(health.metadata.sourceStatus, 'verified_page');

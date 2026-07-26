@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
 import { createToken, hashPassword } from '../server/security.js';
+import { businessDate } from '../server/time.js';
 
 // ── helpers ───────────────────────────────────────────────────────────
 
@@ -105,7 +106,7 @@ describe('supply status – sold-out exclusion', () => {
   setup();
 
   let adminToken;
-  const today = new Date().toISOString().slice(0, 10);
+    const today = businessDate();
 
   before(async () => {
     adminToken = await loginAdmin();
@@ -192,7 +193,7 @@ describe('today menu publish contract', () => {
   setup();
 
   let adminToken;
-  const today = new Date().toISOString().slice(0, 10);
+    const today = businessDate();
 
   before(async () => {
     adminToken = await loginAdmin();

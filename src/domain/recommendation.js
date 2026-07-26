@@ -32,6 +32,10 @@ const goalProfiles = {
 };
 
 export function normalizeProfile(profile = {}) {
+  const onboardingStatus = ['pending', 'deferred', 'completed'].includes(profile.onboardingStatus) ? profile.onboardingStatus : 'completed';
+  const allergyStatus = ['unknown', 'none', 'declared'].includes(profile.allergyStatus)
+    ? profile.allergyStatus
+    : (Array.isArray(profile.allergies) && profile.allergies.length ? 'declared' : 'none');
   return {
     goal: profile.goal || 'healthy',
     budgetMax: Number(profile.budgetMax || 20),
@@ -40,23 +44,35 @@ export function normalizeProfile(profile = {}) {
     halalOnly: Boolean(profile.halalOnly),
     allergies: Array.isArray(profile.allergies) ? profile.allergies.filter(Boolean) : String(profile.allergies || '').split(/[，、\s]+/).filter(Boolean),
     avoid: Array.isArray(profile.avoid) ? profile.avoid.filter(Boolean) : String(profile.avoid || '').split(/[，,\s]+/).filter(Boolean),
-    dietaryPattern: profile.dietaryPattern || 'balanced',
-    spiceLevel: Number.isFinite(Number(profile.spiceLevel)) ? Number(profile.spiceLevel) : 3,
+    dietaryPattern: profile.dietaryPattern === 'balanced' || profile.dietaryPattern === 'omnivore' ? 'unrestricted' : (profile.dietaryPattern || 'unrestricted'),
+    spiceLevel: Number.isFinite(Number(profile.spiceLevel)) ? Number(profile.spiceLevel) : 0,
     nutritionFocus: Array.isArray(profile.nutritionFocus) ? profile.nutritionFocus : [],
     preferLowCrowd: Boolean(profile.preferLowCrowd),
-    favoriteTags: Array.isArray(profile.favoriteTags) ? profile.favoriteTags : []
+    favoriteTags: Array.isArray(profile.favoriteTags) ? profile.favoriteTags : [],
+    onboardingStatus,
+    allergyStatus
   };
+}
+
+function matchesDietaryPattern(dish, pattern) {
+  if (!pattern || pattern === 'unrestricted') return true;
+  const labels = new Set(Array.isArray(dish.dietaryLabels) ? dish.dietaryLabels : []);
+  if (pattern === 'vegan') return labels.has('vegan');
+  if (pattern === 'vegetarian') return labels.has('vegetarian') || labels.has('vegan');
+  if (pattern === 'pescatarian') return labels.has('pescatarian') || labels.has('vegetarian') || labels.has('vegan');
+  return true;
 }
 
 export function filterDishes(dishes, profile) {
   const normalized = normalizeProfile(profile);
   return dishes.filter((dish) => {
-    if (dish.price > normalized.budgetMax) return false;
+    if (normalized.onboardingStatus === 'completed' && dish.price > normalized.budgetMax) return false;
     if (normalized.halalOnly && !dish.halal) return false;
     if (!dish.mealTypes.includes(normalized.mealType)) return false;
     if (normalized.taste !== '不限' && dish.taste !== normalized.taste && !dish.tags.includes(normalized.taste)) return false;
     const safetyTerms = [...normalized.avoid, ...normalized.allergies];
     if (safetyTerms.some((word) => dish.ingredients.some((item) => item.includes(word)) || (dish.allergens || []).some((item) => item.includes(word)))) return false;
+    if (!matchesDietaryPattern(dish, normalized.dietaryPattern)) return false;
     return true;
   });
 }
@@ -67,7 +83,7 @@ export function rankDishes(dishes, profile) {
   return filterDishes(dishes, normalized)
     .map((dish) => {
       const ratingScore = dish.rating * 8 + Math.log10(dish.reviewCount + 1) * 6;
-      const budgetScore = Math.max(0, normalized.budgetMax - dish.price) * 0.8;
+      const budgetScore = normalized.onboardingStatus === 'completed' ? Math.max(0, normalized.budgetMax - dish.price) * 0.8 : 0;
       const score = goal.score(dish) + ratingScore + budgetScore;
       return { ...dish, recommendationScore: Number(score.toFixed(1)) };
     })
@@ -105,10 +121,10 @@ export function contextualRankDishes(dishes, context) {
       breakdown.rating = Number(ratingScore.toFixed(1));
 
       // 3. Budget score
-      const budgetRaw = Math.max(0, profile.budgetMax - dish.price) * 0.8;
+      const budgetRaw = profile.onboardingStatus === 'completed' ? Math.max(0, profile.budgetMax - dish.price) * 0.8 : 0;
       const budgetScore = budgetRaw;
       breakdown.budget = Number(budgetScore.toFixed(1));
-      if (dish.price <= profile.budgetMax * 0.7) reasons.push(`价格${dish.price}元，低于预算较多`);
+      if (profile.onboardingStatus === 'completed' && dish.price <= profile.budgetMax * 0.7) reasons.push(`价格${dish.price}元，低于预算较多`);
 
       // 4. Weather/temperature score
       let weatherScore = 0;
@@ -157,9 +173,11 @@ export function contextualRankDishes(dishes, context) {
       let nutritionFocusScore = 0;
       const focus = profile.nutritionFocus;
       if (focus.includes('highProtein') && dish.nutrition.protein >= 30) { nutritionFocusScore += 8; reasons.push('高蛋白匹配'); }
+      if (focus.includes('lowFat') && dish.nutrition.fat > 0 && dish.nutrition.fat <= 15) { nutritionFocusScore += 6; reasons.push('低脂匹配'); }
+      if (focus.includes('lowCarb') && dish.nutrition.carbs > 0 && dish.nutrition.carbs <= 50) { nutritionFocusScore += 6; reasons.push('低碳水匹配'); }
       if (focus.includes('highFiber') && (dish.fiber || 0) >= 3) { nutritionFocusScore += 6; reasons.push('高纤维匹配'); }
-      if (focus.includes('lowSodium') && (dish.sodium || 0) < 500) { nutritionFocusScore += 5; reasons.push('低钠匹配'); }
-      if (focus.includes('lowSugar') && (dish.sugar || 0) < 5) { nutritionFocusScore += 5; reasons.push('低糖匹配'); }
+      if (focus.includes('lowSodium') && Number(dish.sodium) > 0 && Number(dish.sodium) < 500) { nutritionFocusScore += 5; reasons.push('低钠匹配'); }
+      if (focus.includes('lowSugar') && Number(dish.sugar) > 0 && Number(dish.sugar) < 5) { nutritionFocusScore += 5; reasons.push('低糖匹配'); }
       if (focus.includes('calcium') && (dish.calcium || 0) >= 100) { nutritionFocusScore += 5; reasons.push('高钙匹配'); }
       if (focus.includes('iron') && (dish.iron || 0) >= 3) { nutritionFocusScore += 5; reasons.push('高铁匹配'); }
       breakdown.nutritionFocus = Number(nutritionFocusScore.toFixed(1));
@@ -167,10 +185,12 @@ export function contextualRankDishes(dishes, context) {
       // 8. Spice level match
       let spiceScore = 0;
       const spiceLevel = profile.spiceLevel;
-      const dishSpicy = dish.taste.includes('麻辣') ? 5 : dish.taste.includes('辣') ? 4 : dish.taste.includes('微辣') ? 3 : 1;
-      const spicePenalty = Math.abs(spiceLevel - dishSpicy);
-      spiceScore -= spicePenalty * 2.5;
-      if (spicePenalty === 0) reasons.push('辣度匹配');
+      const dishSpicy = dish.taste.includes('微辣') ? 2 : dish.taste.includes('麻辣') ? 5 : dish.taste.includes('辣') ? 4 : 1;
+      const spicePenalty = spiceLevel > 0 ? Math.abs(spiceLevel - dishSpicy) : 0;
+      if (spiceLevel > 0) {
+        spiceScore -= spicePenalty * 2.5;
+        if (spicePenalty === 0) reasons.push('辣度匹配');
+      }
       breakdown.spice = Number(spiceScore.toFixed(1));
 
       // 9. Favorite tags match
@@ -224,7 +244,7 @@ export function buildMealPlan(dishes, profile) {
   return {
     goalLabel: goal.label,
     reason: picks.length
-      ? `${goal.reason} 本次只从真实档口菜品中筛选，预算上限 ${normalized.budgetMax} 元，已匹配 ${normalized.mealType === 'breakfast' ? '早餐' : normalized.mealType === 'dinner' ? '晚餐' : '午餐'} 场景。`
+      ? `${goal.reason} 本次只从真实档口菜品中筛选，${normalized.onboardingStatus === 'completed' ? `预算上限 ${normalized.budgetMax} 元，` : ''}已匹配 ${normalized.mealType === 'breakfast' ? '早餐' : normalized.mealType === 'dinner' ? '晚餐' : '午餐'} 场景。`
       : '当前条件没有匹配菜品，请放宽预算、口味或清真限制。',
     dishes: picks,
     totals

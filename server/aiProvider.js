@@ -3,6 +3,15 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 const runtimeConfig = {
   apiKey: '',
   baseUrl: '',
+  chatApiKey: '',
+  chatBaseUrl: '',
+  chatTimeoutMs: 0,
+  embeddingApiKey: '',
+  embeddingBaseUrl: '',
+  embeddingDimension: 0,
+  embeddingTimeoutMs: 0,
+  embeddingBatchSize: 0,
+  vectorMode: '',
   embeddingModel: '',
   chatModel: '',
   visionModel: '',
@@ -14,7 +23,11 @@ const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small';
 const DEFAULT_OPENAI_CHAT_MODEL = 'gpt-4o-mini';
 const DEFAULT_OPENAI_VISION_MODEL = 'gpt-4o-mini';
+const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536;
+const DEFAULT_EMBEDDING_BATCH_SIZE = 24;
 const DEFAULT_TIMEOUT_MS = 12_000;
+const DEFAULT_ROUTING_TIMEOUT_MS = 3_000;
+const VECTOR_MODES = new Set(['off', 'shadow', 'active']);
 const VISION_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_VISION_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -22,10 +35,42 @@ function env(name, fallback = '') {
   return process.env[name] || fallback;
 }
 
+function normalizedBaseUrl(value, fallback = '') {
+  return String(value || fallback || '').trim().replace(/\/$/, '');
+}
+
+function positiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizedVectorMode(value, fallback = 'off') {
+  const mode = String(value || '').trim().toLowerCase();
+  return VECTOR_MODES.has(mode) ? mode : fallback;
+}
+
+function isLoopbackUrl(value) {
+  try {
+    const hostname = new URL(value).hostname;
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
 function normalizedRuntimeConfig(settings = {}) {
   return {
     apiKey: String(settings.apiKey || '').trim(),
     baseUrl: String(settings.baseUrl || '').trim(),
+    chatApiKey: String(settings.chatApiKey || '').trim(),
+    chatBaseUrl: String(settings.chatBaseUrl || '').trim(),
+    chatTimeoutMs: Number(settings.chatTimeoutMs || 0) || 0,
+    embeddingApiKey: String(settings.embeddingApiKey || '').trim(),
+    embeddingBaseUrl: String(settings.embeddingBaseUrl || '').trim(),
+    embeddingDimension: Number(settings.embeddingDimension || 0) || 0,
+    embeddingTimeoutMs: Number(settings.embeddingTimeoutMs || 0) || 0,
+    embeddingBatchSize: Number(settings.embeddingBatchSize || 0) || 0,
+    vectorMode: String(settings.vectorMode || '').trim(),
     embeddingModel: String(settings.embeddingModel || '').trim(),
     chatModel: String(settings.chatModel || '').trim(),
     visionModel: String(settings.visionModel || '').trim(),
@@ -33,20 +78,111 @@ function normalizedRuntimeConfig(settings = {}) {
   };
 }
 
-function providerConfig(settings) {
+function activeRuntimeConfig(settings) {
+  return settings === undefined
+    ? (aiRuntimeContext.getStore() || runtimeConfig)
+    : normalizedRuntimeConfig(settings);
+}
+
+function activeChatCircuit() {
+  return aiRuntimeContext.getStore()?.chatCircuit || null;
+}
+
+function openChatCircuit(error) {
+  const circuit = activeChatCircuit();
+  if (!circuit || circuit.open) return;
+  circuit.open = true;
+  circuit.reason = String(error?.code || error?.message || 'CHAT_PROVIDER_FAILED').slice(0, 240);
+  circuit.openedAt = Date.now();
+}
+
+function chatCircuitReason() {
+  const circuit = activeChatCircuit();
+  return circuit?.open ? circuit.reason || 'CHAT_PROVIDER_CIRCUIT_OPEN' : null;
+}
+
+function chatProviderConfig(settings) {
   const activeConfig = settings === undefined
     ? (aiRuntimeContext.getStore() || runtimeConfig)
     : normalizedRuntimeConfig(settings);
-  const apiKey = activeConfig.apiKey || env('AI_API_KEY') || env('OPENAI_API_KEY');
+  const apiKey = activeConfig.chatApiKey
+    || activeConfig.apiKey
+    || env('AI_CHAT_API_KEY')
+    || env('AI_API_KEY')
+    || env('OPENAI_API_KEY');
+  const adminConfigured = Boolean(activeConfig.chatApiKey || activeConfig.apiKey);
   return {
+    providerType: 'chat',
     enabled: Boolean(apiKey),
-    source: activeConfig.apiKey ? 'admin' : (apiKey ? 'env' : 'none'),
+    source: adminConfigured ? 'admin' : (apiKey ? 'env' : 'none'),
     apiKey,
-    baseUrl: (activeConfig.baseUrl || env('AI_BASE_URL', env('OPENAI_BASE_URL', DEFAULT_OPENAI_BASE_URL))).replace(/\/$/, ''),
-    embeddingModel: activeConfig.embeddingModel || env('AI_EMBEDDING_MODEL', env('OPENAI_EMBEDDING_MODEL', DEFAULT_OPENAI_EMBEDDING_MODEL)),
+    baseUrl: normalizedBaseUrl(
+      activeConfig.chatBaseUrl
+        || activeConfig.baseUrl
+        || env('AI_CHAT_BASE_URL')
+        || env('AI_BASE_URL')
+        || env('OPENAI_BASE_URL'),
+      DEFAULT_OPENAI_BASE_URL,
+    ),
     chatModel: activeConfig.chatModel || env('AI_CHAT_MODEL', env('OPENAI_CHAT_MODEL', DEFAULT_OPENAI_CHAT_MODEL)),
     visionModel: activeConfig.visionModel || env('AI_VISION_MODEL', env('OPENAI_VISION_MODEL', activeConfig.chatModel || env('AI_CHAT_MODEL', env('OPENAI_CHAT_MODEL', DEFAULT_OPENAI_VISION_MODEL)))),
-    timeoutMs: Number(activeConfig.timeoutMs || env('AI_TIMEOUT_MS', DEFAULT_TIMEOUT_MS)) || DEFAULT_TIMEOUT_MS
+    timeoutMs: Number(activeConfig.chatTimeoutMs || activeConfig.timeoutMs || env('AI_CHAT_TIMEOUT_MS') || env('AI_TIMEOUT_MS', DEFAULT_TIMEOUT_MS)) || DEFAULT_TIMEOUT_MS
+  };
+}
+
+function embeddingProviderConfig(settings) {
+  const activeConfig = activeRuntimeConfig(settings);
+  const hasRuntimeEmbeddingProvider = Boolean(activeConfig.embeddingBaseUrl || activeConfig.embeddingApiKey || activeConfig.embeddingDimension || activeConfig.vectorMode);
+  const hasEnvEmbeddingProvider = Boolean(env('AI_EMBEDDING_BASE_URL') || env('AI_EMBEDDING_API_KEY') || env('AI_EMBEDDING_DIMENSION') || env('RETRIEVAL_VECTOR_MODE'));
+  const useDedicatedProvider = hasRuntimeEmbeddingProvider || hasEnvEmbeddingProvider;
+  const apiKey = hasRuntimeEmbeddingProvider
+    ? activeConfig.embeddingApiKey
+    : hasEnvEmbeddingProvider
+      ? env('AI_EMBEDDING_API_KEY')
+      : activeConfig.apiKey || env('AI_API_KEY') || env('OPENAI_API_KEY');
+  const baseUrl = normalizedBaseUrl(
+    hasRuntimeEmbeddingProvider
+      ? activeConfig.embeddingBaseUrl
+      : hasEnvEmbeddingProvider
+        ? env('AI_EMBEDDING_BASE_URL')
+        : activeConfig.baseUrl || env('AI_BASE_URL') || env('OPENAI_BASE_URL'),
+    useDedicatedProvider ? '' : DEFAULT_OPENAI_BASE_URL,
+  );
+  const model = hasRuntimeEmbeddingProvider
+    ? activeConfig.embeddingModel
+    : hasEnvEmbeddingProvider
+      ? env('AI_EMBEDDING_MODEL', DEFAULT_OPENAI_EMBEDDING_MODEL)
+      : activeConfig.embeddingModel || env('AI_EMBEDDING_MODEL', env('OPENAI_EMBEDDING_MODEL', DEFAULT_OPENAI_EMBEDDING_MODEL));
+  const defaultMode = process.env.NODE_ENV === 'production' ? 'off' : (hasRuntimeEmbeddingProvider || hasEnvEmbeddingProvider ? 'shadow' : 'off');
+  const vectorMode = normalizedVectorMode(
+    activeConfig.vectorMode || env('RETRIEVAL_VECTOR_MODE'),
+    defaultMode,
+  );
+  const source = hasRuntimeEmbeddingProvider ? 'runtime' : hasEnvEmbeddingProvider ? 'env' : (apiKey ? (activeConfig.apiKey ? 'admin' : 'env') : 'none');
+  const authOptional = isLoopbackUrl(baseUrl);
+  return {
+    providerType: 'embedding',
+    enabled: vectorMode !== 'off' && Boolean(baseUrl && model && (apiKey || authOptional)),
+    source,
+    apiKey,
+    baseUrl,
+    model,
+    dimension: positiveInteger(activeConfig.embeddingDimension || env('AI_EMBEDDING_DIMENSION'), DEFAULT_OPENAI_EMBEDDING_DIMENSION),
+    timeoutMs: Number(activeConfig.embeddingTimeoutMs || env('AI_EMBEDDING_TIMEOUT_MS') || activeConfig.timeoutMs || env('AI_TIMEOUT_MS', DEFAULT_TIMEOUT_MS)) || DEFAULT_TIMEOUT_MS,
+    batchSize: positiveInteger(activeConfig.embeddingBatchSize || env('AI_EMBEDDING_BATCH_SIZE'), DEFAULT_EMBEDDING_BATCH_SIZE),
+    vectorMode,
+    hasApiKey: Boolean(apiKey),
+  };
+}
+
+function providerConfig(settings) {
+  const chat = chatProviderConfig(settings);
+  const embedding = embeddingProviderConfig(settings);
+  return {
+    ...chat,
+    embeddingModel: embedding.model,
+    embeddingDimension: embedding.dimension,
+    vectorMode: embedding.vectorMode,
   };
 }
 
@@ -55,20 +191,47 @@ export function setAiRuntimeConfig(settings = {}) {
 }
 
 export function withAiRuntimeConfig(settings, operation) {
-  return aiRuntimeContext.run(normalizedRuntimeConfig(settings), operation);
+  return aiRuntimeContext.run({
+    ...normalizedRuntimeConfig(settings),
+    chatCircuit: { open: false, reason: null, openedAt: null },
+  }, operation);
 }
 
 export function getAiProviderStatus(settings) {
-  const config = providerConfig(settings);
+  const chat = chatProviderConfig(settings);
+  const embedding = embeddingProviderConfig(settings);
   return {
-    enabled: config.enabled,
-    source: config.source,
-    baseUrl: config.baseUrl,
-    embeddingModel: config.embeddingModel,
-    chatModel: config.chatModel,
-    visionModel: config.visionModel,
-    timeoutMs: config.timeoutMs,
-    hasApiKey: Boolean(config.apiKey)
+    enabled: chat.enabled,
+    source: chat.source,
+    baseUrl: chat.baseUrl,
+    embeddingModel: embedding.model,
+    embeddingDimension: embedding.dimension,
+    vectorMode: embedding.vectorMode,
+    chatModel: chat.chatModel,
+    visionModel: chat.visionModel,
+    timeoutMs: chat.timeoutMs,
+    hasApiKey: Boolean(chat.apiKey),
+    chat: {
+      enabled: chat.enabled,
+      source: chat.source,
+      baseUrl: chat.baseUrl,
+      model: chat.chatModel,
+      visionModel: chat.visionModel,
+      timeoutMs: chat.timeoutMs,
+      hasApiKey: Boolean(chat.apiKey),
+      circuitOpen: Boolean(chatCircuitReason()),
+    },
+    embedding: {
+      enabled: embedding.enabled,
+      source: embedding.source,
+      baseUrl: embedding.baseUrl,
+      model: embedding.model,
+      dimension: embedding.dimension,
+      timeoutMs: embedding.timeoutMs,
+      batchSize: embedding.batchSize,
+      vectorMode: embedding.vectorMode,
+      hasApiKey: embedding.hasApiKey,
+    },
   };
 }
 
@@ -198,40 +361,73 @@ export async function identifyDishFromImage({ dataBase64, contentType, filename,
 }
 
 async function postJson(url, payload, config = providerConfig()) {
+  if (config.providerType === 'chat' && chatCircuitReason()) {
+    throw Object.assign(new Error('Chat provider circuit is open for this request'), { code: 'CHAT_PROVIDER_CIRCUIT_OPEN' });
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify(payload),
       signal: controller.signal
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error?.message || data.error || `AI provider error: ${response.status}`);
     return data;
+  } catch (error) {
+    if (config.providerType === 'chat') openChatCircuit(error);
+    throw error;
   } finally {
     clearTimeout(timer);
   }
 }
 
 export function isAiProviderEnabled() {
-  return providerConfig().enabled;
+  return chatProviderConfig().enabled;
+}
+
+export function isChatProviderEnabled() {
+  return chatProviderConfig().enabled;
+}
+
+export function isEmbeddingProviderEnabled() {
+  return embeddingProviderConfig().enabled;
+}
+
+export async function createEmbeddings(inputs) {
+  const config = embeddingProviderConfig();
+  if (!config.enabled) return null;
+  const values = (Array.isArray(inputs) ? inputs : [inputs]).map((value) => String(value || ''));
+  if (!values.length) return [];
+  const data = await postJson(`${config.baseUrl}/embeddings`, {
+    model: config.model,
+    input: values
+  }, config);
+  const rows = Array.isArray(data.data) ? [...data.data].sort((left, right) => Number(left.index || 0) - Number(right.index || 0)) : [];
+  const embeddings = rows.map((row) => row.embedding).filter((embedding) => Array.isArray(embedding) && embedding.length);
+  if (embeddings.length !== values.length) {
+    throw Object.assign(new Error(`Embedding provider returned ${embeddings.length} vector(s) for ${values.length} input(s)`), {
+      code: 'EMBEDDING_BATCH_SIZE_MISMATCH',
+      expectedCount: values.length,
+      actualCount: embeddings.length,
+    });
+  }
+  return embeddings;
 }
 
 export async function createEmbedding(text) {
-  const config = providerConfig();
-  if (!config.enabled) return null;
-  const data = await postJson(`${config.baseUrl}/embeddings`, {
-    model: config.embeddingModel,
-    input: String(text || '')
-  }, config);
-  const embedding = data.data?.[0]?.embedding;
-  return Array.isArray(embedding) && embedding.length ? embedding : null;
+  const embeddings = await createEmbeddings([text]);
+  return embeddings?.[0] || null;
 }
+
+createEmbedding.embeddingModel = DEFAULT_OPENAI_EMBEDDING_MODEL;
+createEmbedding.embeddingDimension = DEFAULT_OPENAI_EMBEDDING_DIMENSION;
+createEmbeddings.embeddingModel = DEFAULT_OPENAI_EMBEDDING_MODEL;
+createEmbeddings.embeddingDimension = DEFAULT_OPENAI_EMBEDDING_DIMENSION;
 
 function citationBlock(citations) {
   return citations.map((item, index) => `${index + 1}. ${item.name || item.title}｜${item.snippet}`).join('\n');
@@ -281,6 +477,110 @@ export async function generateGroundedMealAnswer({ query, profile, citations, pl
   return answer || null;
 }
 
+function compactGroundingCitation(item, index) {
+  const id = String(item.id || item.sourceId || `citation-${index + 1}`);
+  return {
+    id,
+    sourceType: String(item.sourceType || 'knowledge'),
+    title: String(item.title || item.name || '').slice(0, 120),
+    snippet: String(item.snippet || item.content || '').slice(0, 500),
+    metadata: {
+      tenantId: item.tenantId || item.metadata?.tenantId || null,
+      evidenceType: item.evidenceType || item.metadata?.evidenceType || null,
+      orderable: item.metadata?.orderable,
+      price: item.metadata?.price,
+      status: item.metadata?.status,
+      safetyStatus: item.metadata?.safetyStatus || null,
+      unknownAllergens: item.metadata?.unknownAllergens || [],
+      confidenceLevel: item.metadata?.confidenceLevel || null,
+      dataVersion: item.metadata?.dataVersion || null,
+    },
+  };
+}
+
+function factNumbers(sources) {
+  const values = new Set();
+  for (const value of sources) {
+    const text = typeof value === 'string' ? value : JSON.stringify(value);
+    for (const match of text.matchAll(/\d+(?:\.\d+)?/g)) values.add(Number(match[0]).toFixed(2));
+  }
+  return values;
+}
+
+/** Validate the model's bounded JSON before any generated prose reaches a client. */
+export function validateGroundedAgentAnswer(value, citations = [], options = {}) {
+  const answer = String(value?.answer || '').trim();
+  const citationIds = [...new Set((Array.isArray(value?.citationIds) ? value.citationIds : []).map(String).filter(Boolean))];
+  const allowedIds = new Set(citations.map((item) => String(item.id)));
+  if (!answer || answer.length > 1200) return { valid: false, reason: 'INVALID_ANSWER_TEXT' };
+  if (citations.length && !citationIds.length) return { valid: false, reason: 'CITATION_REQUIRED' };
+  if (citationIds.some((id) => !allowedIds.has(id))) return { valid: false, reason: 'UNKNOWN_CITATION' };
+
+  const cited = citations.filter((item) => citationIds.includes(String(item.id)));
+  const hasUnknownSafety = cited.some((item) => item.metadata?.safetyStatus === 'unknown');
+  if (hasUnknownSafety && /(?:安全食用|放心吃|放心食用|确认不含|绝对不含|没有过敏风险)/.test(answer)) {
+    return { valid: false, reason: 'UNSUPPORTED_SAFETY_CLAIM' };
+  }
+  if (hasUnknownSafety && !/(?:尚未确认|未确认|信息未知|现场核实|交叉接触)/.test(answer)) {
+    return { valid: false, reason: 'MISSING_ALLERGEN_WARNING' };
+  }
+
+  const allowedNumbers = factNumbers([...citations, ...(options.allowedNumberSources || [])]);
+  for (const match of answer.matchAll(/(?:[¥￥]\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:元|kcal|千卡|g|克|mg|毫克))/gi)) {
+    const number = match[1] || match[2];
+    if (!allowedNumbers.has(Number(number).toFixed(2))) return { valid: false, reason: 'UNSUPPORTED_PRICE_CLAIM' };
+  }
+  return { valid: true, answer, citationIds };
+}
+
+/** Generate prose only after tools have produced a tenant-safe evidence pack. */
+export async function generateGroundedAgentAnswer({ query, intent, deterministicAnswer, citations = [], hardConstraints = {} } = {}) {
+  const config = chatProviderConfig();
+  if (!config.enabled || !citations.length) return { answer: null, citationIds: [], reason: 'CHAT_OR_EVIDENCE_UNAVAILABLE' };
+  if (chatCircuitReason()) return { answer: null, citationIds: [], reason: 'CHAT_PROVIDER_CIRCUIT_OPEN' };
+  const evidence = citations.slice(0, 12).map(compactGroundingCitation);
+  const data = await postJson(`${config.baseUrl}/chat/completions`, {
+    model: config.chatModel,
+    temperature: 0.1,
+    max_tokens: 1800,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: [
+          '你是校园食堂 Agent 的受约束回答生成器。',
+          '只允许根据给定 evidence 组织中文回答，不得补充未提供的菜品、价格、营养、过敏原、库存、供应时段或档口事实。',
+          'hardConstraints 是不可放宽的安全约束。通用知识只能解释，不能覆盖真实菜品数据。',
+          'evidence 中 safetyStatus=unknown 时必须明确说明过敏信息尚未确认并建议现场核实，禁止声称安全或确认不含。',
+          '只输出 JSON：{"answer":"...","citationIds":["..."]}。',
+          'answer 必须是非空中文字符串，不能是布尔值、数组或对象。',
+          'citationIds 必须来自 evidence.id；有证据时至少引用一项。',
+          '示例：{"answer":"根据当前证据，可选择示例菜品。","citationIds":["dish:example"]}'
+        ].join('\n')
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          query: String(query || '').slice(0, 1000),
+          intent: String(intent || ''),
+          hardConstraints,
+          evidence,
+          deterministicAnswer: String(deterministicAnswer || '').slice(0, 1000),
+        })
+      }
+    ]
+  }, config);
+  let parsed;
+  try {
+    parsed = parseJsonObject(data.choices?.[0]?.message?.content || '');
+  } catch {
+    return { answer: null, citationIds: [], reason: 'INVALID_MODEL_JSON' };
+  }
+  const validated = validateGroundedAgentAnswer(parsed, evidence, { allowedNumberSources: [query, hardConstraints] });
+  if (!validated.valid) return { answer: null, citationIds: [], reason: validated.reason };
+  return { answer: validated.answer, citationIds: validated.citationIds, reason: null, model: config.chatModel };
+}
+
 export async function generateAgentToolCalls({ query, tools = [] } = {}) {
   const config = providerConfig();
   if (!config.enabled || !tools.length) return null;
@@ -292,29 +592,35 @@ export async function generateAgentToolCalls({ query, tools = [] } = {}) {
       parameters: tool.parameters || { type: 'object', properties: {} }
     }
   }));
-  const data = await postJson(`${config.baseUrl}/chat/completions`, {
-    model: config.chatModel,
-    temperature: 0,
-    max_tokens: 160,
-    tools: openAiTools,
-    tool_choice: 'auto',
-    messages: [
-      { role: 'system', content: '你是智慧食堂 Agent 的工具选择器。只能选择给定工具；高风险业务变更只能选择 propose 工具，不要直接执行。' },
-      { role: 'user', content: String(query || '').slice(0, 1000) }
-    ]
-  }, config);
-  const calls = data.choices?.[0]?.message?.tool_calls || [];
-  return calls.map((call) => ({
-    id: call.id,
-    name: String(call.function?.name || '').replace(/__/g, '.'),
-    arguments: parseJsonObject(call.function?.arguments || '{}')
-  })).filter((call) => call.name);
+  try {
+    const routingTimeoutMs = positiveInteger(env('AI_ROUTING_TIMEOUT_MS'), DEFAULT_ROUTING_TIMEOUT_MS);
+    const data = await postJson(`${config.baseUrl}/chat/completions`, {
+      model: config.chatModel,
+      temperature: 0,
+      max_tokens: 160,
+      tools: openAiTools,
+      tool_choice: 'auto',
+      messages: [
+        { role: 'system', content: '你是智慧食堂 Agent 的工具选择器。只能选择给定工具；高风险业务变更只能选择 propose 工具，不要直接执行。' },
+        { role: 'user', content: String(query || '').slice(0, 1000) }
+      ]
+    }, { ...config, timeoutMs: Math.min(config.timeoutMs, routingTimeoutMs) });
+    const calls = data.choices?.[0]?.message?.tool_calls || [];
+    return calls.map((call) => ({
+      id: call.id,
+      name: String(call.function?.name || '').replace(/__/g, '.'),
+      arguments: parseJsonObject(call.function?.arguments || '{}')
+    })).filter((call) => call.name);
+  } catch (error) {
+    openChatCircuit(error);
+    throw error;
+  }
 }
 
 /** Ask the model for optional, bounded search filters only after deterministic retrieval misses. */
 export async function generateDishSearchFilterSupplement({ query } = {}) {
   const config = providerConfig();
-  if (!config.enabled || !String(query || '').trim()) return null;
+  if (!config.enabled || chatCircuitReason() || !String(query || '').trim()) return null;
   const data = await postJson(`${config.baseUrl}/chat/completions`, {
     model: config.chatModel,
     temperature: 0,

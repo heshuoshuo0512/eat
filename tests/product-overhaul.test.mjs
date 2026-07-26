@@ -605,7 +605,8 @@ describe('Expanded health profile — round-trip all fields', () => {
       taste: '辣',
       halalOnly: false,
       avoid: '香菜',
-      dietaryPattern: 'keto',
+      allergyStatus: 'none',
+      dietaryPattern: 'vegetarian',
       spiceLevel: 4,
       nutritionFocus: ['highProtein', 'highFiber', 'calcium'],
       preferLowCrowd: true,
@@ -628,7 +629,7 @@ describe('Expanded health profile — round-trip all fields', () => {
     assert.equal(p.taste, '辣');
     assert.equal(p.halalOnly, false);
     assert.deepEqual(p.avoid, ['香菜']);
-    assert.equal(p.dietaryPattern, 'keto');
+    assert.equal(p.dietaryPattern, 'vegetarian');
     assert.equal(p.spiceLevel, 4);
     assert.deepEqual(p.nutritionFocus, ['highProtein', 'highFiber', 'calcium']);
     assert.equal(p.preferLowCrowd, true);

@@ -4,6 +4,7 @@ import {
   normalizeProfile,
   filterDishes,
   rankDishes,
+  contextualRankDishes,
   buildMealPlan,
   calculateRanking,
 } from '../src/domain/recommendation.js';
@@ -103,6 +104,75 @@ describe('filterDishes', () => {
     ];
     const result = filterDishes(special, { allergies: ['花生'] });
     assert.deepEqual(result.map((item) => item.id), ['safe-dish']);
+  });
+});
+
+describe('health-profile safety and neutral recommendation rules', () => {
+  it('uses structured dietary labels instead of guessing from dish names or ingredients', () => {
+    const pool = [
+      dish({ id: 'fish', dietaryLabels: ['pescatarian'] }),
+      dish({ id: 'vegetarian', dietaryLabels: ['vegetarian'] }),
+      dish({ id: 'vegan', dietaryLabels: ['vegan'] }),
+      dish({ id: 'unlabelled', name: '素菜名字但未审核', dietaryLabels: [] })
+    ];
+
+    assert.deepEqual(filterDishes(pool, { dietaryPattern: 'vegan' }).map((item) => item.id), ['vegan']);
+    assert.deepEqual(filterDishes(pool, { dietaryPattern: 'vegetarian' }).map((item) => item.id), ['vegetarian', 'vegan']);
+    assert.deepEqual(filterDishes(pool, { dietaryPattern: 'pescatarian' }).map((item) => item.id), ['fish', 'vegetarian', 'vegan']);
+  });
+
+  it('does not apply the placeholder budget while onboarding is incomplete', () => {
+    const pool = [
+      dish({ id: 'cheap', price: 16 }),
+      dish({ id: 'expensive', price: 38 })
+    ];
+    const pending = rankDishes(pool, { onboardingStatus: 'pending', budgetMax: 20 });
+    const completed = rankDishes(pool, { onboardingStatus: 'completed', budgetMax: 20 });
+
+    assert.deepEqual(new Set(pending.map((item) => item.id)), new Set(['cheap', 'expensive']));
+    assert.deepEqual(completed.map((item) => item.id), ['cheap']);
+    assert.doesNotMatch(buildMealPlan(pool, { onboardingStatus: 'pending', budgetMax: 20 }).reason, /预算上限 20 元/);
+  });
+
+  it('scores low-fat and low-carb focus only when measured values qualify', () => {
+    const ranked = contextualRankDishes([
+      dish({ id: 'lean', nutrition: { calories: 480, protein: 30, fat: 8, carbs: 35 } }),
+      dish({ id: 'rich', nutrition: { calories: 480, protein: 30, fat: 25, carbs: 80 } })
+    ], {
+      profile: { onboardingStatus: 'completed', budgetMax: 50, nutritionFocus: ['lowFat', 'lowCarb'], spiceLevel: 0 }
+    });
+
+    assert.equal(ranked[0].id, 'lean');
+    assert.equal(ranked[0].scoreBreakdown.nutritionFocus, 12);
+    assert.equal(ranked.find((item) => item.id === 'rich').scoreBreakdown.nutritionFocus, 0);
+  });
+
+  it('recognizes 微辣 before the generic 辣 marker', () => {
+    const ranked = contextualRankDishes([
+      dish({ id: 'micro', taste: '微辣' }),
+      dish({ id: 'spicy', taste: '香辣' })
+    ], {
+      profile: { onboardingStatus: 'completed', budgetMax: 50, spiceLevel: 2 }
+    });
+
+    assert.equal(ranked[0].id, 'micro');
+    assert.equal(ranked[0].scoreBreakdown.spice, 0);
+    assert.ok(ranked.find((item) => item.id === 'spicy').scoreBreakdown.spice < 0);
+  });
+
+  it('does not treat zero nutrition data as verified low sodium or low sugar', () => {
+    const ranked = contextualRankDishes([
+      dish({ id: 'unknown', sodium: 0, sugar: 0 }),
+      dish({ id: 'measured-low', sodium: 300, sugar: 3 })
+    ], {
+      profile: { onboardingStatus: 'completed', budgetMax: 50, nutritionFocus: ['lowSodium', 'lowSugar'], spiceLevel: 0 }
+    });
+    const unknown = ranked.find((item) => item.id === 'unknown');
+    const measured = ranked.find((item) => item.id === 'measured-low');
+
+    assert.equal(unknown.scoreBreakdown.nutritionFocus, 0);
+    assert.equal(measured.scoreBreakdown.nutritionFocus, 10);
+    assert.doesNotMatch(unknown.why.join(' '), /低钠匹配|低糖匹配/);
   });
 });
 

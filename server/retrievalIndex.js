@@ -1,16 +1,30 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createEmbedding, getAiProviderStatus, isAiProviderEnabled } from './aiProvider.js';
+import {
+  createEmbedding,
+  createEmbeddings,
+  getAiProviderStatus,
+  isEmbeddingProviderEnabled,
+} from './aiProvider.js';
+import {
+  buildCampusDiningIndexDocuments,
+  CAMPUS_KNOWLEDGE_SOURCE_TYPE,
+  deriveDishSemanticLabels,
+  GLOBAL_KNOWLEDGE_TENANT_ID,
+} from './campusDiningKnowledgeBase.js';
 import { loadHealthKnowledgeDocuments } from './healthKnowledgeBase.js';
 
 export const RETRIEVAL_EMBEDDING_DIM = 1536;
-export const RETRIEVAL_INDEX_VERSION = '002_retrieval_pgvector';
+export const RETRIEVAL_INDEX_VERSION = '004_dual_provider_experiment';
 
 const DEFAULT_SOURCE_TYPES = ['dish', 'health_knowledge'];
+const VECTOR_MODES = new Set(['off', 'shadow', 'active']);
 const QUERY_CACHE_TTL_MS = 5 * 60 * 1000;
 const QUERY_CACHE_MAX = 256;
 const postgresReady = new WeakSet();
 const sqliteReady = new WeakSet();
+const sqliteReadyInflight = new WeakMap();
 const queryEmbeddingCache = new Map();
+const queryEmbeddingInflight = new Map();
 
 function parseJson(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -61,6 +75,11 @@ function clampInteger(value, minimum, maximum, fallback) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(minimum, Math.min(maximum, parsed));
+}
+
+function normalizedVectorMode(value, fallback = 'off') {
+  const mode = String(value || '').trim().toLowerCase();
+  return VECTOR_MODES.has(mode) ? mode : fallback;
 }
 
 function normalizedQuery(value) {
@@ -140,6 +159,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
     const allergens = parseList(rowValue(dish, 'allergens', 'allergens_json'));
     const mealTypes = parseList(rowValue(dish, 'mealTypes', 'meal_types_json'));
     const nutrition = rowValue(dish, 'nutrition') || {};
+    const semanticLabels = deriveDishSemanticLabels(dish);
     const name = requiredText(rowValue(dish, 'name'), 'dish.name');
     const stallName = rowValue(dish, 'stallName', 'stall_name') || rowValue(joinedStall, 'name') || '';
     const canteenName = rowValue(dish, 'canteenName', 'canteen_name') || rowValue(joinedCanteen, 'name') || '';
@@ -153,6 +173,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
       `过敏原：${allergens.join('、') || '无已知标注'}`,
       `标签：${tags.join('、') || '无'}`,
       `餐次：${mealTypes.join('、') || '未标注'}`,
+      `检索语义：${semanticLabels.join('、') || '无派生标签'}`,
       `位置：${[parentCanteenName, canteenName, stallName].filter(Boolean).join(' > ') || '未标注'}`,
       `价格：${price} 元`,
       `营养：${Number(nutrition.calories ?? rowValue(dish, 'calories') ?? 0)} kcal，蛋白质 ${Number(nutrition.protein ?? rowValue(dish, 'protein') ?? 0)}g，脂肪 ${Number(nutrition.fat ?? rowValue(dish, 'fat') ?? 0)}g，碳水 ${Number(nutrition.carbs ?? rowValue(dish, 'carbs') ?? 0)}g`,
@@ -165,7 +186,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
       chunkIndex: 0,
       title: name,
       content: details.join('。'),
-      searchText: [name, rowValue(dish, 'cuisine'), rowValue(dish, 'taste'), ...ingredients, ...allergens, ...tags, stallName, canteenName, parentCanteenName, rowValue(dish, 'description')].filter(Boolean).join(' '),
+      searchText: [name, rowValue(dish, 'cuisine'), rowValue(dish, 'taste'), ...ingredients, ...allergens, ...tags, ...semanticLabels, stallName, canteenName, parentCanteenName, rowValue(dish, 'description')].filter(Boolean).join(' '),
       metadata: {
         tenantId: dishTenantId,
         dishId: rowValue(dish, 'id'),
@@ -181,6 +202,9 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
         allergens,
         tags,
         mealTypes,
+        semanticLabels,
+        semanticLabelVersion: 'campus-dining-2026.07.1',
+        evidenceType: 'tenant_dish_fact',
       },
     };
   });
@@ -194,22 +218,35 @@ export function buildHealthIndexDocuments(documents = [], tenantId = 'default') 
   }));
 }
 
-async function ensureSqliteRetrievalSchema(db) {
-  if (sqliteReady.has(db)) return;
-  for (const definition of [
+async function addMissingSqliteColumns(db, table, definitions) {
+  let existing = new Set();
+  try {
+    const rows = await db.prepare(`PRAGMA table_info(${table})`).all();
+    existing = new Set(rows.map((row) => String(row.name || '')));
+  } catch {}
+  for (const definition of definitions) {
+    const name = String(definition).split(/\s+/, 1)[0];
+    if (existing.has(name)) continue;
+    try { await db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`); } catch {}
+  }
+}
+
+async function initializeSqliteRetrievalSchema(db) {
+  await addMissingSqliteColumns(db, 'rag_documents', [
     "chunk_index INTEGER NOT NULL DEFAULT 0",
     "search_text TEXT NOT NULL DEFAULT ''",
     "embedding_model TEXT",
     "content_hash TEXT NOT NULL DEFAULT ''",
     "indexed_at TEXT",
-  ]) {
-    try { await db.exec(`ALTER TABLE rag_documents ADD COLUMN ${definition}`); } catch {}
-  }
+  ]);
   try {
-    const legacyChunks = await db.prepare("SELECT id FROM rag_documents WHERE id LIKE '%:chunk:%'").all();
+    const legacyChunks = await db.prepare("SELECT id, chunk_index FROM rag_documents WHERE id LIKE '%:chunk:%'").all();
     for (const row of legacyChunks) {
       const match = String(row.id).match(/:chunk:(\d+)$/);
-      if (match) await db.prepare('UPDATE rag_documents SET chunk_index = ? WHERE id = ?').run(Number(match[1]), row.id);
+      const chunkIndex = match ? Number(match[1]) : null;
+      if (chunkIndex != null && Number(row.chunk_index) !== chunkIndex) {
+        await db.prepare('UPDATE rag_documents SET chunk_index = ? WHERE id = ?').run(chunkIndex, row.id);
+      }
     }
   } catch {}
   await db.exec(`
@@ -224,6 +261,9 @@ async function ensureSqliteRetrievalSchema(db) {
       document_count INTEGER NOT NULL DEFAULT 0,
       failure_count INTEGER NOT NULL DEFAULT 0,
       embedding_model TEXT,
+      embedding_dimension INTEGER,
+      index_version TEXT,
+      metrics_json TEXT,
       error TEXT,
       started_at TEXT NOT NULL,
       completed_at TEXT
@@ -231,11 +271,29 @@ async function ensureSqliteRetrievalSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_retrieval_index_runs_tenant_started
       ON retrieval_index_runs(tenant_id, started_at DESC);
   `);
+  await addMissingSqliteColumns(db, 'retrieval_index_runs', [
+    'embedding_dimension INTEGER',
+    'index_version TEXT',
+    'metrics_json TEXT',
+  ]);
   sqliteReady.add(db);
 }
 
+async function ensureSqliteRetrievalSchema(db) {
+  if (sqliteReady.has(db)) return;
+  const inflight = sqliteReadyInflight.get(db);
+  if (inflight) return inflight;
+  const request = initializeSqliteRetrievalSchema(db);
+  sqliteReadyInflight.set(db, request);
+  try {
+    await request;
+  } finally {
+    if (sqliteReadyInflight.get(db) === request) sqliteReadyInflight.delete(db);
+  }
+}
+
 async function postgresReadiness(db) {
-  const result = await db.pool.query(`
+  const result = await db.query(`
     SELECT
       EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector') AS has_vector,
       EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS has_trgm,
@@ -278,29 +336,42 @@ export async function ensureRetrievalIndex(db) {
 
 function embeddingProviderFrom(options = {}) {
   if (Object.hasOwn(options, 'embeddingProvider') && options.embeddingProvider !== undefined) return options.embeddingProvider;
-  return isAiProviderEnabled() ? createEmbedding : null;
+  return isEmbeddingProviderEnabled() ? createEmbedding : null;
 }
 
 function embeddingConfigurationFrom(options = {}) {
   const embeddingProvider = embeddingProviderFrom(options);
-  const configuredModel = String(getAiProviderStatus().embeddingModel || 'text-embedding-3-small').trim();
+  const status = getAiProviderStatus().embedding || {};
+  const configuredModel = String(status.model || 'text-embedding-3-small').trim();
   const hasCustomProvider = Object.hasOwn(options, 'embeddingProvider')
     && embeddingProvider
     && embeddingProvider !== createEmbedding;
   const customModel = String(options.embeddingModel || embeddingProvider?.embeddingModel || '').trim();
+  const embeddingDimension = clampInteger(
+    options.embeddingDimension || (hasCustomProvider ? embeddingProvider?.embeddingDimension : status.dimension),
+    1,
+    65_535,
+    RETRIEVAL_EMBEDDING_DIM,
+  );
+  const explicitProvider = Object.hasOwn(options, 'embeddingProvider');
+  const vectorMode = normalizedVectorMode(
+    options.vectorMode,
+    explicitProvider ? (embeddingProvider ? 'active' : 'off') : status.vectorMode || 'off',
+  );
   return {
     embeddingProvider,
-    embeddingModel: hasCustomProvider ? (customModel || 'custom-embedding-1536') : configuredModel,
+    embeddingBatchProvider: options.embeddingBatchProvider || (!hasCustomProvider && embeddingProvider ? createEmbeddings : null),
+    embeddingModel: hasCustomProvider ? (customModel || `custom-embedding-${embeddingDimension}`) : configuredModel,
+    embeddingDimension,
+    embeddingBatchSize: clampInteger(options.embeddingBatchSize || status.batchSize, 1, 128, 24),
+    embeddingConcurrency: clampInteger(options.embeddingConcurrency, 1, 8, 2),
+    vectorMode,
   };
-}
-
-function embeddingModelFrom(options = {}) {
-  return embeddingConfigurationFrom(options).embeddingModel;
 }
 
 async function existingDocument(db, document) {
   if (db.pool) {
-    const result = await db.pool.query(
+    const result = await db.query(
       `SELECT id, content_hash, embedding_model, embedding IS NOT NULL AS has_embedding
        FROM rag_documents
        WHERE tenant_id = $1 AND source_type = $2 AND source_id = $3 AND chunk_index = $4`,
@@ -317,7 +388,7 @@ async function existingDocument(db, document) {
 }
 
 async function upsertPostgresDocument(db, document, embedding, embeddingModel, indexedAt) {
-  await db.pool.query(
+  await db.query(
     `INSERT INTO rag_documents (
        id, tenant_id, source_type, source_id, chunk_index, title, content,
        search_text, metadata_json, metadata, embedding_json, embedding,
@@ -391,15 +462,44 @@ async function upsertSqliteDocument(db, document, embedding, embeddingModel, ind
   );
 }
 
+function chunksOf(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await worker(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export async function upsertRetrievalDocuments(db, documents, options = {}) {
   await ensureRetrievalIndex(db);
   const tenantId = normalizeTenantId(options.tenantId || 'default');
   const normalizedDocuments = documents.map((document) => normalizeDocument(document, tenantId));
-  const { embeddingProvider, embeddingModel } = embeddingConfigurationFrom(options);
+  const configuration = embeddingConfigurationFrom(options);
+  const {
+    embeddingProvider,
+    embeddingBatchProvider,
+    embeddingModel,
+    embeddingDimension,
+    embeddingBatchSize,
+    embeddingConcurrency,
+    vectorMode,
+  } = configuration;
   const failures = [];
   let indexedCount = 0;
   let skippedCount = 0;
   let embeddedCount = 0;
+  let batchCount = 0;
+  const work = [];
 
   for (const document of normalizedDocuments) {
     const existing = await existingDocument(db, document);
@@ -409,16 +509,65 @@ export async function upsertRetrievalDocuments(db, documents, options = {}) {
       skippedCount += 1;
       continue;
     }
+    work.push({ document, needsEmbedding: Boolean(embeddingProvider && !hasCurrentEmbedding) });
+  }
 
-    let embedding = null;
-    if (embeddingProvider && !hasCurrentEmbedding) {
+  const pending = work.filter((item) => item.needsEmbedding);
+  if (db.pool && pending.length && embeddingDimension !== RETRIEVAL_EMBEDDING_DIM) {
+    throw Object.assign(new Error(`PostgreSQL production index requires ${RETRIEVAL_EMBEDDING_DIM}-dimension vectors; use SQLite for the ${embeddingDimension}-dimension experiment`), {
+      code: 'POSTGRES_EMBEDDING_DIMENSION_UNSUPPORTED',
+      expectedDimension: RETRIEVAL_EMBEDDING_DIM,
+      actualDimension: embeddingDimension,
+    });
+  }
+
+  const embeddingsById = new Map();
+  const embeddingStartedAt = Date.now();
+  const recordFailure = (item, error) => failures.push({
+    id: item.document.id,
+    sourceType: item.document.sourceType,
+    sourceId: item.document.sourceId,
+    error: error.message,
+    code: error.code || 'EMBEDDING_FAILED',
+  });
+  const textFor = (item) => `${item.document.title}\n${item.document.content}`;
+
+  if (pending.length && embeddingBatchProvider) {
+    const batches = chunksOf(pending, embeddingBatchSize);
+    batchCount = batches.length;
+    await mapWithConcurrency(batches, embeddingConcurrency, async (batch) => {
       try {
-        embedding = validateEmbedding(await embeddingProvider(`${document.title}\n${document.content}`));
+        const vectors = await embeddingBatchProvider(batch.map(textFor));
+        if (!Array.isArray(vectors) || vectors.length !== batch.length) {
+          throw Object.assign(new Error(`Embedding batch returned ${Array.isArray(vectors) ? vectors.length : 0} vector(s) for ${batch.length} document(s)`), { code: 'EMBEDDING_BATCH_SIZE_MISMATCH' });
+        }
+        for (let index = 0; index < batch.length; index += 1) {
+          try {
+            embeddingsById.set(batch[index].document.id, validateEmbedding(vectors[index], embeddingDimension));
+            embeddedCount += 1;
+          } catch (error) {
+            recordFailure(batch[index], error);
+          }
+        }
+      } catch (error) {
+        for (const item of batch) recordFailure(item, error);
+      }
+    });
+  } else if (pending.length && embeddingProvider) {
+    batchCount = pending.length;
+    await mapWithConcurrency(pending, embeddingConcurrency, async (item) => {
+      try {
+        embeddingsById.set(item.document.id, validateEmbedding(await embeddingProvider(textFor(item)), embeddingDimension));
         embeddedCount += 1;
       } catch (error) {
-        failures.push({ id: document.id, sourceType: document.sourceType, sourceId: document.sourceId, error: error.message, code: error.code || 'EMBEDDING_FAILED' });
+        recordFailure(item, error);
       }
-    }
+    });
+  }
+
+  for (const item of work) {
+    const { document } = item;
+    const embedding = embeddingsById.get(document.id) || null;
     const indexedAt = new Date().toISOString();
     if (db.pool) await upsertPostgresDocument(db, document, embedding, embeddingModel, indexedAt);
     else await upsertSqliteDocument(db, document, embedding, embeddingModel, indexedAt);
@@ -434,6 +583,10 @@ export async function upsertRetrievalDocuments(db, documents, options = {}) {
     failures,
     documents: normalizedDocuments,
     embeddingModel,
+    embeddingDimension,
+    vectorMode,
+    batchCount,
+    embeddingLatencyMs: pending.length ? Date.now() - embeddingStartedAt : 0,
   };
 }
 
@@ -463,12 +616,17 @@ function tokenize(value) {
 }
 
 async function postgresLexicalSearch(db, query, tenantId, sourceTypes, limit) {
-  const result = await db.pool.query(
+  const result = await db.query(
     `SELECT id, tenant_id, source_type, source_id, chunk_index, title, content,
             metadata_json, metadata,
             GREATEST(
               similarity(search_text, $2),
               CASE WHEN lower(title) = lower($2) THEN 1 ELSE 0 END,
+              CASE WHEN strpos(lower($2), lower(title)) > 0 THEN 0.95 ELSE 0 END,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(COALESCE(metadata->'aliases', '[]'::jsonb)) alias
+                WHERE strpos(lower($2), lower(alias)) > 0
+              ) THEN 0.93 ELSE 0 END,
               CASE WHEN strpos(lower(title), lower($2)) > 0 THEN 0.9 ELSE 0 END,
               CASE WHEN strpos(lower(search_text), lower($2)) > 0 THEN 0.75 ELSE 0 END
             ) AS lexical_score,
@@ -476,7 +634,13 @@ async function postgresLexicalSearch(db, query, tenantId, sourceTypes, limit) {
      FROM rag_documents
      WHERE tenant_id = $1
        AND source_type = ANY($3::text[])
-       AND (search_text % $2 OR strpos(lower(search_text), lower($2)) > 0)
+       AND (
+         search_text % $2 OR strpos(lower(search_text), lower($2)) > 0 OR strpos(lower($2), lower(title)) > 0
+         OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements_text(COALESCE(metadata->'aliases', '[]'::jsonb)) alias
+           WHERE strpos(lower($2), lower(alias)) > 0
+         )
+       )
      ORDER BY lexical_score DESC, indexed_at DESC NULLS LAST
      LIMIT $4`,
     [tenantId, query, sourceTypes, limit],
@@ -485,7 +649,7 @@ async function postgresLexicalSearch(db, query, tenantId, sourceTypes, limit) {
 }
 
 async function postgresVectorSearch(db, embedding, embeddingModel, tenantId, sourceTypes, limit, minimumSimilarity) {
-  const result = await db.pool.query(
+  const result = await db.query(
     `SELECT id, tenant_id, source_type, source_id, chunk_index, title, content,
             metadata_json, metadata,
             1 - (embedding <=> $2::vector) AS vector_score
@@ -503,7 +667,7 @@ async function postgresVectorSearch(db, embedding, embeddingModel, tenantId, sou
 }
 
 async function postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingModel) {
-  const result = await db.pool.query(
+  const result = await db.query(
     `SELECT COUNT(*) AS candidate_count,
             COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS embedded_count,
             COUNT(*) FILTER (
@@ -552,16 +716,22 @@ function sqliteLexicalSearch(rows, query, limit) {
   return rows.map((row) => {
     const title = normalizedQuery(row.title);
     const haystack = normalizedQuery(row.search_text || `${row.title} ${row.content}`);
+    const metadata = parseJson(row.metadata, parseJson(row.metadata_json, {}));
+    const aliasInQuery = (metadata.aliases || []).some((alias) => {
+      const normalizedAlias = normalizedQuery(alias);
+      return normalizedAlias.length >= 2 && normalized.includes(normalizedAlias);
+    });
     const termScore = terms.reduce((sum, term) => sum + (haystack.includes(term) ? (term.length > 1 ? 2 : 1) : 0), 0);
     const exactMatch = title === normalized;
-    const lexicalScore = termScore + (exactMatch ? 12 : title.includes(normalized) ? 8 : haystack.includes(normalized) ? 4 : 0);
+    const titleInQuery = title.length >= 2 && normalized.includes(title);
+    const lexicalScore = termScore + (exactMatch ? 50 : titleInQuery ? 36 : aliasInQuery ? 34 : title.includes(normalized) ? 28 : haystack.includes(normalized) ? 12 : 0);
     return mapSearchRow({ ...row, lexical_score: lexicalScore, exact_match: exactMatch });
   }).filter((row) => row.lexicalScore > 0)
     .sort((left, right) => right.lexicalScore - left.lexicalScore || left.title.localeCompare(right.title, 'zh-CN'))
     .slice(0, limit);
 }
 
-function inspectSqliteVectorRows(rows, embeddingModel) {
+function inspectSqliteVectorRows(rows, embeddingModel, embeddingDimension) {
   const compatibleRows = [];
   const stats = {
     candidateCount: rows.length,
@@ -579,7 +749,7 @@ function inspectSqliteVectorRows(rows, embeddingModel) {
       continue;
     }
     try {
-      const storedEmbedding = validateEmbedding(parseJson(row.embedding_json, []));
+      const storedEmbedding = validateEmbedding(parseJson(row.embedding_json, []), embeddingDimension);
       compatibleRows.push({ ...row, retrieval_embedding: storedEmbedding });
       stats.compatibleCount += 1;
     } catch (error) {
@@ -598,7 +768,7 @@ function sqliteVectorSearch(rows, embedding, limit, minimumSimilarity) {
     .slice(0, limit);
 }
 
-function vectorIndexWarnings(stats, embeddingModel) {
+function vectorIndexWarnings(stats, embeddingModel, embeddingDimension) {
   if (!stats) return [];
   const warnings = [];
   const partialFallback = stats.compatibleCount > 0 ? 'lexical_for_affected_documents' : 'lexical';
@@ -613,9 +783,9 @@ function vectorIndexWarnings(stats, embeddingModel) {
   if (stats.invalidDimensionCount > 0) {
     warnings.push({
       code: 'STORED_EMBEDDING_DIMENSION_MISMATCH',
-      message: `${stats.invalidDimensionCount} indexed embedding(s) do not have ${RETRIEVAL_EMBEDDING_DIM} dimensions`,
+      message: `${stats.invalidDimensionCount} indexed embedding(s) do not have ${embeddingDimension} dimensions`,
       fallback: partialFallback,
-      details: { expectedDimension: RETRIEVAL_EMBEDDING_DIM, affectedDocumentCount: stats.invalidDimensionCount },
+      details: { expectedDimension: embeddingDimension, affectedDocumentCount: stats.invalidDimensionCount },
     });
   }
   if (stats.invalidEmbeddingCount > 0) {
@@ -661,68 +831,135 @@ function fuseResults(lexicalResults, vectorResults, query, limit, rrfK = 60) {
     .slice(0, limit);
 }
 
-async function queryEmbedding(query, provider, model) {
+async function queryEmbedding(query, provider, model, dimension) {
   if (!provider) return null;
-  const key = `${model}\n${normalizedQuery(query)}`;
+  const key = `${model}:${dimension}\n${normalizedQuery(query)}`;
   const cached = queryEmbeddingCache.get(key);
   if (cached && Date.now() - cached.createdAt < QUERY_CACHE_TTL_MS) return cached.embedding;
-  const embedding = validateEmbedding(await provider(query));
-  if (queryEmbeddingCache.size >= QUERY_CACHE_MAX) queryEmbeddingCache.delete(queryEmbeddingCache.keys().next().value);
-  queryEmbeddingCache.set(key, { embedding, createdAt: Date.now() });
-  return embedding;
+  const inflight = queryEmbeddingInflight.get(key);
+  if (inflight) return inflight;
+
+  const request = Promise.resolve(provider(query)).then((value) => {
+    const embedding = validateEmbedding(value, dimension);
+    if (queryEmbeddingCache.size >= QUERY_CACHE_MAX) queryEmbeddingCache.delete(queryEmbeddingCache.keys().next().value);
+    queryEmbeddingCache.set(key, { embedding, createdAt: Date.now() });
+    return embedding;
+  });
+  queryEmbeddingInflight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (queryEmbeddingInflight.get(key) === request) queryEmbeddingInflight.delete(key);
+  }
 }
 
 export function clearRetrievalEmbeddingCache() {
   queryEmbeddingCache.clear();
+  queryEmbeddingInflight.clear();
+}
+
+function retrievalChannels(options, vectorMode) {
+  const requested = Array.isArray(options.channels) ? options.channels : null;
+  const channels = requested?.length
+    ? requested.map((value) => String(value).trim().toLowerCase())
+    : ['lexical', ...(vectorMode === 'off' ? [] : ['vector'])];
+  return [...new Set(channels.filter((value) => ['lexical', 'vector'].includes(value)))];
+}
+
+function resultIds(items) {
+  return items.map((item) => item.sourceId || item.id);
+}
+
+function overlapRatio(left, right) {
+  if (!left.length && !right.length) return 1;
+  const rightSet = new Set(right);
+  const overlap = left.filter((value) => rightSet.has(value)).length;
+  return Number((overlap / Math.max(left.length, right.length, 1)).toFixed(4));
 }
 
 export async function searchRetrievalIndex(db, query, options = {}) {
+  const startedAt = Date.now();
   await ensureRetrievalIndex(db);
   const normalized = requiredText(query, 'query').normalize('NFKC').trim();
   const tenantId = normalizeTenantId(options.tenantId || 'default');
   const sourceTypes = normalizeSourceTypes(options.sourceTypes);
   const limit = clampInteger(options.limit, 1, 50, 8);
   const candidateLimit = Math.min(100, Math.max(limit * 3, 12));
-  const { embeddingProvider, embeddingModel } = embeddingConfigurationFrom(options);
+  const {
+    embeddingProvider,
+    embeddingModel,
+    embeddingDimension,
+    vectorMode,
+  } = embeddingConfigurationFrom(options);
+  const channels = retrievalChannels(options, vectorMode);
+  const wantsLexical = channels.includes('lexical');
+  const wantsVector = channels.includes('vector') && vectorMode !== 'off';
   const warnings = [];
   let embedding = null;
-  if (embeddingProvider) {
+  let embeddingLatencyMs = 0;
+  if (wantsVector && db.pool && embeddingDimension !== RETRIEVAL_EMBEDDING_DIM) {
+    warnings.push({
+      code: 'POSTGRES_EMBEDDING_DIMENSION_UNSUPPORTED',
+      message: `PostgreSQL index is vector(${RETRIEVAL_EMBEDDING_DIM}); ${embeddingDimension}-dimension vectors are local SQLite experiments only`,
+      fallback: 'lexical',
+    });
+  } else if (wantsVector && embeddingProvider) {
+    const embeddingStartedAt = Date.now();
     try {
-      embedding = await queryEmbedding(normalized, embeddingProvider, embeddingModel);
+      embedding = await queryEmbedding(normalized, embeddingProvider, embeddingModel, embeddingDimension);
     } catch (error) {
       warnings.push({ code: error.code || 'EMBEDDING_UNAVAILABLE', message: error.message, fallback: 'lexical' });
+    } finally {
+      embeddingLatencyMs = Date.now() - embeddingStartedAt;
     }
-  } else {
+  } else if (wantsVector) {
     warnings.push({ code: 'EMBEDDING_UNAVAILABLE', message: 'Embedding provider is not configured', fallback: 'lexical' });
   }
 
-  let lexicalResults;
+  const searchStartedAt = Date.now();
+  let lexicalResults = [];
   let vectorResults = [];
   let vectorStats = null;
   if (db.pool) {
-    const searches = [postgresLexicalSearch(db, normalized, tenantId, sourceTypes, candidateLimit)];
-    if (embedding) {
-      searches.push(postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingModel));
-      searches.push(postgresVectorSearch(db, embedding, embeddingModel, tenantId, sourceTypes, candidateLimit, Number(options.minimumSimilarity ?? 0.1)));
-    }
-    const results = await Promise.all(searches);
-    [lexicalResults] = results;
-    vectorStats = results[1] || null;
-    vectorResults = results[2] || [];
+    const [lexical, stats, vector] = await Promise.all([
+      wantsLexical ? postgresLexicalSearch(db, normalized, tenantId, sourceTypes, candidateLimit) : Promise.resolve([]),
+      embedding ? postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingModel) : Promise.resolve(null),
+      embedding ? postgresVectorSearch(db, embedding, embeddingModel, tenantId, sourceTypes, candidateLimit, Number(options.minimumSimilarity ?? 0.1)) : Promise.resolve([]),
+    ]);
+    lexicalResults = lexical;
+    vectorStats = stats;
+    vectorResults = vector;
   } else {
     const rows = await sqliteCandidateRows(db, tenantId, sourceTypes);
-    lexicalResults = sqliteLexicalSearch(rows, normalized, candidateLimit);
+    lexicalResults = wantsLexical ? sqliteLexicalSearch(rows, normalized, candidateLimit) : [];
     if (embedding) {
-      const inspected = inspectSqliteVectorRows(rows, embeddingModel);
+      const inspected = inspectSqliteVectorRows(rows, embeddingModel, embeddingDimension);
       vectorStats = inspected.stats;
       vectorResults = sqliteVectorSearch(inspected.compatibleRows, embedding, candidateLimit, Number(options.minimumSimilarity ?? 0.1));
     }
   }
 
-  warnings.push(...vectorIndexWarnings(vectorStats, embeddingModel));
+  warnings.push(...vectorIndexWarnings(vectorStats, embeddingModel, embeddingDimension));
   const vectorEnabled = Boolean(embedding && vectorStats?.compatibleCount > 0);
-
-  const items = fuseResults(lexicalResults, vectorResults, normalized, limit, clampInteger(options.rrfK, 1, 1000, 60));
+  const rrfK = clampInteger(options.rrfK, 1, 1000, 60);
+  const lexicalItems = fuseResults(lexicalResults, [], normalized, limit, rrfK);
+  const vectorItems = fuseResults([], vectorResults, normalized, limit, rrfK);
+  const hybridItems = fuseResults(lexicalResults, vectorResults, normalized, limit, rrfK);
+  const items = vectorMode === 'shadow'
+    ? lexicalItems
+    : channels.length === 1 && channels[0] === 'vector'
+      ? vectorItems
+      : channels.length === 1 && channels[0] === 'lexical'
+        ? lexicalItems
+        : hybridItems;
+  const lexicalTopIds = resultIds(lexicalItems);
+  const vectorTopIds = resultIds(vectorItems);
+  const hybridTopIds = resultIds(hybridItems);
+  const retrievalModes = [
+    ...(wantsLexical ? ['lexical'] : []),
+    ...(vectorEnabled ? [vectorMode === 'shadow' ? 'vector_shadow' : 'vector'] : []),
+  ];
+  const searchLatencyMs = Date.now() - searchStartedAt;
   return {
     items,
     warnings,
@@ -730,16 +967,32 @@ export async function searchRetrievalIndex(db, query, options = {}) {
       tenantId,
       sourceTypes,
       driver: db.pool ? 'postgres' : 'sqlite',
-      retrievalModes: ['lexical', ...(vectorEnabled ? ['vector'] : [])],
+      vectorMode,
+      channels,
+      retrievalModes,
       degraded: warnings.length > 0,
       degradationReasons: [...new Set(warnings.map((warning) => warning.code))],
       embeddingModel,
-      embeddingDimension: RETRIEVAL_EMBEDDING_DIM,
+      embeddingDimension,
       vectorDocumentCount: vectorStats?.compatibleCount ?? null,
       embeddingModelMismatchCount: vectorStats?.modelMismatchCount ?? null,
       invalidEmbeddingDimensionCount: vectorStats?.invalidDimensionCount ?? null,
       invalidEmbeddingCount: vectorStats?.invalidEmbeddingCount ?? null,
       indexVersion: RETRIEVAL_INDEX_VERSION,
+      trace: {
+        lexicalCandidateCount: lexicalResults.length,
+        vectorCandidateCount: vectorResults.length,
+        fusedCandidateCount: hybridItems.length,
+        embeddingLatencyMs,
+        searchLatencyMs,
+        totalLatencyMs: Date.now() - startedAt,
+        lexicalTopIds,
+        vectorTopIds,
+        hybridTopIds,
+        lexicalVectorOverlap: overlapRatio(lexicalTopIds, vectorTopIds),
+        lexicalHybridOverlap: overlapRatio(lexicalTopIds, hybridTopIds),
+        fallbackReasons: [...new Set(warnings.map((warning) => warning.code))],
+      },
     },
   };
 }
@@ -750,7 +1003,7 @@ export async function deleteRetrievalSource(db, { tenantId = 'default', sourceTy
   const type = requiredText(sourceType, 'sourceType');
   const source = requiredText(sourceId, 'sourceId');
   if (db.pool) {
-    const result = await db.pool.query(
+    const result = await db.query(
       'DELETE FROM rag_documents WHERE tenant_id = $1 AND source_type = $2 AND source_id = $3',
       [tenant, type, source],
     );
@@ -781,40 +1034,66 @@ async function loadDishRows(db, tenantId, dishId = null) {
   ).all(...params);
 }
 
-export async function syncDishRetrievalDocument(db, { tenantId = 'default', dishId, embeddingProvider, embeddingModel } = {}) {
+export async function syncDishRetrievalDocument(db, options = {}) {
+  const { tenantId = 'default', dishId } = options;
   const tenant = normalizeTenantId(tenantId);
   const sourceId = requiredText(dishId, 'dishId');
   await ensureRetrievalIndex(db);
   const rows = await loadDishRows(db, tenant, sourceId);
   if (!rows.length) return deleteRetrievalSource(db, { tenantId: tenant, sourceType: 'dish', sourceId });
-  return upsertRetrievalDocuments(db, buildDishIndexDocuments(rows, [], [], tenant), { tenantId: tenant, embeddingProvider, embeddingModel });
+  return upsertRetrievalDocuments(db, buildDishIndexDocuments(rows, [], [], tenant), { ...options, tenantId: tenant });
 }
 
-async function startIndexRun(db, tenantId, embeddingModel) {
+async function startIndexRun(db, tenantId, configuration) {
   const runId = `retrieval-run-${randomUUID()}`;
   const startedAt = new Date().toISOString();
-  await db.prepare(
-    `INSERT INTO retrieval_index_runs (id, tenant_id, status, embedding_model, started_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(runId, tenantId, 'running', embeddingModel, startedAt);
+  if (db.pool) {
+    await db.prepare(
+      `INSERT INTO retrieval_index_runs (id, tenant_id, status, embedding_model, started_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(runId, tenantId, 'running', configuration.embeddingModel, startedAt);
+  } else {
+    await db.prepare(
+      `INSERT INTO retrieval_index_runs (
+         id, tenant_id, status, embedding_model, embedding_dimension, index_version, metrics_json, started_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runId,
+      tenantId,
+      'running',
+      configuration.embeddingModel,
+      configuration.embeddingDimension,
+      RETRIEVAL_INDEX_VERSION,
+      '{}',
+      startedAt,
+    );
+  }
   return runId;
 }
 
-async function finishIndexRun(db, runId, status, documentCount, failureCount, error = null) {
-  await db.prepare(
-    `UPDATE retrieval_index_runs
-     SET status = ?, document_count = ?, failure_count = ?, error = ?, completed_at = ?
-     WHERE id = ?`,
-  ).run(status, documentCount, failureCount, error, new Date().toISOString(), runId);
+async function finishIndexRun(db, runId, status, documentCount, failureCount, error = null, metrics = {}) {
+  if (db.pool) {
+    await db.prepare(
+      `UPDATE retrieval_index_runs
+       SET status = ?, document_count = ?, failure_count = ?, error = ?, completed_at = ?
+       WHERE id = ?`,
+    ).run(status, documentCount, failureCount, error, new Date().toISOString(), runId);
+  } else {
+    await db.prepare(
+      `UPDATE retrieval_index_runs
+       SET status = ?, document_count = ?, failure_count = ?, error = ?, metrics_json = ?, completed_at = ?
+       WHERE id = ?`,
+    ).run(status, documentCount, failureCount, error, JSON.stringify(metrics || {}), new Date().toISOString(), runId);
+  }
 }
 
 async function pruneDocuments(db, tenantId, sourceType, keepIds) {
   if (db.pool) {
     if (!keepIds.length) {
-      const result = await db.pool.query('DELETE FROM rag_documents WHERE tenant_id = $1 AND source_type = $2', [tenantId, sourceType]);
+      const result = await db.query('DELETE FROM rag_documents WHERE tenant_id = $1 AND source_type = $2', [tenantId, sourceType]);
       return result.rowCount || 0;
     }
-    const result = await db.pool.query(
+    const result = await db.query(
       'DELETE FROM rag_documents WHERE tenant_id = $1 AND source_type = $2 AND NOT (id = ANY($3::text[]))',
       [tenantId, sourceType, keepIds],
     );
@@ -833,8 +1112,9 @@ export async function reindexRetrieval(db, options = {}) {
   await ensureRetrievalIndex(db);
   const tenantId = normalizeTenantId(options.tenantId || 'default');
   const sourceTypes = normalizeSourceTypes(options.sourceTypes);
-  const embeddingModel = embeddingModelFrom(options);
-  const runId = await startIndexRun(db, tenantId, embeddingModel);
+  const configuration = embeddingConfigurationFrom(options);
+  const embeddingModel = configuration.embeddingModel;
+  const runId = await startIndexRun(db, tenantId, configuration);
   let documentCount = 0;
   let failureCount = 0;
   try {
@@ -855,6 +1135,15 @@ export async function reindexRetrieval(db, options = {}) {
           });
       documents.push(...buildHealthIndexDocuments(healthDocuments, tenantId));
     }
+    if (sourceTypes.includes(CAMPUS_KNOWLEDGE_SOURCE_TYPE)) {
+      if (tenantId !== GLOBAL_KNOWLEDGE_TENANT_ID) {
+        throw Object.assign(new Error(`校园通用知识只能写入 ${GLOBAL_KNOWLEDGE_TENANT_ID} 全局作用域`), {
+          code: 'GLOBAL_KNOWLEDGE_SCOPE_REQUIRED',
+          tenantId,
+        });
+      }
+      documents.push(...buildCampusDiningIndexDocuments({ root: options.campusKnowledgeRoot, tenantId }));
+    }
 
     const result = await upsertRetrievalDocuments(db, documents, { ...options, tenantId, embeddingModel });
     documentCount = result.documentCount;
@@ -866,7 +1155,13 @@ export async function reindexRetrieval(db, options = {}) {
         prunedCount += await pruneDocuments(db, tenantId, sourceType, keepIds);
       }
     }
-    await finishIndexRun(db, runId, 'completed', documentCount, failureCount);
+    await finishIndexRun(db, runId, 'completed', documentCount, failureCount, null, {
+      embeddedCount: result.embeddedCount,
+      skippedCount: result.skippedCount,
+      batchCount: result.batchCount,
+      embeddingLatencyMs: result.embeddingLatencyMs,
+      vectorMode: result.vectorMode,
+    });
     return { runId, tenantId, sourceTypes, prunedCount, ...result };
   } catch (error) {
     await finishIndexRun(db, runId, 'failed', documentCount, Math.max(1, failureCount), error.message).catch(() => {});
@@ -896,13 +1191,17 @@ export async function getRetrievalIndexStatus(db, { tenantId = 'default' } = {})
   const latestRun = await db.prepare(
     `SELECT * FROM retrieval_index_runs WHERE tenant_id = ? ORDER BY started_at DESC LIMIT 1`,
   ).get(tenant);
+  const embeddingStatus = getAiProviderStatus().embedding || {};
   return {
     tenantId: tenant,
     driver: db.pool ? 'postgres' : 'sqlite',
     ready: true,
-    mode: db.pool ? 'hybrid' : 'lexical_fallback',
+    mode: db.pool ? 'hybrid' : (Number(latestRun?.embedding_dimension || 0) > 0 ? 'local_experiment' : 'lexical_fallback'),
     indexVersion: RETRIEVAL_INDEX_VERSION,
-    embeddingDimension: RETRIEVAL_EMBEDDING_DIM,
+    embeddingDimension: db.pool
+      ? RETRIEVAL_EMBEDDING_DIM
+      : Number(latestRun?.embedding_dimension || embeddingStatus.dimension || RETRIEVAL_EMBEDDING_DIM),
+    vectorMode: embeddingStatus.vectorMode || 'off',
     documentCount: counts.reduce((sum, row) => sum + Number(row.document_count || 0), 0),
     embeddedCount: counts.reduce((sum, row) => sum + Number(row.embedded_count || 0), 0),
     sourceCounts: counts.map((row) => ({
@@ -919,6 +1218,9 @@ export async function getRetrievalIndexStatus(db, { tenantId = 'default' } = {})
       documentCount: Number(latestRun.document_count || 0),
       failureCount: Number(latestRun.failure_count || 0),
       embeddingModel: latestRun.embedding_model || null,
+      embeddingDimension: Number(latestRun.embedding_dimension || 0) || null,
+      indexVersion: latestRun.index_version || RETRIEVAL_INDEX_VERSION,
+      metrics: parseJson(latestRun.metrics_json, {}),
       error: latestRun.error || null,
       startedAt: latestRun.started_at,
       completedAt: latestRun.completed_at || null,

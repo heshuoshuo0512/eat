@@ -9,8 +9,8 @@
 | API 与 Agent | 身份校验、意图路由、工具执行、兼容旧接口 | `server/app.js` |
 | 业务工作流 | 参数解释、硬约束、排序、组合、证据组织 | `server/retrievalService.js` + Zod |
 | 检索索引 | 租户隔离、词法/向量检索、RRF、索引状态与重建 | `server/retrievalIndex.js` |
-| AI 能力 | 生成 1536 维 embedding；可选辅助 Agent 工具选择 | `server/aiProvider.js` |
-| 数据真值 | 菜品、菜单、价格、库存、档口、健康档案、权限和订单 | PostgreSQL；SQLite 仅作开发降级 |
+| AI 能力 | Chat 与 Embedding 独立配置；工具完成后生成受引用约束的回答 | `server/aiProvider.js` |
+| 数据真值 | 菜品、菜单、价格、库存、档口、健康档案、权限和订单 | PostgreSQL；SQLite 同时承载本地 1024 维实验索引 |
 
 核心原则是：**先由数据库确定合法候选和实时状态，再让检索负责排序，最后才允许模型解释结果。**
 
@@ -20,10 +20,10 @@ flowchart LR
     API --> WF["JavaScript + Zod 工作流"]
     WF --> SQL["SQL 业务真值"]
     WF --> RET["词法 + pgvector 检索"]
-    RET --> RRF["RRF 融合与业务加权"]
+    RET --> RRF["RRF 融合、Top 20 规则重排与业务加权"]
     SQL --> RRF
     RRF --> OUT["结果、可用性、证据、降级信息"]
-    OUT --> LLM["可选的模型解释"]
+    OUT --> LLM["DeepSeek 受引用约束生成；失败回退模板"]
 ```
 
 ## 2. SQL 真值与 RAG 边界
@@ -110,9 +110,19 @@ response: recommendations, mealPlan, evidence, warnings,
 - 下单提案必须匹配用户明确点名且当前可售的菜品，不能默认取候选第一项；
 - 高风险动作继续进入待确认动作中心，不由模型直接执行。
 
-`aiProvider.js` 的工具选择是可选增强。提供方不可用时，规则意图路由和确定性工作流仍可运行。
+`aiProvider.js` 的工具选择是可选增强。提供方不可用时，规则意图路由和确定性工作流仍可运行。工具路由使用独立短超时；一旦调用失败，本次请求会打开 Chat 熔断并跳过后续模型生成，避免同一故障重复等待。
 
-## 6. PostgreSQL 与 pgvector
+## 6. 双模型与向量维度边界
+
+- Chat：外部 OpenAI-compatible 模型负责可选工具补充和最终文字组织。
+- Embedding：本地 Ollama `qwen3-embedding:0.6b` 仅用于开发机实验，输出 1024 维向量。
+- `RETRIEVAL_VECTOR_MODE=off|shadow|active`：生产默认 `off`；`shadow` 计算向量结果但不改变词法排序；`active` 才参与 RRF。
+- 生产 PostgreSQL 仍是 `vector(1536)`。代码会拒绝把 1024 维实验向量写入该列，不自动改迁移。
+- SQLite `embedding_json` 可记录实验模型、维度、索引版本、批次和耗时；评测查询、健康档案及跨租户事实禁止入库。
+
+模型配置使用独立变量：`AI_CHAT_*`、`AI_EMBEDDING_*`、`AI_EMBEDDING_DIMENSION` 和 `RETRIEVAL_VECTOR_MODE`；`AI_ROUTING_TIMEOUT_MS` 单独限制可选工具路由。旧 `AI_BASE_URL / AI_API_KEY` 继续兼容。
+
+## 7. PostgreSQL 与 pgvector
 
 正式环境使用 `pgvector/pgvector:pg17`。迁移位于：
 
@@ -132,7 +142,7 @@ response: recommendations, mealPlan, evidence, warnings,
 
 查询 embedding 按“模型 + 规范化查询”在进程内短期缓存。返回维度不是 1536、模型调用失败或未配置模型时，系统记录降级原因并继续使用精确与词法检索。
 
-## 7. 索引生命周期与运维
+## 8. 索引生命周期与运维
 
 完整重建：
 
@@ -142,6 +152,12 @@ node --env-file=.env scripts/reindex-retrieval.mjs
 node --env-file=.env scripts/reindex-retrieval.mjs --tenant=default
 node --env-file=.env scripts/reindex-retrieval.mjs --source=dish,health_knowledge
 node --env-file=.env scripts/reindex-retrieval.mjs --lexical-only
+
+# 本地 1024 维 SQLite 实验；不要对生产 PostgreSQL 执行
+node scripts/reindex-retrieval.mjs --sqlite=data/rag-experiment.sqlite \
+  --tenant=__global__ --source=campus_dining_knowledge \
+  --vector-mode=active --embedding-dimension=1024 --batch-size=24
+npm run eval:rag-local
 
 # Compose 部署直接在 API 容器内执行，复用容器中的 DATABASE_URL
 docker compose exec api node scripts/reindex-retrieval.mjs --tenant=default
@@ -166,28 +182,30 @@ docker compose exec api node scripts/reindex-retrieval.mjs --tenant=default
 4. 执行一次重建脚本；
 5. 检查索引状态和失败数量，再开放语义检索流量。
 
-## 8. 降级策略
+## 9. 降级策略
 
 | 故障 | 行为 |
 |---|---|
-| embedding 未配置或调用失败 | 使用精确匹配与中文词法检索，返回降级原因 |
+| 向量模式为 `off` | 有意只运行精确和词法检索，不视为故障 |
+| embedding 已启用但调用失败 | 使用精确匹配与中文词法检索，返回降级原因 |
+| Chat 工具路由失败或超时 | 本次请求打开熔断，跳过后续模型生成并返回确定性答案 |
 | 租户 AI 额度耗尽 | 不再请求 embedding，继续执行词法检索并返回 `AI_QUOTA_EXHAUSTED` |
-| embedding 维度不是 1536 | 拒绝写入错误向量，查询降级为词法路径 |
+| 1024 维实验向量连接 PostgreSQL | 拒绝写入 `vector(1536)`，查询降级为词法路径 |
 | 健康知识检索失败 | 推荐仍按数据库候选生成，`evidence.knowledge` 为空并告警 |
 | 没有当前可售菜单 | 返回明确的不可下单菜品库参考，或返回空结果与放宽建议 |
 | PostgreSQL 缺少扩展或索引 | 正式环境启动/索引操作失败，不静默伪装成 pgvector 已启用 |
-| SQLite 开发环境 | 保留租户隔离和词法查询；不承诺生产级向量性能 |
+| SQLite 开发环境 | 支持词法、1024 维向量、shadow 对比和离线评测；不作为生产并发承诺 |
 
 任何降级都不能绕过权限、过敏原、忌口、清真、预算、供应和订单确认约束。
 
-## 9. 前端接线
+## 10. 前端接线
 
 - `DishesView` 的自然语言找菜调用 `POST /api/dishes/search`，结果直接驱动列表、匹配理由、实时可用性和放宽建议。
 - `RecommendView` 首屏通过兼容 `GET /api/recommend` 获取确定性推荐；用户继续追问时才进入 Agent 对话。
 - `AgentView` 用于运营调试，展示真实意图、实际工具步骤、风险、引用和降级信息，不作为学生端找菜入口。
 - 客户端保留旧推荐字段的归一化兼容，迁移期间新旧页面不会因返回字段切换而中断。
 
-## 10. 为什么本期不使用 LangChain / LangGraph
+## 11. 为什么本期不使用 LangChain / LangGraph
 
 当前两个核心流程都是有限、可测试的业务管线，关键复杂度来自 SQL 真值、硬约束、租户隔离和稳定 API，而不是通用链式抽象。
 
@@ -202,12 +220,14 @@ docker compose exec api node scripts/reindex-retrieval.mjs --tenant=default
 
 旧的 `rag-langchain.js`、`agent-langchain.js`、`vectorstore-pgvector.js` 和静态源码检查测试不再代表生产架构。当前事实来源是可导入、可执行的 `retrievalService.js`、`retrievalIndex.js`、API 测试和工作流测试。
 
-## 11. 验收重点
+## 12. 验收重点
 
 - 相同菜品 ID 在不同租户间不能互相检索；
 - 售罄、供应时段、过敏原、清真和预算约束违规数为零；
 - 菜品查询只返回真实菜品证据，健康文档不得混入；
 - 推荐列表与餐单保持一致；
 - 模型、额度或索引不可用时仍能返回可解释的确定性结果；
+- 300 条冻结查询和独立挑战集不进入索引；词法、纯向量和混合指标分别记录；
+- 最终模型回答只能引用服务端提供的证据 ID，不支持的引用或价格触发确定性回退；
 - 订单查询不调用推荐工具，高风险动作仍需确认；
 - 上线前必须在真实 PostgreSQL + pgvector 环境验证扩展、1536 维写入、HNSW、中文 trigram 和重建脚本。

@@ -20,11 +20,21 @@ function setup() {
     globalThis.fetch = async (url, options) => {
       const target = String(url);
       if (target.startsWith(baseUrl || 'http://127.0.0.1')) return originalFetch(url, options);
-      assert.match(target, /jscode2session/);
-      assert.match(target, /appid=wx-test-appid/);
-      assert.match(target, /secret=wx-test-secret/);
-      if (target.includes('js_code=valid-code')) return Response.json({ openid: 'openid-student-001', session_key: 'session-key' });
-      return Response.json({ errcode: 40029, errmsg: 'invalid code' });
+      if (target.includes('jscode2session')) {
+        assert.match(target, /appid=wx-test-appid/);
+        assert.match(target, /secret=wx-test-secret/);
+        if (target.includes('js_code=valid-code')) return Response.json({ openid: 'openid-student-001', session_key: 'session-key' });
+        if (target.includes('js_code=second-code')) return Response.json({ openid: 'openid-student-002', session_key: 'session-key-2' });
+        return Response.json({ errcode: 40029, errmsg: 'invalid code' });
+      }
+      if (target.includes('/cgi-bin/token')) {
+        return Response.json({ access_token: 'wechat-access-token', expires_in: 7200 });
+      }
+      if (target.includes('/wxa/business/getuserphonenumber')) {
+        assert.equal(JSON.parse(options.body).code, 'valid-phone-code');
+        return Response.json({ errcode: 0, phone_info: { purePhoneNumber: '13800138000' } });
+      }
+      throw new Error(`Unexpected WeChat request: ${target}`);
     };
     const app = createApp({ db: openDatabase(':memory:') });
     server = createServer(app.handler);
@@ -55,7 +65,7 @@ describe('WeChat miniapp login', () => {
   setup();
 
   it('creates a student user and returns an authenticated state', async () => {
-    const created = await req('/api/auth/wechat-login', { body: { code: 'valid-code', profile: { nickName: '微信同学' } } });
+    const created = await req('/api/auth/wechat-login', { body: { code: 'valid-code', phoneCode: 'valid-phone-code', agreementVersion: '2026-07', profile: { nickName: '微信同学' } } });
     assert.equal(created.status, 200);
     assert.equal(created.data.user.role, 'student');
     assert.equal(created.data.user.nickname, '微信同学');
@@ -65,6 +75,18 @@ describe('WeChat miniapp login', () => {
     const second = await req('/api/auth/wechat-login', { body: { code: 'valid-code', profile: { nickName: '新昵称不覆盖' } } });
     assert.equal(second.status, 200);
     assert.equal(second.data.user.id, created.data.user.id);
+  });
+
+  it('does not merge a phone number already bound to another WeChat account', async () => {
+    const conflict = await req('/api/auth/wechat-login', {
+      body: {
+        code: 'second-code',
+        phoneCode: 'valid-phone-code',
+        agreementVersion: '2026-07'
+      }
+    });
+    assert.equal(conflict.status, 409);
+    assert.equal(conflict.data.code, 'WECHAT_BINDING_CONFLICT');
   });
 });
 

@@ -1,5 +1,13 @@
 import { buildMealPlan, normalizeProfile } from '../src/domain/recommendation.js';
-import { createEmbedding, generateGroundedMealAnswer, isAiProviderEnabled } from './aiProvider.js';
+import {
+  createEmbedding,
+  createEmbeddings,
+  generateGroundedMealAnswer,
+  isChatProviderEnabled,
+  isEmbeddingProviderEnabled,
+} from './aiProvider.js';
+
+// Compatibility API for older callers. New application flows use retrievalIndex + retrievalService.
 
 /* ── tokeniser (shared by lexical + embedding paths) ─────────────── */
 
@@ -97,12 +105,13 @@ export function cosineSimilarity(a, b) {
  */
 export async function storeDocumentEmbeddings(db, documents) {
   const ts = new Date().toISOString();
-  const useRemoteEmbedding = isAiProviderEnabled();
-  for (const doc of documents) {
-    let embedding = null;
-    if (useRemoteEmbedding) {
-      try { embedding = await createEmbedding(doc.content); } catch {}
-    }
+  let remoteEmbeddings = null;
+  if (isEmbeddingProviderEnabled()) {
+    try { remoteEmbeddings = await createEmbeddings(documents.map((doc) => doc.content)); } catch {}
+  }
+  for (let index = 0; index < documents.length; index += 1) {
+    const doc = documents[index];
+    let embedding = remoteEmbeddings?.[index] || null;
     embedding ||= embedText(doc.content);
     const tenantId = doc.metadata?.tenantId || 'default';
     await db.prepare(
@@ -131,7 +140,7 @@ export function searchByEmbedding(queryEmbedding, documentsWithEmbeddings, limit
  */
 export async function searchDocumentsHybrid(query, db, limit = 8, tenantId = 'default') {
   let queryVec = null;
-  if (isAiProviderEnabled()) {
+  if (isEmbeddingProviderEnabled()) {
     try { queryVec = await createEmbedding(query); } catch {}
   }
   queryVec ||= embedText(query);
@@ -145,7 +154,7 @@ export async function searchDocumentsHybrid(query, db, limit = 8, tenantId = 'de
                       WHERE embedding IS NOT NULL AND tenant_id = $3
                       ORDER BY embedding <=> $1::vector
                       LIMIT $2`;
-      const res = await db.pool.query(pgSql, [JSON.stringify(queryVec), limit, tenantId]);
+      const res = await db.query(pgSql, [JSON.stringify(queryVec), limit, tenantId]);
       if (res.rows.length > 0) {
         return res.rows.map((r) => ({
           id: r.source_id, sourceType: r.source_type, sourceId: r.source_id,
@@ -229,7 +238,7 @@ export async function answerMealQuestion({ query, profile, dishes, stalls, cante
   const normalizedCitations = citations.map((item) => ({ id: item.sourceId, name: item.name || item.title, score: item.score, snippet: item.snippet, sourceType: item.sourceType || 'dish', metadata: item.metadata || {} }));
   let answer = templateAnswer;
   let answerSource = 'template';
-  if (isAiProviderEnabled()) {
+  if (isChatProviderEnabled()) {
     try {
       answer = await generateGroundedMealAnswer({ query, profile: inferredProfile, citations: normalizedCitations, plan: { ...plan, picks: plan.dishes } }) || templateAnswer;
       answerSource = answer === templateAnswer ? 'template' : 'llm';

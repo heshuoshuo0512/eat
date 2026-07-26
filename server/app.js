@@ -1,21 +1,28 @@
 import { createServer } from 'node:http';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { buildHealthPlan, calculateRanking, normalizeProfile } from '../src/domain/recommendation.js';
 import { openDatabase, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToEnvironment, rowToMenu, rowToMenuItem, rowToPost, rowToPreference, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
 import { assignableRoles, hasPermission, requirePermission } from './rbac.js';
-import { createToken, decryptSecret, encryptSecret, hashPassword, publicUser, verifyPassword, verifyToken } from './security.js';
-import { storeUpload } from './storage.js';
-import { generateAgentToolCalls, generateDishSearchFilterSupplement, getAiProviderStatus, identifyDishFromImage, testAiProviderConnection, withAiRuntimeConfig } from './aiProvider.js';
+import { decryptSecret, encryptPhone, encryptSecret, hashPassword, normalizePhone, phoneLookupHash, publicUser, verifyPassword, verifySignedUploadUrl, verifyToken } from './security.js';
+import { readStoredUpload, storeUpload } from './storage.js';
+import { generateAgentToolCalls, generateDishSearchFilterSupplement, generateGroundedAgentAnswer, getAiProviderStatus, identifyDishFromImage, testAiProviderConnection, withAiRuntimeConfig } from './aiProvider.js';
 import { createCache, rankingCacheKey } from './cache.js';
+import { clientIpFromRequest } from './network.js';
+import { handleAuthSessionRoute } from './modules/auth/routes.js';
+import { syncLegacyUserIdentities } from './modules/auth/identityService.js';
+import { createAuthSession, revokeAllUserSessions, validateAccessSession } from './modules/auth/sessionService.js';
 import { buildStudentMealAnalysis } from './mealVision.js';
 import { buildKnowledgeAnswer, runDishSearchWorkflow, runMealRecommendationWorkflow } from './retrievalService.js';
+import { CAMPUS_KNOWLEDGE_SOURCE_TYPE, GLOBAL_KNOWLEDGE_TENANT_ID } from './campusDiningKnowledgeBase.js';
+import { FACT_STATUSES, SAFETY_STATUSES, normalizeSafetyDeclarations } from './diningFacts.js';
+import { businessDate, businessDayUtcRange } from './time.js';
+import { enqueueOutboxEvent, outboxBacklog } from './outbox.js';
+import { createRuntimeMetrics } from './metrics.js';
 import {
   RETRIEVAL_INDEX_VERSION,
-  deleteRetrievalSource,
   getRetrievalIndexStatus,
   reindexRetrieval,
-  searchRetrievalIndex,
-  syncDishRetrievalDocument
+  searchRetrievalIndex
 } from './retrievalIndex.js';
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -24,38 +31,31 @@ const MAX_IMPORT_ROWS = 1_000;
 const MAX_IMAGE_BODY_BYTES = 8 * 1024 * 1024;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 180;
-const rateBuckets = new Map();
 const LOGIN_FAILURE_LIMIT = 5;
 const LOGIN_LOCK_MS = 15 * 60_000;
-const loginFailures = new Map();
 
 function loginKey(username, req) {
-  return `${getClientIp(req)}:${String(username || '').trim().toLowerCase()}`;
+  const subject = createHash('sha256')
+    .update(`${getClientIp(req)}:${String(username || '').trim().toLowerCase()}`)
+    .digest('hex');
+  return `sc:v1:rate:login:${subject}`;
 }
 
-function assertLoginAllowed(username, req) {
-  const record = loginFailures.get(loginKey(username, req));
-  if (record?.lockedUntil && record.lockedUntil > Date.now()) {
+async function assertLoginAllowed(cache, username, req) {
+  if (await cache.get(`${loginKey(username, req)}:locked`)) {
     throw Object.assign(new Error('登录失败次数过多，请稍后再试'), { status: 429 });
   }
 }
 
-function recordLoginFailure(username, req) {
+async function recordLoginFailure(cache, username, req) {
   const key = loginKey(username, req);
-  const current = Date.now();
-  const record = loginFailures.get(key) || { count: 0, firstAt: current, lockedUntil: 0 };
-  if (current - record.firstAt > LOGIN_LOCK_MS) {
-    record.count = 0;
-    record.firstAt = current;
-    record.lockedUntil = 0;
-  }
-  record.count += 1;
-  if (record.count >= LOGIN_FAILURE_LIMIT) record.lockedUntil = current + LOGIN_LOCK_MS;
-  loginFailures.set(key, record);
+  const failures = await cache.increment(`${key}:count`, LOGIN_LOCK_MS);
+  if (failures >= LOGIN_FAILURE_LIMIT) await cache.set(`${key}:locked`, true, LOGIN_LOCK_MS);
 }
 
-function clearLoginFailures(username, req) {
-  loginFailures.delete(loginKey(username, req));
+async function clearLoginFailures(cache, username, req) {
+  const key = loginKey(username, req);
+  await Promise.all([cache.del(`${key}:count`), cache.del(`${key}:locked`)]);
 }
 
 function tenantIdFor(user) {
@@ -213,7 +213,7 @@ const DATABASE_ENTITIES = {
   users: { label: '用户', table: 'users', capability: 'user:read', writeCapability: 'user:write', key: 'id', columns: ['id', 'username', 'nickname', 'role', 'created_at', 'updated_at'], writable: ['nickname', 'role'], search: ['username', 'nickname', 'role'] },
   canteens: { label: '食堂', table: 'canteens', capability: 'canteen:write', writeCapability: 'canteen:write', deleteCapability: 'canteen:delete', key: 'id', columns: ['id', 'name', 'location', 'hours', 'crowd_level', 'tags_json', 'description', 'created_at', 'updated_at'], writable: ['name', 'location', 'hours', 'crowd_level', 'tags_json', 'description'], search: ['name', 'location'] },
   stalls: { label: '档口', table: 'stalls', capability: 'stall:write', writeCapability: 'stall:write', deleteCapability: 'stall:delete', key: 'id', columns: ['id', 'canteen_id', 'parent_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description', 'created_at', 'updated_at'], writable: ['canteen_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description'], search: ['name', 'category'] },
-  dishes: { label: '菜品与营养', table: 'dishes', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:delete', key: 'id', columns: ['id', 'stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'created_at', 'updated_at'], writable: ['stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status'], search: ['name', 'taste', 'cuisine'] },
+  dishes: { label: '菜品与营养', table: 'dishes', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:delete', key: 'id', columns: ['id', 'stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'seasonings_json', 'additives_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'allergens_json', 'safety_declarations_json', 'nutrition_fact_status', 'recipe_fact_status', 'halal_fact_status', 'dietary_fact_status', 'spice_level', 'spice_fact_status', 'fact_source', 'fact_verified_at', 'fact_expires_at', 'data_version', 'synthetic', 'created_at', 'updated_at'], writable: ['stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'seasonings_json', 'additives_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'allergens_json', 'safety_declarations_json', 'nutrition_fact_status', 'recipe_fact_status', 'halal_fact_status', 'dietary_fact_status', 'spice_level', 'spice_fact_status', 'fact_source', 'fact_verified_at', 'fact_expires_at', 'data_version'], search: ['name', 'taste', 'cuisine'] },
   menus: { label: '菜单运营', table: 'menus', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:write', key: 'id', columns: ['id', 'tenant_id', 'canteen_id', 'date', 'meal_type', 'status', 'created_at', 'updated_at'], writable: ['canteen_id', 'date', 'meal_type', 'status'], search: ['date', 'meal_type', 'status'] },
   menu_items: { label: '菜单明细', table: 'menu_items', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:write', key: 'id', columns: ['id', 'tenant_id', 'menu_id', 'dish_id', 'price', 'supply_limit', 'supply_count', 'sold_out', 'serving_start', 'serving_end', 'created_at', 'updated_at'], writable: ['menu_id', 'dish_id', 'price', 'supply_limit', 'supply_count', 'sold_out', 'serving_start', 'serving_end'], search: ['menu_id', 'dish_id', 'sold_out'] },
   reviews: { label: '评价', table: 'reviews', capability: 'review:moderate', writeCapability: 'review:moderate', key: 'id', columns: ['id', 'tenant_id', 'user_id', 'target_type', 'target_id', 'rating', 'content', 'status', 'created_at'], writable: ['status'], search: ['content', 'status', 'target_id'] },
@@ -253,6 +253,13 @@ function scopedSettingKey(user, key) {
 
 function now() {
   return new Date().toISOString();
+}
+
+function persistentUploadReference(value) {
+  const raw = String(value || '').trim();
+  if (raw.startsWith('upload://')) return raw;
+  const match = raw.match(/\/api\/uploads\/([^/?#]+)\/content(?:[?#]|$)/);
+  return match ? `upload://${decodeURIComponent(match[1])}` : raw;
 }
 
 function readBody(req, maxBytes = MAX_BODY_BYTES) {
@@ -297,8 +304,31 @@ function send(res, status, data, extraHeaders = {}) {
   res.end(JSON.stringify(data));
 }
 
+export function initialDatabaseContext({ claims = null, authRoute = false, requestId = '' } = {}) {
+  return {
+    tenantId: claims?.tenant || 'default',
+    userId: claims?.sub || '',
+    role: (claims || authRoute) ? 'authenticator' : 'anonymous',
+    requestId
+  };
+}
+
+function sendBinary(res, status, body, contentType, extraHeaders = {}) {
+  res.writeHead(status, {
+    'Content-Type': contentType || 'application/octet-stream',
+    'Content-Length': body.length,
+    'Cache-Control': 'private, max-age=300',
+    'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders
+  });
+  res.end(body);
+}
+
 function fail(res, error, requestId) {
   const status = error.status || 500;
+  if (status === 500 && process.env.LOG_INTERNAL_ERRORS === '1') {
+    console.error(`[${requestId}]`, error);
+  }
   send(res, status, {
     error: status === 500 ? '服务器内部错误' : error.message,
     ...(error.code ? { code: error.code } : {}),
@@ -317,19 +347,13 @@ function splitList(value) {
 }
 
 function getClientIp(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'local';
+  return clientIpFromRequest(req);
 }
 
-function rateLimit(req) {
-  const key = getClientIp(req);
-  const current = Date.now();
-  const bucket = rateBuckets.get(key) || { resetAt: current + RATE_WINDOW_MS, count: 0 };
-  if (bucket.resetAt < current) {
-    bucket.resetAt = current + RATE_WINDOW_MS;
-    bucket.count = 0;
-  }
-  bucket.count += 1;
-  rateBuckets.set(key, bucket);
+async function rateLimit(cache, req) {
+  const subject = createHash('sha256').update(getClientIp(req)).digest('hex');
+  const count = await cache.increment(`sc:v1:rate:request:${subject}`, RATE_WINDOW_MS);
+  const bucket = { count };
   if (bucket.count > RATE_MAX) throw Object.assign(new Error('请求过于频繁，请稍后再试'), { status: 429 });
 }
 
@@ -338,7 +362,10 @@ async function getUserFromRequest(db, req) {
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
   const payload = verifyToken(token);
   if (!payload) return null;
-  return await db.prepare('SELECT * FROM users WHERE id = ?').get(payload.sub) || null;
+  if (!(await validateAccessSession(db, payload))) return null;
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(payload.sub) || null;
+  if (!user || Number(payload.ver || 0) !== Number(user.token_version || 0)) return null;
+  return user;
 }
 
 async function requireUser(db, req) {
@@ -386,6 +413,84 @@ async function assertAiQuota(db, user) {
   if (quota.quota > 0 && quota.remaining <= 0) throw Object.assign(new Error('AI 月额度已用完，请联系管理员升级或调整额度。'), { status: 429 });
   return quota;
 }
+
+const AUTH_CODE_PURPOSES = new Set(['register', 'reset_password']);
+const AUTH_CODE_TTL_MS = 5 * 60_000;
+const AUTH_CODE_RESEND_MS = 60_000;
+const AUTH_CODE_HOURLY_LIMIT = 5;
+const AUTH_CODE_MAX_ATTEMPTS = 5;
+const CURRENT_AGREEMENT_VERSION = '2026-07';
+let wechatAccessTokenCache = { token: '', expiresAt: 0 };
+
+function assertStudentPassword(value) {
+  const password = String(value || '');
+  if (password.length < 8 || password.length > 72 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    throw Object.assign(new Error('密码需为 8-72 位，且同时包含字母和数字'), { status: 400, code: 'INVALID_PASSWORD' });
+  }
+  return password;
+}
+
+function assertAgreementVersion(value) {
+  const version = String(value || '').trim();
+  if (!version) throw Object.assign(new Error('请先同意隐私保护指引和用户服务协议'), { status: 400, code: 'AGREEMENT_REQUIRED' });
+  return version.slice(0, 32);
+}
+
+function verificationTestCode() {
+  if (process.env.SMS_TEST_CODE) return String(process.env.SMS_TEST_CODE).trim();
+  return process.env.NODE_ENV === 'test' ? '246810' : '';
+}
+
+async function issueVerificationCode(db, req, body = {}) {
+  const phone = normalizePhone(body.phone);
+  const purpose = String(body.purpose || '').trim();
+  if (!phone) throw Object.assign(new Error('请输入有效的中国大陆手机号'), { status: 400, code: 'INVALID_PHONE' });
+  if (!AUTH_CODE_PURPOSES.has(purpose)) throw Object.assign(new Error('验证码用途不合法'), { status: 400, code: 'INVALID_CODE_PURPOSE' });
+  const testCode = verificationTestCode();
+  if (!testCode) throw Object.assign(new Error('短信服务尚未配置，手机号注册与找回密码暂不可用'), { status: 503, code: 'SMS_PROVIDER_NOT_CONFIGURED' });
+  const tenantId = 'default';
+  const hash = phoneLookupHash(phone);
+  const current = Date.now();
+  const oneHourAgo = new Date(current - 60 * 60_000).toISOString();
+  const recent = await db.prepare('SELECT created_at FROM auth_verification_codes WHERE tenant_id = ? AND phone_hash = ? AND purpose = ? ORDER BY created_at DESC LIMIT 1').get(tenantId, hash, purpose);
+  if (recent && current - Date.parse(recent.created_at) < AUTH_CODE_RESEND_MS) {
+    throw Object.assign(new Error('验证码发送过于频繁，请稍后再试'), { status: 429, code: 'CODE_RESEND_TOO_SOON' });
+  }
+  const phoneCount = Number((await db.prepare('SELECT COUNT(*) AS count FROM auth_verification_codes WHERE tenant_id = ? AND phone_hash = ? AND created_at >= ?').get(tenantId, hash, oneHourAgo))?.count || 0);
+  const ip = getClientIp(req);
+  const ipCount = Number((await db.prepare('SELECT COUNT(*) AS count FROM auth_verification_codes WHERE tenant_id = ? AND requested_ip = ? AND created_at >= ?').get(tenantId, ip, oneHourAgo))?.count || 0);
+  if (phoneCount >= AUTH_CODE_HOURLY_LIMIT || ipCount >= AUTH_CODE_HOURLY_LIMIT) {
+    throw Object.assign(new Error('验证码请求次数过多，请一小时后再试'), { status: 429, code: 'CODE_RATE_LIMITED' });
+  }
+  const code = testCode || String(randomInt(100000, 1000000));
+  const createdAt = now();
+  await db.prepare('INSERT INTO auth_verification_codes (id, tenant_id, phone_hash, purpose, code_hash, requested_ip, attempts, expires_at, consumed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(`auth-code-${randomUUID()}`, tenantId, hash, purpose, hashPassword(code), ip, 0, new Date(current + AUTH_CODE_TTL_MS).toISOString(), null, createdAt);
+  return { accepted: true, expiresIn: Math.floor(AUTH_CODE_TTL_MS / 1000), retryAfter: Math.floor(AUTH_CODE_RESEND_MS / 1000), ...(process.env.NODE_ENV === 'test' ? { testCode: code } : {}) };
+}
+
+async function consumeVerificationCode(db, phone, purpose, value) {
+  const normalized = normalizePhone(phone);
+  const code = String(value || '').trim();
+  if (!normalized || !/^\d{6}$/.test(code)) throw Object.assign(new Error('手机号或验证码格式错误'), { status: 400, code: 'INVALID_VERIFICATION_CODE' });
+  const hash = phoneLookupHash(normalized);
+  const row = await db.prepare('SELECT * FROM auth_verification_codes WHERE tenant_id = ? AND phone_hash = ? AND purpose = ? AND consumed_at IS NULL ORDER BY created_at DESC LIMIT 1').get('default', hash, purpose);
+  if (!row || Date.parse(row.expires_at) <= Date.now()) throw Object.assign(new Error('验证码不存在或已过期'), { status: 400, code: 'VERIFICATION_CODE_EXPIRED' });
+  if (Number(row.attempts || 0) >= AUTH_CODE_MAX_ATTEMPTS) throw Object.assign(new Error('验证码尝试次数过多，请重新获取'), { status: 429, code: 'VERIFICATION_CODE_LOCKED' });
+  if (!verifyPassword(code, row.code_hash)) {
+    const attempts = Number(row.attempts || 0) + 1;
+    await db.prepare('UPDATE auth_verification_codes SET attempts = ?, consumed_at = CASE WHEN ? >= ? THEN ? ELSE consumed_at END WHERE id = ?').run(attempts, attempts, AUTH_CODE_MAX_ATTEMPTS, now(), row.id);
+    throw Object.assign(new Error('验证码错误'), { status: 400, code: 'INVALID_VERIFICATION_CODE' });
+  }
+  await db.prepare('UPDATE auth_verification_codes SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL').run(now(), row.id);
+  return normalized;
+}
+
+async function createPendingHealthProfile(db, userId, tenantId = 'default') {
+  await db.prepare('INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, allergies_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, onboarding_status, allergy_status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(userId, tenantId, 'healthy', 20, 'lunch', '不限', 0, '[]', '[]', 'unrestricted', 0, '[]', 0, '[]', 'pending', 'unknown', now());
+}
+
 async function exchangeWechatCode(code) {
   const appid = process.env.WECHAT_MINIAPP_APPID;
   const secret = process.env.WECHAT_MINIAPP_SECRET;
@@ -403,20 +508,99 @@ async function exchangeWechatCode(code) {
   return data;
 }
 
-async function findOrCreateWechatUser(db, session, profile = {}) {
+async function getWechatAccessToken() {
+  if (wechatAccessTokenCache.token && wechatAccessTokenCache.expiresAt > Date.now() + 60_000) return wechatAccessTokenCache.token;
+  const appid = process.env.WECHAT_MINIAPP_APPID;
+  const secret = process.env.WECHAT_MINIAPP_SECRET;
+  if (!appid || !secret) throw Object.assign(new Error('微信小程序登录未配置'), { status: 503, code: 'WECHAT_NOT_CONFIGURED' });
+  const endpoint = new URL('https://api.weixin.qq.com/cgi-bin/token');
+  endpoint.searchParams.set('grant_type', 'client_credential');
+  endpoint.searchParams.set('appid', appid);
+  endpoint.searchParams.set('secret', secret);
+  const response = await fetch(endpoint, { signal: AbortSignal.timeout(Number(process.env.WECHAT_LOGIN_TIMEOUT_MS || 8000)) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.errcode || !data.access_token) throw Object.assign(new Error(data.errmsg || '微信服务凭证获取失败'), { status: 502, code: 'WECHAT_TOKEN_FAILED' });
+  wechatAccessTokenCache = { token: data.access_token, expiresAt: Date.now() + Number(data.expires_in || 7200) * 1000 };
+  return data.access_token;
+}
+
+async function exchangeWechatPhone(phoneCode) {
+  const code = String(phoneCode || '').trim();
+  if (!code) throw Object.assign(new Error('首次微信登录需要授权手机号'), { status: 400, code: 'WECHAT_PHONE_REQUIRED' });
+  const accessToken = await getWechatAccessToken();
+  const response = await fetch(`https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=${encodeURIComponent(accessToken)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+    signal: AbortSignal.timeout(Number(process.env.WECHAT_LOGIN_TIMEOUT_MS || 8000))
+  });
+  const data = await response.json().catch(() => ({}));
+  const phone = normalizePhone(data.phone_info?.purePhoneNumber || data.phone_info?.phoneNumber);
+  if (!response.ok || data.errcode || !phone) throw Object.assign(new Error(data.errmsg || '微信手机号授权失败'), { status: 401, code: 'WECHAT_PHONE_FAILED' });
+  return phone;
+}
+
+async function findOrCreateWechatUser(db, session, { profile = {}, phoneCode = '', agreementVersion = '' } = {}) {
   const openid = String(session.openid || '').trim();
   if (!openid) throw Object.assign(new Error('微信登录缺少 openid'), { status: 401 });
   const existing = await db.prepare('SELECT * FROM users WHERE wechat_openid = ?').get(openid);
-  if (existing) return existing;
+  if (existing) {
+    if (!phoneCode) return { user: existing, isNewUser: false };
+    const phone = await exchangeWechatPhone(phoneCode);
+    const hash = phoneLookupHash(phone);
+    const phoneUser = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND phone_hash = ?').get(tenantIdFor(existing), hash);
+    if (phoneUser && phoneUser.id !== existing.id) {
+      throw Object.assign(new Error('该手机号与当前微信分别绑定了不同账号，请联系管理员处理'), { status: 409, code: 'WECHAT_BINDING_CONFLICT' });
+    }
+    if (existing.phone_hash && existing.phone_hash !== hash) {
+      throw Object.assign(new Error('当前微信已绑定其他手机号'), { status: 409, code: 'WECHAT_BINDING_CONFLICT' });
+    }
+    const agreement = agreementVersion ? assertAgreementVersion(agreementVersion) : existing.agreement_version;
+    await db.prepare('UPDATE users SET phone_hash = ?, phone_encrypted = ?, phone_verified_at = COALESCE(phone_verified_at, ?), agreement_version = ?, agreement_accepted_at = COALESCE(agreement_accepted_at, ?), updated_at = ? WHERE id = ?')
+      .run(hash, encryptPhone(phone), now(), agreement || '', now(), now(), existing.id);
+    return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(existing.id), isNewUser: false };
+  }
+  const agreement = assertAgreementVersion(agreementVersion);
+  const developmentPhone = process.env.NODE_ENV === 'production' ? '' : normalizePhone(profile.phone);
+  const phone = developmentPhone || await exchangeWechatPhone(phoneCode);
+  const hash = phoneLookupHash(phone);
+  const phoneUser = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', hash);
+  if (phoneUser) {
+    if (phoneUser.wechat_openid && phoneUser.wechat_openid !== openid) throw Object.assign(new Error('该手机号已绑定其他微信账号'), { status: 409, code: 'WECHAT_BINDING_CONFLICT' });
+    await db.prepare('UPDATE users SET wechat_openid = ?, phone_verified_at = COALESCE(phone_verified_at, ?), agreement_version = ?, agreement_accepted_at = COALESCE(agreement_accepted_at, ?), updated_at = ? WHERE id = ?')
+      .run(openid, now(), agreement, now(), now(), phoneUser.id);
+    return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(phoneUser.id), isNewUser: false };
+  }
   const id = `u-${randomUUID()}`;
   const tenantId = 'default';
-  const username = `wx_${openid.slice(0, 24)}`;
+  const username = `student_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
   const nickname = String(profile.nickname || profile.nickName || '微信用户').trim().slice(0, 32) || '微信用户';
-  await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, wechat_openid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, tenantId, username, hashPassword(randomUUID()), nickname, 'student', openid, now(), now());
-  await db.prepare('INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, tenantId, 'healthy', 20, 'lunch', '不限', 0, '[]', now());
-  return await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const timestamp = now();
+  await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, wechat_openid, phone_hash, phone_encrypted, phone_verified_at, token_version, agreement_version, agreement_accepted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, tenantId, username, hashPassword(randomUUID()), nickname, 'student', openid, hash, encryptPhone(phone), timestamp, 0, agreement, timestamp, timestamp, timestamp);
+  await createPendingHealthProfile(db, id, tenantId);
+  return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(id), isNewUser: true };
+}
+
+async function authenticatedSessionResponse(db, req, user, extra = {}) {
+  await syncLegacyUserIdentities(db, user);
+  const session = await createAuthSession(db, user, {
+    userAgent: req.headers['user-agent'] || '',
+    clientIp: getClientIp(req)
+  });
+  if (typeof db.updateContext === 'function') {
+    db.updateContext({
+      tenantId: tenantIdFor(user),
+      userId: user.id,
+      role: user.role
+    });
+  }
+  return {
+    user: publicUser(user),
+    ...session,
+    state: await snapshot(db, user),
+    ...extra
+  };
 }
 
 async function recordAiUsage(db, user, details) {
@@ -703,19 +887,104 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   const iron = Number(body.iron ?? nutrition.iron ?? 0);
   const status = body.status == null ? 'active' : String(body.status).trim();
   if (!['active', 'hidden'].includes(status)) throw Object.assign(new Error('菜品状态必须为 active 或 hidden'), { status: 400 });
-  await db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, status, allergens_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, updated_at=excluded.updated_at WHERE dishes.tenant_id=excluded.tenant_id`)
-    .run(normalizedId, tenantId, stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, Number(body.rating || 4.5), Number(body.reviewCount || 0), Number(body.sales || 0), body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', status, serializeJson(splitList(body.allergens || [])), now(), now());
+  const dietaryLabels = splitList(body.dietaryLabels || []);
+  if (dietaryLabels.some((label) => !['pescatarian', 'vegetarian', 'vegan'].includes(label))) {
+    throw Object.assign(new Error('饮食模式标签仅支持 pescatarian、vegetarian、vegan'), { status: 400, code: 'INVALID_DIETARY_LABEL' });
+  }
+  const factStatus = body.factStatus || {};
+  const factStatuses = {
+    nutrition: String(factStatus.nutrition || body.nutritionFactStatus || 'unknown'),
+    recipe: String(factStatus.recipe || body.recipeFactStatus || 'unknown'),
+    halal: String(factStatus.halal || body.halalFactStatus || 'unknown'),
+    dietary: String(factStatus.dietary || body.dietaryFactStatus || 'unknown'),
+    spice: String(factStatus.spice || body.spiceFactStatus || 'unknown'),
+  };
+  if (Object.values(factStatuses).some((value) => !FACT_STATUSES.includes(value))) {
+    throw Object.assign(new Error('事实状态仅支持 unknown、estimated、verified'), { status: 400, code: 'INVALID_FACT_STATUS' });
+  }
+  const safetyDeclarations = normalizeSafetyDeclarations({
+    safetyDeclarations: body.safetyDeclarations,
+    allergens: splitList(body.allergens || []),
+    factSource: body.factSource,
+    factVerifiedAt: body.factVerifiedAt,
+    factExpiresAt: body.factExpiresAt,
+    dataVersion: body.dataVersion,
+  });
+  if (safetyDeclarations.some((item) => !SAFETY_STATUSES.includes(item.status))) {
+    throw Object.assign(new Error('过敏原声明状态不合法'), { status: 400, code: 'INVALID_SAFETY_STATUS' });
+  }
+  const spiceLevel = body.spiceLevel == null || body.spiceLevel === '' ? null : Number(body.spiceLevel);
+  if (spiceLevel != null && (!Number.isInteger(spiceLevel) || spiceLevel < 0 || spiceLevel > 5)) {
+    throw Object.assign(new Error('辣度等级需要在 0-5 之间'), { status: 400, code: 'INVALID_SPICE_LEVEL' });
+  }
+  const synthetic = Boolean(body.synthetic);
+  if (synthetic && (process.env.NODE_ENV === 'production' || process.env.ALLOW_SYNTHETIC_DATA !== '1')) {
+    throw Object.assign(new Error('模拟菜品只能写入本地实验数据库'), { status: 403, code: 'SYNTHETIC_DATA_FORBIDDEN' });
+  }
+  await db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, status, allergens_json, dietary_labels_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, dietary_labels_json=excluded.dietary_labels_json, updated_at=excluded.updated_at WHERE dishes.tenant_id=excluded.tenant_id`)
+    .run(normalizedId, tenantId, stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, Number(body.rating || 4.5), Number(body.reviewCount || 0), Number(body.sales || 0), body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', status, serializeJson(splitList(body.allergens || [])), serializeJson(dietaryLabels), now(), now());
   const savedRecord = await db.prepare('SELECT tenant_id FROM dishes WHERE id = ?').get(normalizedId);
   if (!savedRecord || savedRecord.tenant_id !== tenantId) {
     throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), { status: 409, code: 'DISH_ID_TENANT_CONFLICT' });
   }
   await db.prepare('UPDATE dishes SET regional_taste = ? WHERE tenant_id = ? AND id = ?')
     .run(String(body.regionalTaste || '').trim(), tenantId, normalizedId);
-  const quota = await aiQuotaStatus(db, tenantId);
-  await syncDishRetrievalDocument(db, { tenantId, dishId: normalizedId, ...(quota.quota > 0 && quota.remaining <= 0 ? { embeddingProvider: null } : {}) });
+  await db.prepare(`UPDATE dishes SET seasonings_json = ?, additives_json = ?, safety_declarations_json = ?,
+      nutrition_fact_status = ?, recipe_fact_status = ?, halal_fact_status = ?, dietary_fact_status = ?,
+      spice_level = ?, spice_fact_status = ?, fact_source = ?, fact_verified_at = ?, fact_expires_at = ?,
+      data_version = ?, synthetic = ? WHERE tenant_id = ? AND id = ?`)
+    .run(
+      serializeJson(splitList(body.seasonings || [])),
+      serializeJson(splitList(body.additives || [])),
+      serializeJson(safetyDeclarations),
+      factStatuses.nutrition,
+      factStatuses.recipe,
+      factStatuses.halal,
+      factStatuses.dietary,
+      spiceLevel,
+      factStatuses.spice,
+      String(body.factSource || 'manual').trim() || 'manual',
+      body.factVerifiedAt || null,
+      body.factExpiresAt || null,
+      String(body.dataVersion || 'manual-v1').trim() || 'manual-v1',
+      synthetic ? 1 : 0,
+      tenantId,
+      normalizedId,
+    );
+  const eventVersion = Date.now();
+  await enqueueOutboxEvent(db, {
+    tenantId,
+    aggregateType: 'dish',
+    aggregateId: normalizedId,
+    eventType: 'retrieval.dish.sync',
+    payload: { dishId: normalizedId },
+    idempotencyKey: `retrieval.dish.sync:${tenantId}:${normalizedId}:${eventVersion}`
+  });
+  await enqueueOutboxEvent(db, {
+    tenantId,
+    aggregateType: 'ranking',
+    aggregateId: normalizedId,
+    eventType: 'cache.ranking.invalidate',
+    payload: { date: businessDate(), mealType: 'all' },
+    idempotencyKey: `cache.ranking.invalidate:${tenantId}:${normalizedId}:${eventVersion}`
+  });
   return normalizedId;
+}
+
+async function queueDishRetrieval(db, { tenantId, dishId, action = 'sync' }) {
+  const eventType = action === 'delete' ? 'retrieval.source.delete' : 'retrieval.dish.sync';
+  return enqueueOutboxEvent(db, {
+    tenantId,
+    aggregateType: 'dish',
+    aggregateId: dishId,
+    eventType,
+    payload: action === 'delete'
+      ? { sourceType: 'dish', sourceId: dishId }
+      : { dishId },
+    idempotencyKey: `${eventType}:${tenantId}:${dishId}:${randomUUID()}`
+  });
 }
 
 function parseBoolean(value) {
@@ -740,11 +1009,27 @@ function normalizeImportRow(row, index) {
     taste: String(get('taste', '口味') || '').trim(),
     cuisine: String(get('cuisine', '菜系') || '').trim(),
     ingredients: splitList(get('ingredients', '食材')),
+    seasonings: splitList(get('seasonings', '调味料')),
+    additives: splitList(get('additives', '添加物')),
     tags: splitList(get('tags', '标签')),
+    allergens: splitList(get('allergens', '过敏原')),
+    dietaryLabels: splitList(get('dietaryLabels', 'dietary_labels', '饮食模式标签')),
     halal: parseBoolean(get('halal', '清真')),
     mealTypes: parseMealTypes(get('mealTypes', 'meal_types', '餐别')),
     imageUrl: String(get('imageUrl', 'image_url', '图片地址') || '').trim(),
     description: String(get('description', '描述') || '').trim(),
+    spiceLevel: get('spiceLevel', 'spice_level', '辣度等级') === undefined ? null : Number(get('spiceLevel', 'spice_level', '辣度等级')),
+    factStatus: {
+      nutrition: String(get('nutritionFactStatus', 'nutrition_fact_status', '营养事实状态') || 'unknown'),
+      recipe: String(get('recipeFactStatus', 'recipe_fact_status', '配方事实状态') || 'unknown'),
+      halal: String(get('halalFactStatus', 'halal_fact_status', '清真事实状态') || 'unknown'),
+      dietary: String(get('dietaryFactStatus', 'dietary_fact_status', '饮食模式事实状态') || 'unknown'),
+      spice: String(get('spiceFactStatus', 'spice_fact_status', '辣度事实状态') || 'unknown'),
+    },
+    factSource: String(get('factSource', 'fact_source', '事实来源') || 'csv_import').trim(),
+    factVerifiedAt: String(get('factVerifiedAt', 'fact_verified_at', '核验时间') || '').trim() || null,
+    factExpiresAt: String(get('factExpiresAt', 'fact_expires_at', '失效时间') || '').trim() || null,
+    dataVersion: String(get('dataVersion', 'data_version', '数据版本') || 'csv-v1').trim(),
     nutrition: {
       calories: Number(get('calories', '热量')),
       protein: Number(get('protein', '蛋白')),
@@ -762,6 +1047,8 @@ function normalizeImportRow(row, index) {
   for (const [field, label] of [['calories', '热量'], ['protein', '蛋白'], ['fat', '脂肪'], ['carbs', '碳水']]) {
     if (!Number.isFinite(dish.nutrition[field]) || dish.nutrition[field] < 0) errors.push(`${label}必须是非负数字`);
   }
+  if (dish.spiceLevel != null && (!Number.isInteger(dish.spiceLevel) || dish.spiceLevel < 0 || dish.spiceLevel > 5)) errors.push('辣度等级需要在 0-5 之间');
+  if (Object.values(dish.factStatus).some((status) => !FACT_STATUSES.includes(status))) errors.push('事实状态仅支持 unknown、estimated、verified');
   return { row: index + 2, venueId, areaId, dish, valid: errors.length === 0, errors };
 }
 
@@ -970,7 +1257,7 @@ async function listMenus(db, tenantId = 'default', filters = {}) {
   return { menus: menus.map((menu) => ({ ...menu, items: byMenu.get(menu.id) || [] })), total: totalRow.count };
 }
 
-async function todayMenuBundle(db, tenantId = 'default', mealType = 'lunch', date = now().slice(0, 10)) {
+async function todayMenuBundle(db, tenantId = 'default', mealType = 'lunch', date = businessDate()) {
   const { menus } = await listMenus(db, tenantId, { date, mealType, status: 'published', limit: 200, offset: 0 });
   if (!menus.length) return { date, mealType, menus: [], dishes: [], source: 'fallback' };
   const dishIds = new Set();
@@ -1000,19 +1287,65 @@ async function retrievalIndexQuery(db, user, { query, tenantId, limit, candidate
   const quota = await aiQuotaStatus(db, tenantId);
   const quotaExhausted = quota.quota > 0 && quota.remaining <= 0;
   const requestedTypes = sourceTypes || (sourceType ? [sourceType] : undefined);
-  const normalizedTypes = requestedTypes?.flatMap((type) => ['health', 'knowledge'].includes(type) ? ['health_knowledge'] : [type]);
-  const result = await searchRetrievalIndex(db, query, {
-    tenantId,
-    sourceTypes: normalizedTypes,
-    limit,
-    ...(quotaExhausted ? { embeddingProvider: null } : {})
-  });
+  const normalizedTypes = requestedTypes ? [...new Set(requestedTypes.flatMap((type) => {
+    if (type === 'health') return ['health_knowledge'];
+    if (type === 'knowledge') return ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE];
+    if (['campus', 'campus_knowledge'].includes(type)) return [CAMPUS_KNOWLEDGE_SOURCE_TYPE];
+    return [type];
+  }))] : undefined;
+  const activeTenantId = tenantId || tenantIdFor(user);
+  const knowledgeTypes = (normalizedTypes || []).filter((type) => ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE].includes(type));
+  const searchOptions = { limit, ...(quotaExhausted ? { embeddingProvider: null } : {}) };
+  const searches = [searchRetrievalIndex(db, query, { tenantId: activeTenantId, sourceTypes: normalizedTypes, ...searchOptions })];
+  if (knowledgeTypes.length && activeTenantId !== GLOBAL_KNOWLEDGE_TENANT_ID) {
+    searches.push(searchRetrievalIndex(db, query, {
+      tenantId: GLOBAL_KNOWLEDGE_TENANT_ID,
+      sourceTypes: knowledgeTypes,
+      ...searchOptions,
+    }));
+  }
+  const responses = await Promise.all(searches);
+  const result = responses[0];
+  const mergedItems = new Map();
+  for (const response of responses) {
+    for (const item of response.items) {
+      const logicalKey = `${item.sourceType}:${item.sourceId}:${item.chunkIndex || 0}`;
+      const existing = mergedItems.get(logicalKey);
+      const currentTenantOverride = item.tenantId === activeTenantId && existing?.tenantId === GLOBAL_KNOWLEDGE_TENANT_ID;
+      if (!existing || currentTenantOverride || Number(item.score || 0) > Number(existing.score || 0)) mergedItems.set(logicalKey, item);
+    }
+  }
   const allowed = candidateIds?.length ? new Set(candidateIds) : null;
-  const items = allowed ? result.items.filter((item) => allowed.has(item.sourceId || item.metadata?.dishId || item.id)) : result.items;
-  const warnings = quotaExhausted
-    ? [{ code: 'AI_QUOTA_EXHAUSTED', message: 'AI 额度已用完，已降级为词法检索。', fallback: 'lexical' }, ...result.warnings]
-    : result.warnings;
-  return { ...result, items, warnings, meta: { ...result.meta, quotaExhausted } };
+  const rankedItems = [...mergedItems.values()].sort((left, right) => Number(right.score || 0) - Number(left.score || 0));
+  const scopedItems = allowed ? rankedItems.filter((item) => allowed.has(item.sourceId || item.metadata?.dishId || item.id)) : rankedItems;
+  const warningsByCode = new Map(responses.flatMap((response) => response.warnings).map((warning) => [warning.code, warning]));
+  if (quotaExhausted) warningsByCode.set('AI_QUOTA_EXHAUSTED', { code: 'AI_QUOTA_EXHAUSTED', message: 'AI 额度已用完，已降级为词法检索。', fallback: 'lexical' });
+  const retrievalModes = [...new Set(responses.flatMap((response) => response.meta?.retrievalModes || []))];
+  return {
+    ...result,
+    items: scopedItems.slice(0, limit || 8),
+    warnings: [...warningsByCode.values()],
+    meta: {
+      ...result.meta,
+      tenantId: activeTenantId,
+      sourceTypes: normalizedTypes || result.meta.sourceTypes,
+      retrievalModes,
+      retrievalScopes: responses.map((response) => response.meta.tenantId),
+      globalKnowledgeUsed: responses.length > 1,
+      quotaExhausted,
+      trace: {
+        scopes: responses.map((response) => ({
+          tenantId: response.meta.tenantId,
+          sourceTypes: response.meta.sourceTypes,
+          vectorMode: response.meta.vectorMode,
+          retrievalModes: response.meta.retrievalModes,
+          ...response.meta.trace,
+        })),
+        totalLatencyMs: Math.max(...responses.map((response) => Number(response.meta?.trace?.totalLatencyMs || 0)), 0),
+        fallbackReasons: [...new Set(responses.flatMap((response) => response.meta?.trace?.fallbackReasons || []))],
+      },
+    },
+  };
 }
 
 function retrievalWorkflowDependencies(db, user) {
@@ -1130,7 +1463,9 @@ function recommendationAnswer(result) {
     return suggestion ? `当前没有满足全部条件的菜品。${suggestion}` : '当前没有满足全部条件的菜品，系统不会编造可点结果。';
   }
   const orderable = result.meta?.orderable !== false;
-  return `${orderable ? '根据当前已发布菜单' : '当前无可点菜单，以下仅作菜品库参考'}，为你筛选出：${names.join('、')}。价格、库存、供应时段和过敏原均以实时数据库结果为准。`;
+  const hasUnknownSafety = (result.recommendations || []).some((dish) => dish.safety?.status === 'unknown');
+  const safetyNote = hasUnknownSafety ? '部分菜品的相关过敏原信息尚未确认，请务必向食堂现场核实配方和交叉接触风险。' : '';
+  return `${orderable ? '根据当前已发布菜单' : '当前无可点菜单，以下仅作菜品库参考'}，为你筛选出：${names.join('、')}。价格、库存和供应时段以实时数据库结果为准。${safetyNote}`;
 }
 
 function dishEvidenceFromSearch(result) {
@@ -1151,7 +1486,14 @@ function dishEvidenceFromSearch(result) {
     ].filter(Boolean).join('；'),
     snippet: `${dish.canteenName || '食堂'} · ${dish.stallName || '档口'} · ¥${dish.availability?.price ?? dish.price}`,
     score: dish.retrievalScore,
-    metadata: { orderable: dish.availability?.orderable, menuItemId: dish.availability?.menuItemId || null }
+    metadata: {
+      orderable: dish.availability?.orderable,
+      menuItemId: dish.availability?.menuItemId || null,
+      safetyStatus: dish.safety?.status || 'not_applicable',
+      unknownAllergens: dish.safety?.unknownAllergens || [],
+      confidenceLevel: dish.confidence?.level || 'low',
+      dataVersion: dish.dataQuality?.dataVersion || null,
+    }
   }));
 }
 
@@ -1275,7 +1617,7 @@ async function createOrder(db, user, body) {
     if (!dishId || !Number.isInteger(quantity) || quantity <= 0 || quantity > 20) throw Object.assign(new Error('订单菜品和数量不合法'), { status: 400 });
     quantities.set(dishId, (quantities.get(dishId) || 0) + quantity);
   }
-  const bundle = await todayMenuBundle(db, tenantId, body.mealType || (await getProfile(db, user.id, tenantId)).mealType, now().slice(0, 10));
+  const bundle = await todayMenuBundle(db, tenantId, body.mealType || (await getProfile(db, user.id, tenantId)).mealType, businessDate());
   const menuItemsByDish = new Map();
   for (const menu of bundle.menus) for (const item of menu.items) menuItemsByDish.set(item.dishId, item);
   const orderItems = [];
@@ -1356,14 +1698,13 @@ async function payOrder(db, user, orderId, body = {}) {
   return updated;
 }
 
-async function orderAnalytics(db, tenantId, date = now().slice(0, 10)) {
-  const start = `${date}T00:00:00.000Z`;
-  const end = `${date}T23:59:59.999Z`;
-  const orders = await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND created_at BETWEEN ? AND ?').all(tenantId, start, end);
-  const paidRevenue = await db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE tenant_id = ? AND status = 'paid' AND created_at BETWEEN ? AND ?").get(tenantId, start, end);
-  const statusRows = await db.prepare('SELECT status, COUNT(*) AS count FROM orders WHERE tenant_id = ? AND created_at BETWEEN ? AND ? GROUP BY status').all(tenantId, start, end);
+async function orderAnalytics(db, tenantId, date = businessDate()) {
+  const { startInclusive, endExclusive } = businessDayUtcRange(date);
+  const orders = await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND created_at >= ? AND created_at < ?').all(tenantId, startInclusive, endExclusive);
+  const paidRevenue = await db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE tenant_id = ? AND status = 'paid' AND created_at >= ? AND created_at < ?").get(tenantId, startInclusive, endExclusive);
+  const statusRows = await db.prepare('SELECT status, COUNT(*) AS count FROM orders WHERE tenant_id = ? AND created_at >= ? AND created_at < ? GROUP BY status').all(tenantId, startInclusive, endExclusive);
   const topDishes = await db.prepare(`SELECT dish_id AS dishId, dish_name AS dishName, SUM(quantity) AS quantity, SUM(line_total) AS amount
-    FROM order_items WHERE tenant_id = ? AND created_at BETWEEN ? AND ? GROUP BY dish_id, dish_name ORDER BY quantity DESC, amount DESC LIMIT 10`).all(tenantId, start, end);
+    FROM order_items WHERE tenant_id = ? AND created_at >= ? AND created_at < ? GROUP BY dish_id, dish_name ORDER BY quantity DESC, amount DESC LIMIT 10`).all(tenantId, startInclusive, endExclusive);
   const soldOutItems = await db.prepare(`SELECT mi.id AS menuItemId, mi.dish_id AS dishId, d.name AS dishName, mi.supply_limit AS supplyLimit, mi.supply_count AS supplyCount
     FROM menu_items mi JOIN menus m ON m.id = mi.menu_id AND m.tenant_id = mi.tenant_id JOIN dishes d ON d.id = mi.dish_id AND d.tenant_id = mi.tenant_id
     WHERE mi.tenant_id = ? AND m.date = ? AND mi.sold_out = 1`).all(tenantId, date);
@@ -1396,11 +1737,14 @@ async function updateOrderStatus(db, user, orderId, nextStatus) {
   return updated;
 }
 
-function inferAgentIntent(query) {
+export function inferAgentIntent(query) {
   const text = String(query || '');
   if (/下单|点一份|来一份|购买|要一份|帮我点/.test(text)) return 'dish_search';
-  if (/订单|取餐|支付|取消|状态|取餐码/.test(text)) return 'order_status';
+  if (/帮我找|想找|查找|搜索/.test(text)) return 'dish_search';
+  if (/订单|支付|取消订单|订单状态|取餐码|查看取餐/.test(text)) return 'order_status';
   if (/营业|收入|销售|热销|看板|售罄统计|售罄数量/.test(text)) return 'operations';
+  if (/菜单|价格|库存|可售|档口|食堂/.test(text)) return 'dish_search';
+  if (/知识库|配方|过敏原未知|不会引发过敏|营养值|检测结果/.test(text)) return 'knowledge_qa';
   if (/推荐|怎么吃|吃什么|帮我搭配|套餐|配餐|减脂|增肌|健康档案/.test(text)) return 'meal_recommendation';
   if (/为什么|是什么|怎么判断|营养知识|饮食原则|过敏原知识|摄入建议|健康知识/.test(text)) return 'knowledge_qa';
   if (/找|查|搜索|有没有|哪里|多少钱|价格|库存|可售|菜品|档口|食堂|早餐|午餐|晚餐/.test(text)) return 'dish_search';
@@ -1794,7 +2138,10 @@ function buildAgentAnswer({ intent, query, dishSearch, recommendation, knowledge
   if (intent === 'operations') return '当前角色不能读取营业分析数据。';
   if (intent === 'dish_search') {
     const names = (dishSearch?.items || []).slice(0, 5).map((item) => `${item.name}${item.availability?.orderable ? '' : '（当前不可点）'}`);
-    if (names.length) return `查到 ${dishSearch.page.total} 道匹配菜品：${names.join('、')}。价格和供应状态来自当前菜单与库存。`;
+    if (names.length) {
+      const hasUnknownSafety = (dishSearch?.items || []).some((item) => item.safety?.status === 'unknown');
+      return `查到 ${dishSearch.page.total} 道匹配菜品：${names.join('、')}。价格和供应状态来自当前菜单与库存。${hasUnknownSafety ? '部分菜品的相关过敏原信息尚未确认，请向食堂现场核实配方和交叉接触风险。' : ''}`;
+    }
     const relaxation = dishSearch?.suggestedRelaxations?.[0]?.message;
     return relaxation ? `没有找到满足全部条件的菜品。${relaxation}` : '没有找到匹配菜品，系统不会编造结果。';
   }
@@ -1830,7 +2177,8 @@ async function runCanteenAgent(db, user, body) {
   const memory = await recentAgentMessages(db, user, session.id);
   const memoryText = memory.map((item) => item.content).join('\n');
   const effectiveQuery = /继续|刚才|这个|那个|一样|它|那/.test(query) && memoryText ? `${memoryText}\n${query}` : query;
-  const deterministicIntent = inferAgentIntent(effectiveQuery);
+  const directIntent = inferAgentIntent(query);
+  const deterministicIntent = directIntent === 'general_canteen' ? inferAgentIntent(effectiveQuery) : directIntent;
   const steps = [];
   const toolResults = {};
   const registry = agentToolRegistry();
@@ -1851,7 +2199,7 @@ async function runCanteenAgent(db, user, body) {
     orders = await runAgentTool(registry, 'orders.mine', user, steps, toolResults, async () => (await listOrdersForUser(db, user, args.limit || 5, 0)).map(compactOrder));
   } else if (intent === 'operations' && AGENT_OPERATION_ROLES.includes(user.role)) {
     const args = routedToolArguments(toolRouting, 'orders.analytics');
-    analytics = await runAgentTool(registry, 'orders.analytics', user, steps, toolResults, async () => await orderAnalytics(db, tenantId, args.date || now().slice(0, 10)));
+    analytics = await runAgentTool(registry, 'orders.analytics', user, steps, toolResults, async () => await orderAnalytics(db, tenantId, args.date || businessDate()));
   } else if (intent === 'dish_search') {
     const args = routedToolArguments(toolRouting, 'dish.search');
     dishSearch = await runAgentTool(registry, 'dish.search', user, steps, toolResults, async () => executeDishSearch(db, user, {
@@ -1866,7 +2214,7 @@ async function runCanteenAgent(db, user, body) {
       return { goal: loaded.goal, mealType: loaded.mealType, taste: loaded.taste, halalOnly: loaded.halalOnly, raw: loaded };
     });
     await runAgentTool(registry, 'menu.today', user, steps, toolResults, async () => {
-      const loaded = await todayMenuBundle(db, tenantId, profile.raw.mealType, now().slice(0, 10));
+      const loaded = await todayMenuBundle(db, tenantId, profile.raw.mealType, businessDate());
       return { ...loaded, dishCount: loaded.dishes.length };
     });
     const args = routedToolArguments(toolRouting, ['meal.recommend', 'rag.meal_advisor']);
@@ -1882,7 +2230,7 @@ async function runCanteenAgent(db, user, body) {
       query: args.query || effectiveQuery,
       tenantId,
       limit: args.limit || 5,
-      sourceTypes: ['health_knowledge']
+      sourceTypes: ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE]
     }));
     knowledge = buildKnowledgeAnswer({ query: effectiveQuery, results: search.items });
     toolResults['knowledge.search'] = { ...search, answer: knowledge.answer };
@@ -1900,15 +2248,35 @@ async function runCanteenAgent(db, user, body) {
   if (intent === 'order_status') actions.push({ type: 'navigate', label: '查看我的订单', to: '/orders' });
   if (intent === 'operations' && analytics) actions.push({ type: 'navigate', label: '查看营业看板', to: '/order-analytics' });
 
-  const answer = buildAgentAnswer({ intent, query: effectiveQuery, dishSearch, recommendation, knowledge, orders, analytics });
+  const deterministicAnswer = buildAgentAnswer({ intent, query: effectiveQuery, dishSearch, recommendation, knowledge, orders, analytics });
+  const evidence = recommendation?.evidence || { dishes: dishSearch ? dishEvidenceFromSearch(dishSearch) : [], knowledge: knowledge?.citations || [] };
+  const citations = [...(evidence.dishes || []), ...(evidence.knowledge || [])];
+  let groundedGeneration = { answer: null, citationIds: [], reason: 'INTENT_NOT_GENERATIVE' };
+  if (['dish_search', 'meal_recommendation', 'knowledge_qa'].includes(intent) && citations.length) {
+    try {
+      groundedGeneration = await generateGroundedAgentAnswer({
+        query: effectiveQuery,
+        intent,
+        deterministicAnswer,
+        citations,
+        hardConstraints: recommendation?.meta?.interpreted?.hardConstraints || dishSearch?.interpreted?.hardConstraints || {},
+      });
+    } catch (error) {
+      groundedGeneration = { answer: null, citationIds: [], reason: error.code || error.message || 'GROUNDED_GENERATION_FAILED' };
+    }
+  }
+  const answer = groundedGeneration.answer || deterministicAnswer;
   await runAgentTool(registry, 'session.save', user, steps, toolResults, async () => {
-    await appendAgentMessage(db, user, session.id, 'assistant', answer, { intent });
+    await appendAgentMessage(db, user, session.id, 'assistant', answer, {
+      intent,
+      answerSource: groundedGeneration.answer ? 'llm_grounded' : 'deterministic',
+      citationIds: groundedGeneration.citationIds,
+      fallbackReason: groundedGeneration.answer ? null : groundedGeneration.reason,
+    });
     return { sessionId: session.id, saved: true };
   });
   const plan = buildAgentPlan({ intent, steps, user, includeCreateOrder: Boolean(orderItems.length) });
   plan.picks = recommendation?.recommendations || dishSearch?.items || [];
-  const evidence = recommendation?.evidence || { dishes: dishSearch ? dishEvidenceFromSearch(dishSearch) : [], knowledge: knowledge?.citations || [] };
-  const citations = [...(evidence.dishes || []), ...(evidence.knowledge || [])];
   plan.citations = citations;
   plan.indexVersion = recommendation?.meta?.indexVersion || dishSearch?.meta?.indexVersion || RETRIEVAL_INDEX_VERSION;
   plan.degradedReasons = recommendation?.meta?.degradedReasons || dishSearch?.meta?.degradedReasons || [];
@@ -1922,8 +2290,32 @@ async function runCanteenAgent(db, user, body) {
   toolResults.catalog = agentToolCatalog();
   toolResults.personas = agentPersonasFor(intent, user);
   toolResults.toolRouting = { ...toolRouting, deterministicIntent, resolvedIntent: intent, executedCalls: steps.map((step) => step.tool) };
+  toolResults.grounding = {
+    answerSource: groundedGeneration.answer ? 'llm_grounded' : 'deterministic',
+    citationIds: groundedGeneration.citationIds,
+    fallbackReason: groundedGeneration.answer ? null : groundedGeneration.reason,
+    model: groundedGeneration.model || null,
+  };
   toolResults.functions = agentToolFunctions(user);
-  const result = { sessionId: session.id, answer, intent, steps, toolResults, citations, evidence, plan, mealPlan: recommendation?.mealPlan || null, recommendations: recommendation?.recommendations || [], search: dishSearch, summary, actions, memory: longMemory, personas: toolResults.personas };
+  const result = {
+    sessionId: session.id,
+    answer,
+    answerSource: groundedGeneration.answer ? 'llm_grounded' : 'deterministic',
+    answerCitationIds: groundedGeneration.citationIds,
+    intent,
+    steps,
+    toolResults,
+    citations,
+    evidence,
+    plan,
+    mealPlan: recommendation?.mealPlan || null,
+    recommendations: recommendation?.recommendations || [],
+    search: dishSearch,
+    summary,
+    actions,
+    memory: longMemory,
+    personas: toolResults.personas,
+  };
   const evalMetrics = await recordAgentEvalRun(db, user, session.id, result, steps.reduce((total, step) => total + (step.latencyMs || 0), 0));
   result.eval = evalMetrics;
   if (intent === 'meal_recommendation') result.memory = await updateAgentMemory(db, user, query);
@@ -1932,7 +2324,7 @@ async function runCanteenAgent(db, user, body) {
 
 async function recommendationDishPool(db, tenantId, profile) {
   const normalized = normalizeProfile(profile);
-  const bundle = await todayMenuBundle(db, tenantId, normalized.mealType, now().slice(0, 10));
+  const bundle = await todayMenuBundle(db, tenantId, normalized.mealType, businessDate());
   if (bundle.source === 'menu') {
     const available = bundle.dishes.filter((dish) => dish.supplyStatus !== 'sold_out');
     if (available.length) return { ...bundle, dishes: available };
@@ -2001,69 +2393,174 @@ async function saveAiSettings(db, settings, user = null) {
 async function clearAiSettings(db, user = null) {
   await db.prepare('DELETE FROM app_settings WHERE key = ?').run(scopedSettingKey(user, 'ai_provider'));
 }
-export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
-  async function rankings() {
-    const cached = await cache.get(rankingCacheKey);
+export function createApp({ db = openDatabase(), cache = createCache(), metrics = createRuntimeMetrics() } = {}) {
+  async function rankings(tenantId = 'default', date = businessDate(), mealType = 'all') {
+    const key = rankingCacheKey({ tenantId, date, mealType });
+    const cached = await cache.get(key);
     if (cached) return cached;
-    const value = await computeRankings(db);
-    await cache.set(rankingCacheKey, value);
+    const value = await computeRankings(db, tenantId);
+    await cache.set(key, value);
     return value;
   }
 
-  async function invalidateRankings() {
-    await cache.del(rankingCacheKey);
+  async function invalidateRankings(tenantId = db.currentContext?.()?.tenantId || 'default') {
+    await cache.del(rankingCacheKey({ tenantId, date: businessDate(), mealType: 'all' }));
   }
 
   async function handler(req, res) {
     const requestId = requestIdFrom(req);
-    try {
-      rateLimit(req);
+    res.setHeader('X-Request-Id', requestId);
+    const finishMetric = metrics.beginRequest();
+    res.once('finish', () => finishMetric(res.statusCode));
+    res.once('close', () => finishMetric(res.statusCode || 499));
+    const authorization = String(req.headers.authorization || '');
+    const claims = verifyToken(authorization.startsWith('Bearer ') ? authorization.slice(7) : '');
+    const authRoute = String(req.url || '').startsWith('/api/auth/');
+    const operation = async () => {
+      try {
+      await rateLimit(cache, req);
       const url = new URL(req.url, 'http://localhost');
       const method = req.method || 'GET';
       const user = await getUserFromRequest(db, req);
+      if (user && typeof db.updateContext === 'function') {
+        db.updateContext({ tenantId: tenantIdFor(user), userId: user.id, role: user.role, requestId });
+      }
       const aiSettings = await getAiSettings(db, user).catch(() => ({}));
       return await withAiRuntimeConfig(aiSettings, async () => {
         const pathParts = url.pathname.split('/').filter(Boolean);
 
       if (method === 'GET' && url.pathname === '/api/health') return send(res, 200, { ok: true }, { 'X-Request-Id': requestId });
+      if (method === 'GET' && url.pathname === '/api/health/live') {
+        return send(res, 200, { ok: true, status: 'live', uptimeSeconds: Math.round(process.uptime()) }, { 'X-Request-Id': requestId });
+      }
+      if (method === 'GET' && url.pathname === '/api/health/ready') {
+        let databaseReady = false;
+        try {
+          databaseReady = typeof db.ping === 'function'
+            ? await db.ping()
+            : Number((await db.prepare('SELECT 1 AS ok').get())?.ok || 0) === 1;
+        } catch {}
+        const cacheStatus = typeof cache.status === 'function'
+          ? await cache.status()
+          : { ok: true, backend: 'unknown', degraded: false };
+        const cacheRequired = process.env.REDIS_REQUIRED === '1' || process.env.REDIS_REQUIRED === 'true';
+        const cacheReady = !cacheRequired || (cacheStatus.ok && cacheStatus.distributed === true);
+        const ready = databaseReady && cacheReady;
+        return send(res, ready ? 200 : 503, {
+          ok: ready,
+          status: ready ? 'ready' : 'not_ready',
+          checks: { database: databaseReady, cache: cacheStatus }
+        }, { 'X-Request-Id': requestId });
+      }
+      if (method === 'GET' && url.pathname === '/api/internal/metrics') {
+        const internalToken = String(process.env.INTERNAL_METRICS_TOKEN || '');
+        const suppliedToken = String(req.headers['x-internal-token'] || '');
+        if (internalToken && suppliedToken === internalToken) {
+          db.updateContext?.({ tenantId: '*', userId: '', role: 'metrics_reader', requestId });
+        } else {
+          await requireCapability(db, req, 'audit:read');
+        }
+        const cacheStatus = typeof cache.status === 'function' ? await cache.status() : null;
+        const backlog = await outboxBacklog(db).catch(() => null);
+        return send(res, 200, metrics.snapshot({ db, cache: cacheStatus, outbox: backlog }), { 'X-Request-Id': requestId });
+      }
       if (method === 'GET' && url.pathname === '/api/bootstrap') return send(res, 200, await snapshot(db, user), { 'X-Request-Id': requestId });
+
+      if (await handleAuthSessionRoute({
+        method,
+        pathname: url.pathname,
+        req,
+        db,
+        user,
+        readBody,
+        send: (status, data) => send(res, status, data, { 'X-Request-Id': requestId })
+      })) return;
+
+      if (method === 'POST' && url.pathname === '/api/auth/verification-codes') {
+        return send(res, 202, await issueVerificationCode(db, req, await readBody(req)));
+      }
 
       if (method === 'POST' && url.pathname === '/api/auth/register') {
         const body = await readBody(req);
-        requireFields(body, ['username', 'password']);
-        const username = String(body.username).trim();
-        const existing = await db.prepare('SELECT id FROM users WHERE tenant_id = ? AND username = ?').get('default', username);
-        if (existing) throw Object.assign(new Error('用户名已存在'), { status: 409 });
-        const role = 'student';
+        if (!body.phone && body.username && process.env.NODE_ENV !== 'production') {
+          requireFields(body, ['username', 'password']);
+          const username = String(body.username).trim();
+          const existing = await db.prepare('SELECT id FROM users WHERE tenant_id = ? AND username = ?').get('default', username);
+          if (existing) throw Object.assign(new Error('用户名已存在'), { status: 409 });
+          const id = `u-${randomUUID()}`;
+          await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, 'default', username, hashPassword(body.password), body.nickname || username, 'student', now(), now());
+          await db.prepare('INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, allergies_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, onboarding_status, allergy_status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, 'default', 'healthy', 20, 'lunch', '不限', 0, '[]', '[]', 'unrestricted', 0, '[]', 0, '[]', 'completed', 'none', now());
+          const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+          return send(res, 201, await authenticatedSessionResponse(db, req, created, { isNewUser: true }));
+        }
+        requireFields(body, ['phone', 'verificationCode', 'password', 'agreementVersion']);
+        const phone = normalizePhone(body.phone);
+        if (!phone) throw Object.assign(new Error('请输入有效的中国大陆手机号'), { status: 400, code: 'INVALID_PHONE' });
+        const password = assertStudentPassword(body.password);
+        const agreement = assertAgreementVersion(body.agreementVersion);
+        const hash = phoneLookupHash(phone);
+        const existing = await db.prepare('SELECT id FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', hash);
+        if (existing) throw Object.assign(new Error('该手机号已注册'), { status: 409, code: 'PHONE_ALREADY_REGISTERED' });
+        await consumeVerificationCode(db, phone, 'register', body.verificationCode);
         const id = `u-${randomUUID()}`;
-        await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, 'default', username, hashPassword(body.password), body.nickname || username, role, now(), now());
-        await db.prepare('INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, 'default', 'healthy', 20, 'lunch', '不限', 0, '[]', 'balanced', 3, '[]', 0, '[]', now());
+        const timestamp = now();
+        const username = `student_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+        const nickname = String(body.nickname || `同学${phone.slice(-4)}`).trim().slice(0, 32) || `同学${phone.slice(-4)}`;
+        await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, phone_hash, phone_encrypted, phone_verified_at, token_version, agreement_version, agreement_accepted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(id, 'default', username, hashPassword(password), nickname, 'student', hash, encryptPhone(phone), timestamp, 0, agreement, timestamp, timestamp, timestamp);
+        await createPendingHealthProfile(db, id, 'default');
         const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-        return send(res, 201, { user: publicUser(created), token: createToken(created), state: await snapshot(db, created) });
+        return send(res, 201, await authenticatedSessionResponse(db, req, created, { isNewUser: true }));
       }
 
       if (method === 'POST' && url.pathname === '/api/auth/login') {
         const body = await readBody(req);
-        requireFields(body, ['username', 'password']);
-        const username = String(body.username).trim();
-        assertLoginAllowed(username, req);
-        const found = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND username = ?').get('default', username);
-        if (!found || !verifyPassword(body.password, found.password_hash)) {
-          recordLoginFailure(username, req);
-          throw Object.assign(new Error('用户名或密码错误'), { status: 401 });
+        const identifier = String(body.identifier || body.username || '').trim();
+        requireFields({ identifier, password: body.password }, ['identifier', 'password']);
+        await assertLoginAllowed(cache, identifier, req);
+        const phone = normalizePhone(identifier);
+        const found = phone
+          ? await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', phoneLookupHash(phone))
+          : await db.prepare('SELECT * FROM users WHERE username = ?').get(identifier);
+        const passwordMatches = found && verifyPassword(body.password, found.password_hash);
+        const loginTenant = passwordMatches
+          ? await db.prepare('SELECT status FROM tenants WHERE id = ?').get(found.tenant_id)
+          : null;
+        if (!passwordMatches || loginTenant?.status !== 'active') {
+          await recordLoginFailure(cache, identifier, req);
+          throw Object.assign(new Error('手机号、账号或密码错误'), { status: 401 });
         }
-        clearLoginFailures(username, req);
-        return send(res, 200, { user: publicUser(found), token: createToken(found), state: await snapshot(db, found) });
+        await clearLoginFailures(cache, identifier, req);
+        return send(res, 200, await authenticatedSessionResponse(db, req, found));
       }
 
       if (method === 'POST' && url.pathname === '/api/auth/wechat-login') {
         const body = await readBody(req);
         requireFields(body, ['code']);
         const session = await exchangeWechatCode(String(body.code).trim());
-        const found = await findOrCreateWechatUser(db, session, body.profile || {});
-        return send(res, 200, { user: publicUser(found), token: createToken(found), state: await snapshot(db, found) });
+        const result = await findOrCreateWechatUser(db, session, {
+          profile: body.profile || {},
+          phoneCode: body.phoneCode,
+          agreementVersion: body.agreementVersion
+        });
+        return send(res, 200, await authenticatedSessionResponse(db, req, result.user, { isNewUser: result.isNewUser }));
+      }
+
+      if (method === 'POST' && url.pathname === '/api/auth/password/reset') {
+        const body = await readBody(req);
+        requireFields(body, ['phone', 'verificationCode', 'newPassword']);
+        const phone = normalizePhone(body.phone);
+        if (!phone) throw Object.assign(new Error('请输入有效的中国大陆手机号'), { status: 400, code: 'INVALID_PHONE' });
+        const password = assertStudentPassword(body.newPassword);
+        const found = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', phoneLookupHash(phone));
+        if (!found) throw Object.assign(new Error('该手机号尚未注册'), { status: 404, code: 'PHONE_NOT_REGISTERED' });
+        await consumeVerificationCode(db, phone, 'reset_password', body.verificationCode);
+        await db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1, updated_at = ? WHERE id = ?')
+          .run(hashPassword(password), now(), found.id);
+        await revokeAllUserSessions(db, found.id);
+        return send(res, 200, { reset: true });
       }
 
       if (method === 'GET' && url.pathname === '/api/canteens') return send(res, 200, await listCanteens(db, tenantIdFor(user)));
@@ -2078,12 +2575,19 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (!detail) throw Object.assign(new Error('菜品不存在'), { status: 404 });
         return send(res, 200, detail);
       }
-      if (method === 'GET' && url.pathname === '/api/rankings') return send(res, 200, await rankings());
+      if (method === 'GET' && url.pathname === '/api/rankings') {
+        const tenantId = tenantIdFor(user);
+        return send(res, 200, await rankings(
+          tenantId,
+          String(url.searchParams.get('date') || businessDate()),
+          String(url.searchParams.get('mealType') || 'all')
+        ));
+      }
       if (method === 'GET' && url.pathname === '/api/menus/today') {
         const activeUser = user || null;
         const tenantId = tenantIdFor(activeUser);
         const mealType = String(url.searchParams.get('mealType') || (activeUser ? (await getProfile(db, activeUser.id, tenantId)).mealType : 'lunch'));
-        const date = String(url.searchParams.get('date') || now().slice(0, 10));
+        const date = String(url.searchParams.get('date') || businessDate());
         return send(res, 200, await todayMenuBundle(db, tenantId, mealType, date));
       }
       if (method === 'GET' && url.pathname === '/api/recommend') {
@@ -2150,7 +2654,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
 
       if (method === 'GET' && url.pathname === '/api/admin/order-analytics') {
         const activeUser = await requireCapability(db, req, 'dish:write');
-        return send(res, 200, await orderAnalytics(db, tenantIdFor(activeUser), url.searchParams.get('date') || now().slice(0, 10)));
+        return send(res, 200, await orderAnalytics(db, tenantIdFor(activeUser), url.searchParams.get('date') || businessDate()));
       }
 
       if (method === 'GET' && url.pathname === '/api/rag/search') {
@@ -2287,11 +2791,53 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         }
       }
 
+      if (method === 'GET' && pathParts[0] === 'api' && pathParts[1] === 'uploads' && pathParts[2] && pathParts[3] === 'content') {
+        const uploadId = decodeURIComponent(pathParts[2]);
+        const signedAccess = verifySignedUploadUrl(
+          uploadId,
+          url.searchParams.get('expires'),
+          url.searchParams.get('signature')
+        );
+        let activeUser = user;
+        if (signedAccess && typeof db.updateContext === 'function') {
+          db.updateContext({ tenantId: '*', userId: '', role: 'storage_reader', requestId });
+        } else {
+          activeUser = await requireUser(db, req);
+        }
+        const upload = await db.prepare('SELECT * FROM uploads WHERE id = ?').get(uploadId);
+        if (!upload) throw Object.assign(new Error('上传对象不存在'), { status: 404, code: 'UPLOAD_NOT_FOUND' });
+        const canManageUpload = activeUser && (
+          hasPermission(activeUser, 'post:moderate')
+          || hasPermission(activeUser, 'dish:write')
+          || activeUser.role === 'super_admin'
+        );
+        if (!signedAccess && upload.owner_id !== activeUser.id && !canManageUpload) {
+          throw Object.assign(new Error('无权访问该上传对象'), { status: 403, code: 'UPLOAD_ACCESS_DENIED' });
+        }
+        const content = await readStoredUpload(upload);
+        return sendBinary(res, 200, content.body, content.contentType, { 'X-Request-Id': requestId });
+      }
+
       if (method === 'POST' && url.pathname === '/api/uploads') {
         const activeUser = await requireCapability(db, req, 'upload:create');
-        const upload = await storeUpload({ ...(await readBody(req)), tenantId: tenantIdFor(activeUser) });
-        await db.prepare('INSERT INTO uploads (id, tenant_id, owner_id, filename, content_type, size_bytes, storage_key, public_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(upload.id, tenantIdFor(activeUser), activeUser.id, upload.filename, upload.contentType, upload.sizeBytes, upload.storageKey, upload.url, now());
+        const upload = await storeUpload({ ...(await readBody(req)), tenantId: tenantIdFor(activeUser), ownerId: activeUser.id });
+        await db.prepare(`INSERT INTO uploads (
+          id, tenant_id, owner_id, filename, content_type, size_bytes, storage_key,
+          public_url, visibility, storage_provider, object_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          upload.id,
+          tenantIdFor(activeUser),
+          activeUser.id,
+          upload.filename,
+          upload.contentType,
+          upload.sizeBytes,
+          upload.storageKey,
+          upload.reference,
+          upload.visibility,
+          upload.provider,
+          upload.objectVersion,
+          now()
+        );
         await audit(db, activeUser, 'CREATE', 'upload', upload.id);
         return send(res, 201, upload);
       }
@@ -2378,11 +2924,11 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (content.length < 2 || content.length > 240) throw Object.assign(new Error('评价内容长度需要在 2-240 个字符之间。'), { status: 400 });
         const id = `r-${randomUUID()}`;
         await db.prepare('INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, tenantIdFor(activeUser), activeUser.id, targetType, body.targetId, rating, content, 'pending', now().slice(0, 10));
+          .run(id, tenantIdFor(activeUser), activeUser.id, targetType, body.targetId, rating, content, 'pending', businessDate());
         await audit(db, activeUser, 'CREATE', 'review', id);
         await invalidateRankings();
         if (targetType === 'dish') return send(res, 201, await dishDetail(db, body.targetId, tenantIdFor(activeUser)));
-        return send(res, 201, { review: { id, targetType, targetId: body.targetId, user: activeUser.nickname, rating, content, createdAt: now().slice(0, 10) } });
+        return send(res, 201, { review: { id, targetType, targetId: body.targetId, user: activeUser.nickname, rating, content, createdAt: businessDate() } });
       }
 
       if (method === 'GET' && url.pathname === '/api/posts') {
@@ -2428,7 +2974,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           if (targetType !== 'dish') throw Object.assign(new Error('只有菜品帖子可以填写评分'), { status: 400 });
           if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw Object.assign(new Error('评分需要在 1-5 分之间'), { status: 400 });
         }
-        const imageUrl = String(body.imageUrl || '').trim();
+        const imageUrl = persistentUploadReference(body.imageUrl);
         if (imageUrl) {
           const upload = await db.prepare('SELECT id FROM uploads WHERE tenant_id = ? AND owner_id = ? AND public_url = ?').get(tenantId, activeUser.id, imageUrl);
           if (!upload) throw Object.assign(new Error('帖子图片必须使用当前账号上传的图片'), { status: 400 });
@@ -2443,17 +2989,53 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         return send(res, 201, { post: enrichPost(created, catalog, activeUser.id) });
       }
 
+      if (method === 'PATCH' && url.pathname === '/api/health/profile/onboarding') {
+        const activeUser = await requireUser(db, req);
+        const body = await readBody(req);
+        if (body.status !== 'deferred') throw Object.assign(new Error('首次档案引导仅支持稍后填写'), { status: 400, code: 'INVALID_ONBOARDING_STATUS' });
+        const current = await getProfile(db, activeUser.id, tenantIdFor(activeUser));
+        if (current.onboardingStatus === 'pending') {
+          await db.prepare("UPDATE health_profiles SET onboarding_status = 'deferred', updated_at = ? WHERE tenant_id = ? AND user_id = ?")
+            .run(now(), tenantIdFor(activeUser), activeUser.id);
+          await audit(db, activeUser, 'DEFER', 'health_profile_onboarding', activeUser.id);
+        }
+        return send(res, 200, { profile: await getProfile(db, activeUser.id, tenantIdFor(activeUser)), state: await snapshot(db, activeUser) });
+      }
+
       if ((method === 'POST' || method === 'PUT') && url.pathname === '/api/health/profile') {
         const activeUser = await requireUser(db, req);
-        const profile = normalizeProfile(await readBody(req));
-        await db.prepare(`INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(user_id) DO UPDATE SET tenant_id=excluded.tenant_id, goal=excluded.goal, budget_max=excluded.budget_max, meal_type=excluded.meal_type, taste=excluded.taste, halal_only=excluded.halal_only, avoid_json=excluded.avoid_json, dietary_pattern=excluded.dietary_pattern, spice_level=excluded.spice_level, nutrition_focus_json=excluded.nutrition_focus_json, prefer_low_crowd=excluded.prefer_low_crowd, favorite_tags_json=excluded.favorite_tags_json, updated_at=excluded.updated_at`)
-          .run(activeUser.id, tenantIdFor(activeUser), profile.goal, profile.budgetMax, profile.mealType, profile.taste, profile.halalOnly ? 1 : 0, serializeJson(profile.avoid), profile.dietaryPattern, profile.spiceLevel, serializeJson(profile.nutritionFocus), profile.preferLowCrowd ? 1 : 0, serializeJson(profile.favoriteTags), now());
-        await db.prepare('UPDATE health_profiles SET allergies_json = ? WHERE tenant_id = ? AND user_id = ?')
-          .run(serializeJson(profile.allergies), tenantIdFor(activeUser), activeUser.id);
+        const body = await readBody(req);
+        const current = await getProfile(db, activeUser.id, tenantIdFor(activeUser));
+        const submittedAllergies = normalizeProfile({ allergies: body.allergies }).allergies;
+        const allergyStatus = String(
+          body.allergyStatus
+          || (Object.prototype.hasOwnProperty.call(body, 'allergies') ? (submittedAllergies.length ? 'declared' : 'none') : '')
+          || (current.onboardingStatus === 'completed' ? current.allergyStatus : '')
+        ).trim();
+        if (!['none', 'declared'].includes(allergyStatus)) {
+          throw Object.assign(new Error('请明确选择“暂无已知过敏”或填写过敏原'), { status: 400, code: 'ALLERGY_STATUS_REQUIRED' });
+        }
+        const budgetMax = Number(body.budgetMax);
+        if (!Number.isFinite(budgetMax) || budgetMax < 8 || budgetMax > 200) {
+          throw Object.assign(new Error('预算上限需要在 8-200 元之间'), { status: 400, code: 'INVALID_BUDGET' });
+        }
+        const profile = normalizeProfile({ ...body, budgetMax, allergyStatus, onboardingStatus: 'completed' });
+        if (!['unrestricted', 'pescatarian', 'vegetarian', 'vegan'].includes(profile.dietaryPattern)) {
+          throw Object.assign(new Error('饮食模式不合法'), { status: 400, code: 'INVALID_DIETARY_PATTERN' });
+        }
+        if (!Number.isInteger(profile.spiceLevel) || profile.spiceLevel < 0 || profile.spiceLevel > 5) {
+          throw Object.assign(new Error('辣度偏好需要在 0-5 之间'), { status: 400, code: 'INVALID_SPICE_LEVEL' });
+        }
+        if (allergyStatus === 'declared' && !profile.allergies.length) {
+          throw Object.assign(new Error('选择“有过敏原”后请至少填写一项'), { status: 400, code: 'ALLERGEN_REQUIRED' });
+        }
+        if (allergyStatus === 'none') profile.allergies = [];
+        await db.prepare(`INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, allergies_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, onboarding_status, allergy_status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(user_id) DO UPDATE SET tenant_id=excluded.tenant_id, goal=excluded.goal, budget_max=excluded.budget_max, meal_type=excluded.meal_type, taste=excluded.taste, halal_only=excluded.halal_only, avoid_json=excluded.avoid_json, allergies_json=excluded.allergies_json, dietary_pattern=excluded.dietary_pattern, spice_level=excluded.spice_level, nutrition_focus_json=excluded.nutrition_focus_json, prefer_low_crowd=excluded.prefer_low_crowd, favorite_tags_json=excluded.favorite_tags_json, onboarding_status=excluded.onboarding_status, allergy_status=excluded.allergy_status, updated_at=excluded.updated_at`)
+          .run(activeUser.id, tenantIdFor(activeUser), profile.goal, profile.budgetMax, profile.mealType, profile.taste, profile.halalOnly ? 1 : 0, serializeJson(profile.avoid), serializeJson(profile.allergies), profile.dietaryPattern, profile.spiceLevel, serializeJson(profile.nutritionFocus), profile.preferLowCrowd ? 1 : 0, serializeJson(profile.favoriteTags), 'completed', allergyStatus, now());
         await audit(db, activeUser, 'UPSERT', 'health_profile', activeUser.id);
         const recommendation = compatibleRecommendationResponse(await executeMealRecommendation(db, activeUser, { query: '', options: { mode: 'alternatives', limit: 3 } }));
-        return send(res, 200, { profile, recommendation, state: await snapshot(db, activeUser) });
+        return send(res, 200, { profile: await getProfile(db, activeUser.id, tenantIdFor(activeUser)), recommendation, state: await snapshot(db, activeUser) });
       }
 
       if (method === 'POST' && url.pathname === '/api/admin/canteens') {
@@ -2541,7 +3123,13 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
         if (method === 'DELETE') {
           if (existing.status !== 'active') throw Object.assign(new Error('菜品不存在'), { status: 404 });
           await db.prepare("UPDATE dishes SET status = 'hidden', updated_at = ? WHERE tenant_id = ? AND id = ?").run(now(), tenantIdFor(activeUser), id);
-          await deleteRetrievalSource(db, { tenantId: tenantIdFor(activeUser), sourceType: 'dish', sourceId: id });
+          await enqueueOutboxEvent(db, {
+            tenantId: tenantIdFor(activeUser),
+            aggregateType: 'dish',
+            aggregateId: id,
+            eventType: 'retrieval.source.delete',
+            payload: { sourceType: 'dish', sourceId: id }
+          });
           await audit(db, activeUser, 'DELETE', 'dish', id);
           await invalidateRankings();
           return send(res, 200, await snapshot(db, activeUser));
@@ -2956,7 +3544,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
             }
             const result = await db.prepare(`DELETE FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).run(tenantId, id);
             if (!result.changes) throw Object.assign(new Error('记录不存在'), { status: 404 });
-            if (entityName === 'dishes') await deleteRetrievalSource(db, { tenantId, sourceType: 'dish', sourceId: id });
+            if (entityName === 'dishes') await queueDishRetrieval(db, { tenantId, dishId: id, action: 'delete' });
             await audit(db, deleter, 'DELETE', `database:${entityName}`, id);
             return send(res, 200, { id, deleted: true });
           }
@@ -2970,7 +3558,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
             const values = fields.map((field) => payload[field]);
             const result = await db.prepare(`UPDATE ${entity.table} SET ${fields.map((field) => `${field} = ?`).join(', ')}, updated_at = ? WHERE tenant_id = ? AND ${entity.key} = ?`).run(...values, now(), tenantId, id);
             if (!result.changes) throw Object.assign(new Error('记录不存在'), { status: 404 });
-            if (entityName === 'dishes') await syncDishRetrievalDocument(db, { tenantId, dishId: id });
+            if (entityName === 'dishes') await queueDishRetrieval(db, { tenantId, dishId: id });
             await audit(db, writer, 'UPDATE', `database:${entityName}`, id);
             return send(res, 200, { row: await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).get(tenantId, id) });
           }
@@ -2985,7 +3573,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           const fields = ['id', 'tenant_id', ...Object.keys(payload), 'created_at', 'updated_at'];
           const values = [id, tenantId, ...Object.keys(payload).map((field) => payload[field]), now(), now()];
           await db.prepare(`INSERT INTO ${entity.table} (${fields.join(', ')}) VALUES (${fields.map(() => '?').join(', ')})`).run(...values);
-          if (entityName === 'dishes') await syncDishRetrievalDocument(db, { tenantId, dishId: id });
+          if (entityName === 'dishes') await queueDishRetrieval(db, { tenantId, dishId: id });
           await audit(db, writer, 'CREATE', `database:${entityName}`, id);
           return send(res, 201, { row: await db.prepare(`SELECT ${entity.columns.join(', ')} FROM ${entity.table} WHERE tenant_id = ? AND ${entity.key} = ?`).get(tenantId, id) });
         }
@@ -3000,7 +3588,7 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
           db.prepare('SELECT COUNT(*) AS c FROM reviews WHERE tenant_id = ?').get(tenantId),
           db.prepare('SELECT COUNT(*) AS c FROM users WHERE tenant_id = ?').get(tenantId),
           db.prepare('SELECT COUNT(*) AS c FROM menus WHERE tenant_id = ?').get(tenantId),
-          db.prepare("SELECT COUNT(*) AS c FROM menus WHERE tenant_id = ? AND date = ? AND status = 'published'").get(tenantId, now().slice(0, 10))
+          db.prepare("SELECT COUNT(*) AS c FROM menus WHERE tenant_id = ? AND date = ? AND status = 'published'").get(tenantId, businessDate())
         ]);
         const avgRating = await db.prepare('SELECT AVG(rating) AS avg FROM reviews WHERE tenant_id = ?').get(tenantId);
         const recentDishes = (await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 5").all(tenantId)).map(rowToDish);
@@ -3376,15 +3964,22 @@ export function createApp({ db = openDatabase(), cache = createCache() } = {}) {
 
         throw Object.assign(new Error('接口不存在'), { status: 404 });
       });
-    } catch (error) {
-      fail(res, error, requestId);
-    }
+      } catch (error) {
+        fail(res, error, requestId);
+      }
+    };
+    const context = initialDatabaseContext({ claims, authRoute, requestId });
+    return typeof db.runWithContext === 'function'
+      ? db.runWithContext(context, operation)
+      : operation();
   }
 
-  return { handler, db };
+  return { handler, db, cache, metrics };
 }
 
 export function createHttpServer(options) {
   const app = createApp(options);
-  return createServer(app.handler);
+  const server = createServer(app.handler);
+  server.smartCanteen = app;
+  return server;
 }

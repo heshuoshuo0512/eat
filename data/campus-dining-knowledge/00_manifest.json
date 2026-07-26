@@ -1,0 +1,46 @@
+{
+  "name": "national-campus-dining-foundation",
+  "version": "2026.07.1",
+  "locale": "zh-CN",
+  "scope": "__global__",
+  "sourceType": "campus_dining_knowledge",
+  "generatedAt": "2026-07-26",
+  "counts": {
+    "concepts": 500,
+    "evaluationQueries": 300,
+    "challengeQueries": 50
+  },
+  "categoryQuotas": {
+    "dish_archetype": 220,
+    "ingredient": 90,
+    "flavor_method": 60,
+    "nutrition_role": 40,
+    "campus_scenario": 40,
+    "dietary_safety": 30,
+    "stall_format": 20
+  },
+  "queryQuotas": {
+    "dish_alias": 70,
+    "ingredient_flavor": 40,
+    "budget_meal_supply": 35,
+    "nutrition_goal": 40,
+    "dietary_safety": 45,
+    "campus_context": 30,
+    "multi_constraint_combination": 25,
+    "ambiguity_adversarial": 15
+  },
+  "statusPolicy": [
+    "draft",
+    "validated",
+    "approved",
+    "retired"
+  ],
+  "indexedStatuses": [
+    "approved"
+  ],
+  "boundaries": [
+    "菜品原型仅用于软语义，不代表任一学校真实菜品。",
+    "价格、营养、配方、过敏原、菜单、库存和供应必须来自当前学校数据库。",
+    "评测查询不得写入检索索引。"
+  ]
+}
