@@ -16,6 +16,8 @@
         <label>餐次<input v-model.trim="form.mealTypes" name="mealTypes" placeholder="lunch, dinner" /></label>
       </div>
       <label>食材<input v-model="form.ingredients" name="ingredients" required placeholder="鸡肉, 米饭, 西兰花" /></label>
+      <label>调味料<input v-model="form.seasonings" name="seasonings" placeholder="盐, 生抽, 花生油" /></label>
+      <label>添加物<input v-model="form.additives" name="additives" placeholder="如无可留空" /></label>
       <label>标签<input v-model="form.tags" name="tags" required placeholder="高蛋白, 低脂" /></label>
     </fieldset>
 
@@ -29,6 +31,24 @@
       </div>
       <label class="dish-switch-row"><input v-model="form.halal" name="halal" type="checkbox" /><span>清真菜品</span></label>
       <label>过敏原<input v-model="form.allergens" name="allergens" placeholder="花生, 牛奶" /></label>
+      <div class="dish-field-grid two">
+        <label>过敏原声明状态
+          <select v-model="form.allergenDeclarationStatus" name="allergenDeclarationStatus">
+            <option value="unknown">尚未确认</option>
+            <option value="confirmed_present">确认含有</option>
+            <option value="confirmed_absent">确认不含</option>
+            <option value="cross_contact_possible">可能交叉接触</option>
+          </select>
+        </label>
+        <label>辣度等级
+          <select v-model.number="form.spiceLevel" name="spiceLevel">
+            <option :value="null">未知</option>
+            <option v-for="level in 6" :key="level - 1" :value="level - 1">{{ level - 1 }}</option>
+          </select>
+        </label>
+      </div>
+      <label>饮食模式标签<input v-model="form.dietaryLabels" name="dietaryLabels" placeholder="pescatarian, vegetarian, vegan" /></label>
+      <small class="field-help">“未登记”不等于“确认不含”。只有经过配方或供应商核验后才能选择确认状态。</small>
     </fieldset>
 
     <details class="dish-advanced-fields">
@@ -48,6 +68,17 @@
           </select>
         </label>
         <label>图片 URL<input v-model.trim="form.imageUrl" name="imageUrl" type="url" placeholder="https://..." /></label>
+        <label>事实来源<input v-model.trim="form.factSource" name="factSource" placeholder="recipe_audit / supplier" /></label>
+        <label>数据版本<input v-model.trim="form.dataVersion" name="dataVersion" placeholder="2026.07" /></label>
+      </div>
+      <div class="dish-field-grid nutrition">
+        <label v-for="entry in factStatusFields" :key="entry.key">{{ entry.label }}
+          <select v-model="form[entry.key]" :name="entry.key">
+            <option value="unknown">未知</option>
+            <option value="estimated">估算</option>
+            <option value="verified">已核验</option>
+          </select>
+        </label>
       </div>
       <slot name="image-actions"></slot>
       <div v-if="form.imageUrl" class="dish-image-preview"><img :src="form.imageUrl" :alt="form.name || '菜品图片'" /></div>
@@ -58,6 +89,14 @@
 </template>
 
 <script setup>
+const factStatusFields = [
+  { key: 'nutritionFactStatus', label: '营养状态' },
+  { key: 'recipeFactStatus', label: '配方状态' },
+  { key: 'halalFactStatus', label: '清真状态' },
+  { key: 'dietaryFactStatus', label: '饮食模式状态' },
+  { key: 'spiceFactStatus', label: '辣度状态' }
+];
+
 defineProps({
   form: { type: Object, required: true },
   stalls: { type: Array, default: () => [] },
@@ -79,6 +118,7 @@ defineEmits(['stall-change']);
 .dish-field-grid.nutrition { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .dish-switch-row { display: flex !important; align-items: center; gap: .55rem !important; }
 .dish-switch-row input { width: 1.1rem; height: 1.1rem; accent-color: #1f7a4d; }
+.field-help { color: #718078; font-size: .75rem; line-height: 1.45; }
 .dish-advanced-fields { display: grid; gap: .85rem; border: 1px solid rgba(31,122,77,.13); border-radius: .45rem; background: #fff; padding: .85rem; }
 .dish-advanced-fields summary { cursor: pointer; color: #27593c; font-weight: 750; }
 .dish-advanced-fields:not([open]) > :not(summary) { display: none; }

@@ -215,8 +215,13 @@ function resetForm() {
     Object.assign(form, {
       id: mode.value === 'edit' ? value.id || '' : '', stallId: value.stallId || stall.value?.id || '', name: value.name || '',
       price: value.price ?? 15, taste: value.taste || '', cuisine: value.cuisine || '', ingredients: listText(value.ingredients),
-      tags: listText(value.tags), mealTypes: listText(value.mealTypes ?? DEFAULT_MEAL_TYPES), halal: Boolean(value.halal),
-      allergens: listText(value.allergens), calories: nutrition.calories ?? 500, protein: nutrition.protein ?? 25,
+      seasonings: listText(value.seasonings), additives: listText(value.additives), tags: listText(value.tags), mealTypes: listText(value.mealTypes ?? DEFAULT_MEAL_TYPES), halal: Boolean(value.halal),
+      allergens: listText(value.allergens), allergenDeclarationStatus: value.safetyDeclarations?.[0]?.status || 'unknown',
+      dietaryLabels: listText(value.dietaryLabels), spiceLevel: value.spiceLevel ?? null,
+      nutritionFactStatus: value.factStatus?.nutrition || 'unknown', recipeFactStatus: value.factStatus?.recipe || 'unknown',
+      halalFactStatus: value.factStatus?.halal || 'unknown', dietaryFactStatus: value.factStatus?.dietary || 'unknown',
+      spiceFactStatus: value.factStatus?.spice || 'unknown', factSource: value.factSource || 'manual', dataVersion: value.dataVersion || 'manual-v1',
+      calories: nutrition.calories ?? 500, protein: nutrition.protein ?? 25,
       fat: nutrition.fat ?? 12, carbs: nutrition.carbs ?? 60, fiber: value.fiber ?? 0, sodium: value.sodium ?? 0,
       sugar: value.sugar ?? 0, calcium: value.calcium ?? 0, iron: value.iron ?? 0, image: value.image || '🍽️',
       imageUrl: value.imageUrl || '', description: value.description ?? '', status: value.status || 'active',
@@ -286,7 +291,7 @@ async function uploadDishImage(event) {
   try {
     const uploaded = await store.uploadImage({ filename: file.name, contentType: file.type, dataBase64: await fileToBase64(file) });
     if (generation !== operationGeneration) return;
-    form.imageUrl = uploaded.url;
+    form.imageUrl = uploaded.reference || uploaded.url;
     imageMessage.value = '图片已上传。';
   } catch (error) {
     if (generation !== operationGeneration) return;
@@ -381,14 +386,27 @@ async function save() {
       });
     } else {
       const ingredients = splitList(form.ingredients);
+      const seasonings = splitList(form.seasonings);
+      const additives = splitList(form.additives);
       const tags = splitList(form.tags);
       const mealTypes = splitList(form.mealTypes);
+      const allergens = splitList(form.allergens);
       if (!ingredients.length || !tags.length) throw new Error('食材和标签至少各填写一项。');
+      if (form.allergenDeclarationStatus === 'confirmed_present' && !allergens.length) throw new Error('选择“确认含有”时必须填写过敏原。');
+      const declarationTargets = allergens.length ? allergens : ['*'];
       saved = await store.upsertDish({
         id: form.id || undefined, stallId: text(form.stallId, '所属档口'), name: text(form.name, '菜名', 2),
         price: number(form.price, '价格', 1, 200), taste: text(form.taste, '口味'), cuisine: text(form.cuisine, '菜系'),
-        ingredients, tags, mealTypes: mealTypes.length ? mealTypes : (mode.value === 'edit' ? [] : [...DEFAULT_MEAL_TYPES]),
-        halal: Boolean(form.halal), allergens: splitList(form.allergens), image: form.image || '🍽️', imageUrl: form.imageUrl || undefined,
+        ingredients, seasonings, additives, tags, mealTypes: mealTypes.length ? mealTypes : (mode.value === 'edit' ? [] : [...DEFAULT_MEAL_TYPES]),
+        halal: Boolean(form.halal), allergens, safetyDeclarations: declarationTargets.map((allergenCode) => ({
+          allergenCode, status: form.allergenDeclarationStatus || 'unknown', source: form.factSource || 'manual', dataVersion: form.dataVersion || 'manual-v1'
+        })),
+        dietaryLabels: splitList(form.dietaryLabels), spiceLevel: form.spiceLevel, image: form.image || '🍽️', imageUrl: form.imageUrl || undefined,
+        factStatus: {
+          nutrition: form.nutritionFactStatus || 'unknown', recipe: form.recipeFactStatus || 'unknown',
+          halal: form.halalFactStatus || 'unknown', dietary: form.dietaryFactStatus || 'unknown', spice: form.spiceFactStatus || 'unknown'
+        },
+        factSource: form.factSource || 'manual', dataVersion: form.dataVersion || 'manual-v1',
         description: String(form.description ?? '').trim() || (mode.value === 'edit' ? '' : '管理员录入菜品。'),
         rating: number(form.rating, '评分', 0, 5), reviewCount: number(form.reviewCount, '评价数', 0, 1_000_000_000),
         sales: number(form.sales, '销量', 0, 1_000_000_000), status: form.status || 'active',

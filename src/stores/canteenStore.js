@@ -270,6 +270,20 @@ export const useCanteenStore = defineStore('canteen', () => {
     return result.user;
   }
 
+  async function sendVerificationCode(payload) {
+    return apiClient.sendVerificationCode(payload);
+  }
+
+  async function resetPassword(payload) {
+    return apiClient.resetPassword(payload);
+  }
+
+  async function deferProfileOnboarding() {
+    const result = await apiClient.deferProfileOnboarding();
+    if (result.state) setState(result.state);
+    return result.profile;
+  }
+
   function logout() {
     apiClient.logout();
     state.value.session.user = null;
@@ -798,6 +812,9 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadPreviewState,
     login,
     register,
+    sendVerificationCode,
+    resetPassword,
+    deferProfileOnboarding,
     logout,
     getDishDetail,
     addReview,

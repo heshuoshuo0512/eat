@@ -1212,7 +1212,7 @@ function defaultCanteenForm() {
 }
 
 function defaultDishForm() {
-  return { id: '', stallId: store.stalls[0]?.id || '', name: '', price: 15, taste: '清爽', cuisine: '轻食', ingredients: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', rating: 4.5, reviewCount: 0, sales: 0, calories: 500, protein: 25, fat: 12, carbs: 60, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '' };
+  return { id: '', stallId: store.stalls[0]?.id || '', name: '', price: 15, taste: '清爽', cuisine: '轻食', ingredients: '', seasonings: '', additives: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', rating: 4.5, reviewCount: 0, sales: 0, calories: 500, protein: 25, fat: 12, carbs: 60, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '', allergenDeclarationStatus: 'unknown', dietaryLabels: '', spiceLevel: null, nutritionFactStatus: 'unknown', recipeFactStatus: 'unknown', halalFactStatus: 'unknown', dietaryFactStatus: 'unknown', spiceFactStatus: 'unknown', factSource: 'manual', dataVersion: 'manual-v1' };
 }
 
 function defaultStallForm() {
@@ -1367,6 +1367,8 @@ function cancelDishEdit() {
 }
 
 function dishPayload() {
+  const allergens = parseList(dishForm.allergens, '过敏原');
+  const declarationTargets = allergens.length ? allergens : ['*'];
   return {
     id: dishForm.id || undefined,
     stallId: dishForm.stallId,
@@ -1375,9 +1377,17 @@ function dishPayload() {
     taste: assertText(dishForm.taste, '口味', 1, 20),
     cuisine: assertText(dishForm.cuisine, '菜系', 1, 30),
     ingredients: parseList(dishForm.ingredients, '食材', { required: true }),
+    seasonings: parseList(dishForm.seasonings, '调味料'),
+    additives: parseList(dishForm.additives, '添加物'),
     tags: parseList(dishForm.tags, '标签', { required: true }),
     halal: dishForm.halal,
-    allergens: parseList(dishForm.allergens, '过敏原'),
+    allergens,
+    safetyDeclarations: declarationTargets.map((allergenCode) => ({ allergenCode, status: dishForm.allergenDeclarationStatus || 'unknown', source: dishForm.factSource || 'manual', dataVersion: dishForm.dataVersion || 'manual-v1' })),
+    dietaryLabels: parseList(dishForm.dietaryLabels, '饮食模式标签'),
+    spiceLevel: dishForm.spiceLevel,
+    factStatus: { nutrition: dishForm.nutritionFactStatus || 'unknown', recipe: dishForm.recipeFactStatus || 'unknown', halal: dishForm.halalFactStatus || 'unknown', dietary: dishForm.dietaryFactStatus || 'unknown', spice: dishForm.spiceFactStatus || 'unknown' },
+    factSource: dishForm.factSource || 'manual',
+    dataVersion: dishForm.dataVersion || 'manual-v1',
     mealTypes: parseList(dishForm.mealTypes, '餐次').length ? parseList(dishForm.mealTypes, '餐次') : ['lunch', 'dinner'],
     image: dishForm.image || '🍽️',
     imageUrl: dishForm.imageUrl || undefined,
@@ -1606,9 +1616,17 @@ function editDish(dish) {
   Object.assign(dishForm, {
     ...dish,
     ingredients: Array.isArray(dish.ingredients) ? dish.ingredients.join(', ') : String(dish.ingredients || ''),
+    seasonings: Array.isArray(dish.seasonings) ? dish.seasonings.join(', ') : String(dish.seasonings || ''),
+    additives: Array.isArray(dish.additives) ? dish.additives.join(', ') : String(dish.additives || ''),
     tags: Array.isArray(dish.tags) ? dish.tags.join(', ') : String(dish.tags || ''),
     allergens: Array.isArray(dish.allergens) ? dish.allergens.join(', ') : String(dish.allergens || ''),
+    allergenDeclarationStatus: dish.safetyDeclarations?.[0]?.status || 'unknown',
+    dietaryLabels: Array.isArray(dish.dietaryLabels) ? dish.dietaryLabels.join(', ') : String(dish.dietaryLabels || ''),
     mealTypes: Array.isArray(dish.mealTypes) ? dish.mealTypes.join(', ') : String(dish.mealTypes || ''),
+    spiceLevel: dish.spiceLevel ?? null,
+    nutritionFactStatus: dish.factStatus?.nutrition || 'unknown', recipeFactStatus: dish.factStatus?.recipe || 'unknown',
+    halalFactStatus: dish.factStatus?.halal || 'unknown', dietaryFactStatus: dish.factStatus?.dietary || 'unknown',
+    spiceFactStatus: dish.factStatus?.spice || 'unknown', factSource: dish.factSource || 'manual', dataVersion: dish.dataVersion || 'manual-v1',
     imageUrl: dish.imageUrl || '',
     calories: nutrition.calories,
     protein: nutrition.protein,
@@ -1672,6 +1690,7 @@ function normalizeJsonImportRow(rawDish, index) {
     ingredients: capture(() => parseList(rawDish.ingredients, '食材', { required: true }), []),
     tags: capture(() => parseList(rawDish.tags, '标签', { required: true }), []),
     allergens: parseList(rawDish.allergens || '', '过敏原'),
+    dietaryLabels: parseList(rawDish.dietaryLabels || '', '饮食模式标签'),
     nutrition: {
       ...nutrition,
       calories: capture(() => assertNumber(nutrition.calories, '热量', 1, 3000), 0),
@@ -1831,7 +1850,7 @@ async function handleImageFile(event) {
     const error = validateImageFile(file);
     if (error) throw new Error(error);
     const upload = await store.uploadImage({ filename: file.name, contentType: file.type, dataBase64: await fileToBase64(file) });
-    dishForm.imageUrl = upload.url;
+    dishForm.imageUrl = upload.reference || upload.url;
     message.value = '图片已上传并填入菜品表单。';
   } catch (error) {
     message.value = error.message;

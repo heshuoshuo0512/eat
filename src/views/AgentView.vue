@@ -322,6 +322,7 @@
                 <span>{{ relevanceLabel(citation.score) }}</span>
               </div>
               <p>{{ compactText(citation.snippet || citation.content || '暂无摘要', 180) }}</p>
+              <RagTrustState :item="citation" compact />
             </div>
           </article>
         </div>
@@ -332,6 +333,7 @@
 
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue';
+import RagTrustState from '../components/RagTrustState.vue';
 import { validateQuestion } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 

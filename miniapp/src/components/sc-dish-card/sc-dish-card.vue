@@ -10,6 +10,7 @@
       <text class="dish-meta">{{ dish.taste || '口味待补' }} · {{ dish.cuisine || '校园风味' }}</text>
       <view class="dish-facts"><text class="rating">★ {{ rating }}</text><text>{{ calories }} kcal</text><text v-if="protein">蛋白 {{ protein }}g</text></view>
       <view v-if="dish.tags?.length" class="dish-tags"><text v-for="tag in dish.tags.slice(0, 2)" :key="tag">{{ tag }}</text></view>
+      <sc-rag-trust-state :item="dish" compact />
     </view>
     <text class="chevron">›</text>
   </button>

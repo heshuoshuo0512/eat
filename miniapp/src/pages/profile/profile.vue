@@ -19,7 +19,7 @@
 
     <view class="menu-section">
       <text class="section-label">个人服务</text>
-      <button class="menu-row" @tap="open('/pages/health-profile/health-profile')"><view class="row-icon"><image src="/static/icons/heart-pulse.png" mode="aspectFit" /></view><view class="row-copy"><text class="ui-strong">健康档案</text><text>{{ profileSummary }}</text></view><text class="arrow">›</text></button>
+      <button class="menu-row" @tap="open('/pages/health-profile/health-profile')"><view class="row-icon"><image src="/static/icons/heart-pulse.png" mode="aspectFit" /></view><view class="row-copy"><text class="ui-strong">健康档案</text><text>{{ profileSummary }}</text></view><text v-if="profileIncomplete" class="incomplete-tag">待完善</text><text class="arrow">›</text></button>
       <button class="menu-row" @tap="open('/pages/orders/orders')"><view class="row-icon"><image src="/static/icons/utensils.png" mode="aspectFit" /></view><view class="row-copy"><text class="ui-strong">今日点餐</text><text>菜单、购物车与取餐码预览</text></view><text class="preview-tag">联调中</text><text class="arrow">›</text></button>
     </view>
 
@@ -47,7 +47,8 @@ const displayName = computed(() => store.user.value?.nickname || store.user.valu
 const avatarText = computed(() => displayName.value.slice(0, 1));
 const saved = computed(() => savedDishEntries(store.dishes.value, store.dishPreferences.value));
 const favoritePreview = computed(() => saved.value.favorites.slice(0, 3));
-const profileSummary = computed(() => `${goalLabel(store.profile.value.goal)} · ${mealTypeLabel(store.profile.value.mealType)} · ¥${store.profile.value.budgetMax} 内`);
+const profileIncomplete = computed(() => ['pending','deferred'].includes(store.profile.value.onboardingStatus));
+const profileSummary = computed(() => profileIncomplete.value ? '确认过敏信息与预算后启用个性化推荐' : `${goalLabel(store.profile.value.goal)} · ${mealTypeLabel(store.profile.value.mealType)} · ¥${store.profile.value.budgetMax} 内`);
 
 onShow(async () => {
   try {
@@ -120,6 +121,7 @@ function logout() {
 .row-copy text { margin-top:4rpx; overflow:hidden; color:var(--muted); font-size:22rpx; white-space:nowrap; text-overflow:ellipsis; }
 .text-row { min-height:88rpx; padding-left:22rpx; }
 .preview-tag { flex:0 0 auto; min-height:38rpx; padding:0 8rpx; border-radius:8rpx; color:#936016; background:var(--rating-soft); font-size:22rpx; line-height:38rpx; }
+.incomplete-tag { flex:0 0 auto; height:38rpx; padding:0 9rpx; border-radius:8rpx; color:#936016; background:var(--rating-soft); font-size:22rpx; line-height:38rpx; }
 .logout-button { width:100%; min-height:88rpx; margin-top:8rpx; border:1rpx solid #f0d9d4; border-radius:var(--radius); color:var(--danger); background:var(--surface); font-size:26rpx; font-weight:500; }
 .favorite-preview:active,.record-grid button:active { transform:scale(.985); background:#fafcfa; }
 </style>

@@ -26,6 +26,10 @@
   <section v-if="ragResult" class="card discovery-answer">
     <div class="answer-heading"><span class="rag-source-badge" :class="ragResult.meta?.semanticUsed ? 'source-llm' : 'source-template'">{{ ragResult.meta?.semanticUsed ? '语义检索' : '规则检索' }}</span><strong>检索结论</strong></div>
     <p>{{ ragAnswer }}</p>
+    <RagTrustState :item="ragResult" />
+    <div v-if="ragResult.warnings?.length" class="rag-warning-list" role="status">
+      <p v-for="warning in ragResult.warnings" :key="`${warning.code}-${warning.dishId || ''}`">{{ warning.message }}</p>
+    </div>
     <div v-if="visibleSearchCitations.length" class="compact-citations">
       <button v-for="cite in visibleSearchCitations" :key="cite.id" type="button" @click="jumpToDish(cite.id)"><strong>{{ cite.name }}</strong><small>相关度 {{ formatRetrievalScore(cite.retrievalScore) }} · {{ compactCitationSnippet(dishMatchSnippet(cite)) }}</small></button>
     </div>
@@ -58,6 +62,7 @@
           <small class="muted">{{ dish.nutrition?.calories || 0 }} kcal · 蛋白 {{ dish.nutrition?.protein || 0 }}g · 脂肪 {{ dish.nutrition?.fat || 0 }}g · 碳水 {{ dish.nutrition?.carbs || 0 }}g</small>
           <small v-if="dishLocation(dish)" class="dish-location">{{ dishLocation(dish) }}</small>
           <small :class="['supply-badge', supplyState(dish).className]">{{ supplyState(dish).label }}</small>
+          <RagTrustState :item="dish" compact />
         </span>
         <span class="rating">{{ dish.displayRating.toFixed(1) }}</span>
       </button>
@@ -87,6 +92,7 @@
         <span v-if="detail.halal" class="pill halal-badge">清真</span>
       </div>
         <span :class="['pill', 'supply-badge', supplyState(detail).className]">{{ supplyState(detail).label }}</span>
+      <RagTrustState :item="detail" />
 
       <!-- Expanded nutrition -->
       <div class="nutrition-grid">
@@ -152,6 +158,7 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch, watchEffect } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
+import RagTrustState from '../components/RagTrustState.vue';
 import SmartMealComposer from '../components/SmartMealComposer.vue';
 import { buildProfilePrompts, compactCitationSnippet, createRatingMap, sortDishesByRating, visibleCitations } from '../domain/studentDiscovery.js';
 import { validateReviewForm } from '../domain/validation.js';
@@ -496,6 +503,8 @@ onMounted(loadMemory);
 
 .discovery-answer { display: grid; gap: 12px; margin-top: 14px; padding: 18px 20px; }
 .answer-heading { display: flex; align-items: center; gap: 10px; }.discovery-answer > p { margin: 0; line-height: 1.65; }
+.rag-warning-list { display:grid; gap:6px; }
+.rag-warning-list p { margin:0; padding:8px 10px; border:1px solid #eecb83; border-radius:6px; color:#874f08; background:#fff7e8; font-size:12px; line-height:1.5; }
 .compact-citations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
 .compact-citations button { min-width: 0; display: grid; gap: 5px; padding: 10px 12px; text-align: left; border: 1px solid rgba(31,122,77,.13); background: #f8fbf7; color: inherit; }
 .compact-citations strong, .compact-citations small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.compact-citations small { color: var(--muted); font-size: 11px; }

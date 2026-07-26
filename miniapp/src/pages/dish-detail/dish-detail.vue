@@ -20,6 +20,7 @@
       <view class="detail-section">
         <view class="section-head"><text>菜品信息</text><text class="ui-strong">食材与安全</text></view>
         <view class="info-row"><text>所在位置</text><text class="ui-strong">{{ locationLabel||'档口信息待补充' }}</text></view><view class="info-row"><text>供应餐次</text><text class="ui-strong">{{ mealLabelsText }}</text></view><view class="info-row"><text>清真</text><text class="ui-strong">{{ dish.halal?'是':'否' }}</text></view><view class="info-row"><text>过敏原</text><text class="ui-strong" :class="{warning:dish.allergens?.length}">{{ dish.allergens?.join('、')||'未标注' }}</text></view>
+        <sc-rag-trust-state :item="dish" />
         <view class="tag-area"><text v-for="item in [...(dish.ingredients||[]),...(dish.tags||[])]" :key="item">{{ item }}</text></view>
       </view>
 

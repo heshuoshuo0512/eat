@@ -130,6 +130,14 @@ describe('Router audience guard (router/index.js)', () => {
     );
   });
 
+  it('routes unified-login admin roles to an accessible admin landing page', () => {
+    assert.match(appVue, /const user = await store\.login\(loginForm\)/);
+    assert.match(appVue, /router\.push\(landingPathForRole\(user\?\.role\)\)/);
+    assert.match(routerJs, /function adminLandingPath\(role\)/);
+    assert.match(routerJs, /role === 'finance'[^\n]*'\/order-analytics'/);
+    assert.match(routerJs, /audience === 'student' && isAdmin[^\n]*adminLandingPath/);
+  });
+
   it('adminRoles set excludes student', () => {
     const match = routerJs.match(/const adminRoles = new Set\(\[([^\]]+)\]\)/);
     assert.ok(match, 'adminRoles Set found');

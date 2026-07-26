@@ -1,7 +1,9 @@
 import { API_BASE_URL } from '../config.js';
 
 const TOKEN_KEY = 'smart-canteen-token';
+const REFRESH_TOKEN_KEY = 'smart-canteen-refresh-token';
 let redirectingToLogin = false;
+let refreshPromise = null;
 
 function tokenStore() {
   return {
@@ -34,6 +36,7 @@ function apiError(response) {
 
 function handleUnauthorized(path) {
   tokenStore().removeItem(TOKEN_KEY);
+  tokenStore().removeItem(REFRESH_TOKEN_KEY);
   if (path.startsWith('/api/auth/') || redirectingToLogin) return;
   redirectingToLogin = true;
   uni.reLaunch({
@@ -44,7 +47,7 @@ function handleUnauthorized(path) {
   });
 }
 
-function request(path, options = {}) {
+function requestOnce(path, options = {}) {
   const token = tokenStore().getItem(TOKEN_KEY);
   const { method = 'GET', body, timeoutMs = 20000, headers = {} } = options;
   return new Promise((resolve, reject) => {
@@ -61,7 +64,6 @@ function request(path, options = {}) {
       },
       success(response) {
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          if (response.statusCode === 401) handleUnauthorized(path);
           reject(apiError(response));
           return;
         }
@@ -76,9 +78,40 @@ function request(path, options = {}) {
   });
 }
 
+async function refreshSession() {
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = tokenStore().getItem(REFRESH_TOKEN_KEY);
+  if (!refreshToken) return false;
+  refreshPromise = requestOnce('/api/auth/refresh', {
+    method: 'POST',
+    body: { refreshToken },
+    timeoutMs: 15000
+  }).then((result) => {
+    tokenStore().setItem(TOKEN_KEY, result.accessToken || result.token);
+    tokenStore().setItem(REFRESH_TOKEN_KEY, result.refreshToken);
+    return true;
+  }).catch(() => false).finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
+}
+
+async function request(path, options = {}) {
+  try {
+    return await requestOnce(path, options);
+  } catch (error) {
+    if (error.statusCode === 401 && !path.startsWith('/api/auth/')) {
+      if (!options._retried && await refreshSession()) return request(path, { ...options, _retried: true });
+      handleUnauthorized(path);
+    }
+    throw error;
+  }
+}
+
 async function authenticate(path, payload) {
   const result = await request(path, { method: 'POST', body: payload, timeoutMs: 15000 });
-  tokenStore().setItem(TOKEN_KEY, result.token);
+  tokenStore().setItem(TOKEN_KEY, result.accessToken || result.token);
+  if (result.refreshToken) tokenStore().setItem(REFRESH_TOKEN_KEY, result.refreshToken);
   redirectingToLogin = false;
   return result;
 }
@@ -93,11 +126,23 @@ export const apiClient = {
   login(payload) {
     return authenticate('/api/auth/login', payload);
   },
+  register(payload) {
+    return authenticate('/api/auth/register', payload);
+  },
+  sendVerificationCode(payload) {
+    return request('/api/auth/verification-codes', { method: 'POST', body: payload });
+  },
+  resetPassword(payload) {
+    return request('/api/auth/password/reset', { method: 'POST', body: payload });
+  },
   wechatLogin(payload) {
     return authenticate('/api/auth/wechat-login', payload);
   },
   logout() {
+    const refreshToken = tokenStore().getItem(REFRESH_TOKEN_KEY);
     tokenStore().removeItem(TOKEN_KEY);
+    tokenStore().removeItem(REFRESH_TOKEN_KEY);
+    if (refreshToken) requestOnce('/api/auth/logout', { method: 'POST', body: { refreshToken }, timeoutMs: 5000 }).catch(() => {});
   },
   dishDetail(id) {
     return request(`/api/dishes/${encodeURIComponent(id)}`);
@@ -152,6 +197,9 @@ export const apiClient = {
   },
   saveProfile(payload) {
     return request('/api/health/profile', { method: 'PUT', body: payload });
+  },
+  deferProfileOnboarding() {
+    return request('/api/health/profile/onboarding', { method: 'PATCH', body: { status: 'deferred' } });
   },
   listPreferences() {
     return request('/api/preferences/dishes');

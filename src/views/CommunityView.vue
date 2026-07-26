@@ -96,7 +96,7 @@ async function submitPost() {
     let imageUrl = '';
     if (imageFile.value) {
       const upload = await store.uploadImage({ filename: imageFile.value.name, contentType: imageFile.value.type, dataBase64: await fileToBase64(imageFile.value) });
-      imageUrl = upload.url;
+      imageUrl = upload.reference || upload.url;
     }
     await store.createCommunityPost({ targetType: form.targetType, targetId, content: form.content, imageUrl, rating: form.targetType === 'dish' && form.rating ? form.rating : null });
     composerMessage.value = '帖子已提交审核，你可以在动态中查看审核状态。';

@@ -72,6 +72,13 @@ const dataInputRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'ten
 const agentRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'tenant_admin', 'admin', 'super_admin']);
 const aiConfigRoles = new Set(['tenant_admin', 'admin', 'super_admin']);
 
+function adminLandingPath(role) {
+  if (role === 'operator' || role === 'stall_admin') return '/admin/input';
+  if (role === 'auditor') return '/admin/catalog';
+  if (role === 'finance') return '/order-analytics';
+  return '/admin';
+}
+
 function canAccessAdminRoute(to, role) {
   if (to.path === '/admin/input') return dataInputRoles.has(role);
   if (to.path === '/agent') return agentRoles.has(role);
@@ -90,7 +97,7 @@ router.beforeEach((to) => {
   if (!store.user || !to.meta.audience) return true;
   const isAdmin = adminRoles.has(store.user.role);
   if (to.meta.audience === 'admin' && !isAdmin) return { name: 'home' };
-  if (to.meta.audience === 'admin' && !canAccessAdminRoute(to, store.user.role)) return { name: 'home' };
-  if (to.meta.audience === 'student' && isAdmin) return { name: 'home' };
+  if (to.meta.audience === 'admin' && !canAccessAdminRoute(to, store.user.role)) return { path: adminLandingPath(store.user.role) };
+  if (to.meta.audience === 'student' && isAdmin) return { path: adminLandingPath(store.user.role) };
   return true;
 });

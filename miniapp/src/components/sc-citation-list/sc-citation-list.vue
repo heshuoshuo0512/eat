@@ -3,7 +3,7 @@
     <view class="citation-head"><view><text class="citation-kicker">数据依据</text><text class="citation-title">真实引用</text></view><text class="count">{{ citations.length }} 条</text></view>
     <view v-if="citations.length" class="citation-list">
       <button v-for="item in visible" :key="item.id || item.sourceId || item.name" class="citation-row" @tap="$emit('select', item)">
-        <view><text class="citation-name">{{ item.name || item.title || '菜品数据' }}</text><text class="citation-snippet">{{ compactCitationSnippet(item.snippet || item.reason || item.content) }}</text></view><text class="citation-score">{{ scoreText(item.score ?? item.retrievalScore) }}</text>
+        <view><text class="citation-name">{{ item.name || item.title || '菜品数据' }}</text><text class="citation-snippet">{{ compactCitationSnippet(item.snippet || item.reason || item.content) }}</text><sc-rag-trust-state :item="item" compact /></view><text class="citation-score">{{ scoreText(item.score ?? item.retrievalScore) }}</text>
       </button>
       <button v-if="citations.length > limit" class="toggle" @tap="$emit('toggle')">{{ expanded ? '收起引用' : `查看全部 ${citations.length} 条` }}</button>
     </view>

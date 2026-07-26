@@ -1,7 +1,42 @@
 const TOKEN_KEY = 'smart-canteen-token';
+const REFRESH_TOKEN_KEY = 'smart-canteen-refresh-token';
+let refreshPromise = null;
 
 function tokenStore() {
   return window.localStorage;
+}
+
+function saveSession(result = {}) {
+  const accessToken = result.accessToken || result.token;
+  if (accessToken) tokenStore().setItem(TOKEN_KEY, accessToken);
+  if (result.refreshToken) tokenStore().setItem(REFRESH_TOKEN_KEY, result.refreshToken);
+}
+
+function clearSession() {
+  tokenStore().removeItem(TOKEN_KEY);
+  tokenStore().removeItem(REFRESH_TOKEN_KEY);
+}
+
+async function refreshSession() {
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = tokenStore().getItem(REFRESH_TOKEN_KEY);
+  if (!refreshToken) return false;
+  refreshPromise = fetch('/api/auth/refresh', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken })
+  }).then(async (response) => {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw normalizeApiError(data, response.status);
+    saveSession(data);
+    return true;
+  }).catch(() => {
+    clearSession();
+    return false;
+  }).finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
 }
 
 /**
@@ -31,7 +66,7 @@ export function normalizeApiError(data = {}, status = 0) {
 
 async function request(path, options = {}) {
   const token = tokenStore().getItem(TOKEN_KEY);
-  const { timeoutMs = 20_000, signal, ...fetchOptions } = options;
+  const { timeoutMs = 20_000, signal, _retried = false, ...fetchOptions } = options;
   const controller = !signal && timeoutMs ? new AbortController() : null;
   const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
   const headers = {
@@ -42,6 +77,10 @@ async function request(path, options = {}) {
   try {
     const response = await fetch(path, { ...fetchOptions, headers: { ...headers, ...fetchOptions.headers }, signal: signal || controller?.signal });
     const data = await response.json().catch(() => ({}));
+    if (response.status === 401 && !_retried && !path.startsWith('/api/auth/') && await refreshSession()) {
+      return request(path, { ...options, _retried: true, signal: undefined });
+    }
+    if (response.status === 401 && !path.startsWith('/api/auth/')) clearSession();
     if (!response.ok) throw normalizeApiError(data, response.status);
     return data;
   } catch (error) {
@@ -67,16 +106,34 @@ export const apiClient = {
   },
   async login(payload) {
     const result = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) });
-    tokenStore().setItem(TOKEN_KEY, result.token);
+    saveSession(result);
     return result;
   },
   async register(payload) {
     const result = await request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) });
-    tokenStore().setItem(TOKEN_KEY, result.token);
+    saveSession(result);
     return result;
   },
+  async sendVerificationCode(payload) {
+    return request('/api/auth/verification-codes', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async resetPassword(payload) {
+    return request('/api/auth/password/reset', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async deferProfileOnboarding() {
+    return request('/api/health/profile/onboarding', { method: 'PATCH', body: JSON.stringify({ status: 'deferred' }) });
+  },
   logout() {
-    tokenStore().removeItem(TOKEN_KEY);
+    const refreshToken = tokenStore().getItem(REFRESH_TOKEN_KEY);
+    clearSession();
+    if (refreshToken) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+        keepalive: true
+      }).catch(() => {});
+    }
   },
   async addReview(payload) {
     return request('/api/reviews', { method: 'POST', body: JSON.stringify(payload) });

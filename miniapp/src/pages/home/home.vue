@@ -45,7 +45,7 @@
 </template>
 
 <script setup>
-import { computed, reactive } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
 import { COMMUNITY_ENTRY_IDS, CORE_ENTRY_IDS, EXPLORE_ENTRY_IDS, getStudentEntries } from '../../domain/studentNavigation.js';
 import { nextRevealState, resetRevealState } from '../../domain/studentDiscovery.js';
@@ -53,6 +53,8 @@ import { useCanteenStore } from '../../stores/canteenStore.js';
 
 const store = useCanteenStore();
 const revealState = reactive(resetRevealState());
+const onboardingPromptHandled = ref(false);
+const onboardingPromptOpen = ref(false);
 const drawnThisVisit = new Set();
 const coreEntries = getStudentEntries(CORE_ENTRY_IDS);
 const exploreEntries = getStudentEntries(EXPLORE_ENTRY_IDS);
@@ -70,6 +72,7 @@ onShow(async () => {
     await store.refreshIfStale();
     if (!store.user.value) { uni.reLaunch({ url: '/pages/login/login' }); return; }
     if (!store.contextualRecommendation.value.recommendations?.length) await store.loadRecommendation().catch(() => {});
+    promptHealthProfile();
   } catch {}
 });
 onPullDownRefresh(async () => { await reload(); uni.stopPullDownRefresh(); });
@@ -98,6 +101,22 @@ function openEntry(entry) {
   if (entry.discoveryMode) store.openDiscoveryMode(entry.discoveryMode);
   if (entry.communitySection) store.openCommunitySection(entry.communitySection);
   uni[entry.navigationType]({ url: entry.route });
+}
+function promptHealthProfile() {
+  if (store.profile.value.onboardingStatus !== 'pending' || onboardingPromptHandled.value || onboardingPromptOpen.value) return;
+  onboardingPromptOpen.value = true;
+  uni.showModal({
+    title: '完善健康档案',
+    content: '先确认过敏原、忌口和预算，推荐才能使用你的真实限制。也可以稍后再填。',
+    cancelText: '稍后填写',
+    confirmText: '去填写',
+    success(result) {
+      onboardingPromptHandled.value = true;
+      if (result.confirm) uni.navigateTo({ url: '/pages/health-profile/health-profile' });
+      else store.deferProfileOnboarding().catch(() => {});
+    },
+    complete() { onboardingPromptOpen.value = false; }
+  });
 }
 </script>
 

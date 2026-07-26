@@ -148,11 +148,20 @@ async function login(payload) {
   return result.user;
 }
 
-async function wechatLogin(profilePayload = {}) {
+async function register(payload) {
+  const result = await apiClient.register(payload);
+  setState(result.state);
+  loaded.value = true;
+  await hydrateExtras();
+  lastLoadedAt.value = Date.now();
+  return result.user;
+}
+
+async function wechatLogin({ phoneCode = '', agreementVersion = '2026-07', profile = {} } = {}) {
   const code = await new Promise((resolve, reject) => {
     uni.login({ provider: 'weixin', success: (result) => resolve(result.code), fail: (err) => reject(new Error(err?.errMsg || '微信登录失败。')) });
   });
-  const result = await apiClient.wechatLogin({ code, profile: profilePayload });
+  const result = await apiClient.wechatLogin({ code, phoneCode, agreementVersion, profile });
   setState(result.state);
   loaded.value = true;
   await hydrateExtras();
@@ -257,6 +266,12 @@ function openCommunitySection(section) {
   communitySection.value = section === 'reviews' ? 'reviews' : 'posts';
 }
 
+async function deferProfileOnboarding() {
+  const result = await apiClient.deferProfileOnboarding();
+  if (result.state) setState(result.state);
+  return result.profile;
+}
+
 function openDiscoveryMode(mode) {
   discoveryMode.value = mode === 'recommend' ? 'recommend' : 'search';
 }
@@ -271,7 +286,7 @@ export function useCanteenStore() {
     state, loading, error, loaded, lastLoadedAt, todayMenu, remoteRankings, contextualRecommendation, recommendationLoading,
     discoveryMode, communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
     rankings, searchedDishes, recommendation,
-    load, ensureLoaded, refreshIfStale, login, wechatLogin, logout, getDishDetail, addReview, saveProfile,
+    load, ensureLoaded, refreshIfStale, login, register, wechatLogin, logout, getDishDetail, addReview, saveProfile, deferProfileOnboarding,
     loadTodayMenu, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
     markDishDrawn, openDiscoveryMode, openCommunitySection, setMotionReduced,
     fetchDishDetail: apiClient.dishDetail,
@@ -287,5 +302,7 @@ export function useCanteenStore() {
     uploadImage: apiClient.uploadImage,
     listOrders: apiClient.listOrders,
     analyzeMealImage: apiClient.analyzeMealImage
+    ,sendVerificationCode: apiClient.sendVerificationCode
+    ,resetPassword: apiClient.resetPassword
   };
 }

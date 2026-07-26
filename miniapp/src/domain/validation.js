@@ -1,4 +1,5 @@
 const usernamePattern = /^[\u4e00-\u9fa5\w-]{2,32}$/;
+const phonePattern = /^1[3-9]\d{9}$/;
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
 export function assertText(value, label, min = 1, max = 120) {
@@ -19,9 +20,18 @@ export function parseList(value, label, { required = false } = {}) {
   return list;
 }
 
-export function validateLoginForm({ username, password }) {
-  if (!usernamePattern.test(username || '')) return '用户名只能包含中文、字母、数字、下划线或短横线，长度 2-32。';
+export function validateLoginForm({ identifier, username, password }) {
+  const value = String(identifier || username || '').trim();
+  if (!phonePattern.test(value) && !usernamePattern.test(value)) return '请输入有效的手机号或账号。';
   if (!password || password.length < 6 || password.length > 72) return '密码长度需要在 6-72 个字符之间。';
+  return '';
+}
+
+export function validatePhoneAuthForm({ phone, verificationCode, password, confirmPassword }) {
+  if (!phonePattern.test(String(phone || '').trim())) return '请输入有效的中国大陆手机号。';
+  if (!/^\d{6}$/.test(String(verificationCode || '').trim())) return '请输入 6 位验证码。';
+  if (!password || password.length < 8 || password.length > 72 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) return '密码需为 8-72 位，且同时包含字母和数字。';
+  if (password !== confirmPassword) return '两次输入的密码不一致。';
   return '';
 }
 
@@ -35,15 +45,16 @@ export function validateReviewForm({ targetId, rating, content }) {
 }
 
 export function normalizeProfileInput(form, avoidText = '') {
-  return {
+  const result = {
     ...form,
     budgetMax: assertNumber(form.budgetMax, '预算上限', 8, 200),
-    weight: form.weight ? assertNumber(form.weight, '体重', 20, 300) : null,
-    height: form.height ? assertNumber(form.height, '身高', 80, 240) : null,
-    conditions: parseList(form.conditions, '身体状况'),
-    allergies: parseList(form.allergies, '过敏源'),
-    avoid: parseList(avoidText, '忌口食材')
+    avoid: Array.isArray(form.avoid) ? form.avoid.filter(Boolean) : parseList(avoidText || form.avoid, '忌口食材'),
+    allergies: Array.isArray(form.allergies) ? form.allergies.filter(Boolean) : parseList(form.allergies, '过敏原')
   };
+  if (!['none', 'declared'].includes(form.allergyStatus)) throw new Error('请明确选择“暂无已知过敏”或填写过敏原。');
+  if (form.allergyStatus === 'declared' && !result.allergies.length) throw new Error('选择“有已知过敏原”后请至少填写一项。');
+  if (form.allergyStatus === 'none') result.allergies = [];
+  return result;
 }
 
 export function validateQuestion(text, { min = 4, max = 200, label = '问题' } = {}) {

@@ -27,11 +27,15 @@
   />
 
   <section v-if="result" class="trust-status-bar" aria-label="推荐可信度参考">
+    <article><span>检索可信度</span><strong>{{ confidenceLabel(result?.confidence) }}</strong></article>
     <article><span>依据充分度</span><strong>{{ percent(result?.eval?.groundednessScore) }}</strong></article>
     <article><span>工具成功率</span><strong>{{ percent(result?.eval?.toolSuccessRate) }}</strong></article>
     <article><span>安全性</span><strong>{{ percent(result?.eval?.safetyScore) }}</strong></article>
     <small>指标用于辅助判断，饮食选择仍需结合个人身体状况。</small>
   </section>
+  <div v-if="result?.warnings?.length" class="rag-warning-list" role="status">
+    <p v-for="warning in result.warnings" :key="`${warning.code}-${warning.dishId || ''}`">{{ warning.message || warning }}</p>
+  </div>
 
   <section class="recommend-results-grid">
     <main class="card workspace-panel conversation-panel">
@@ -57,7 +61,7 @@
             <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" />
             <span v-else class="emoji large">{{ dish.image || '🍽️' }}</span>
           </RouterLink>
-          <div><strong>{{ dish.name }}</strong><small>评分 {{ dish.displayRating.toFixed(1) }} · ¥{{ dish.price }} · {{ dish.nutrition?.calories || 0 }} kcal</small></div>
+          <div><strong>{{ dish.name }}</strong><small>评分 {{ dish.displayRating.toFixed(1) }} · ¥{{ dish.price }} · {{ dish.nutrition?.calories || 0 }} kcal</small><RagTrustState :item="dish" compact /></div>
           <RouterLink class="primary button-link compact order-link" :to="{ path: '/dishes', query: { dish: dish.id } }">查看详情</RouterLink>
         </article>
       </div>
@@ -72,6 +76,7 @@
             <strong>{{ source.name || source.title || '菜品数据' }}</strong>
             <small>相关度 {{ formatScore(source.score) }}</small>
             <p>{{ compactCitationSnippet(source.snippet) }}</p>
+            <RagTrustState :item="source" compact />
           </RouterLink>
           <button v-if="citations.length > 3" class="text-link source-toggle" type="button" @click="citationsExpanded = !citationsExpanded">{{ citationsExpanded ? '收起引用' : `查看全部 ${citations.length} 条` }}</button>
         </div>
@@ -92,6 +97,7 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import RagTrustState from '../components/RagTrustState.vue';
 import SmartMealComposer from '../components/SmartMealComposer.vue';
 import { buildProfilePrompts, compactCitationSnippet, createRatingMap, sortDishesByRating, visibleCitations } from '../domain/studentDiscovery.js';
 import { validateQuestion } from '../domain/validation.js';
@@ -131,6 +137,10 @@ const mealPicks = computed(() => {
   }).filter((dish) => dish.id);
   return sortDishesByRating(hydrated, ratingById.value, sortDir.value);
 });
+
+function confidenceLabel(confidence) {
+  return ({ high: '高', medium: '中', low: '低' })[confidence?.level] || '-';
+}
 
 function deterministicSummary(recommendation) {
   const picks = recommendation.recommendations || recommendation.ranked || [];
@@ -301,10 +311,12 @@ onMounted(async () => {
 
 <style scoped>
 .recommendation-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
-.trust-status-bar { display: grid; grid-template-columns: repeat(3, minmax(120px, .55fr)) minmax(240px, 1.4fr); align-items: center; gap: 10px; margin: 14px 0; padding: 10px 14px; border: 1px solid rgba(31, 122, 77, .14); background: #f7fbf5; }
+.trust-status-bar { display: grid; grid-template-columns: repeat(4, minmax(105px, .5fr)) minmax(220px, 1.3fr); align-items: center; gap: 10px; margin: 14px 0; padding: 10px 14px; border: 1px solid rgba(31, 122, 77, .14); background: #f7fbf5; }
 .trust-status-bar article { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; border-right: 1px solid rgba(31, 122, 77, .12); font-size: 12px; }
 .trust-status-bar strong { color: var(--primary-dark); }
 .trust-status-bar small { color: var(--muted); line-height: 1.45; }
+.rag-warning-list { display:grid; gap:6px; margin:0 0 14px; }
+.rag-warning-list p { margin:0; padding:9px 11px; border:1px solid #eecb83; border-radius:6px; color:#874f08; background:#fff7e8; font-size:12px; line-height:1.5; }
 .recommend-results-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, .72fr); gap: 16px; align-items: start; }
 .recommend-workspace { display: grid; grid-template-columns: minmax(210px, .72fr) minmax(420px, 1.55fr) minmax(240px, .82fr); gap: 16px; align-items: start; }
 .workspace-panel { padding: 18px; border-radius: 8px; }
@@ -365,8 +377,8 @@ onMounted(async () => {
 @keyframes dish-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
 @media (max-width: 1180px) {
   .recommend-results-grid { grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr); }
-  .trust-status-bar { grid-template-columns: repeat(3, 1fr); }
-  .trust-status-bar small { grid-column: 1 / 4; }
+  .trust-status-bar { grid-template-columns: repeat(4, 1fr); }
+  .trust-status-bar small { grid-column: 1 / 5; }
 }
 @media (max-width: 760px) {
   .recommendation-heading { align-items: stretch; flex-direction: column; }
@@ -374,9 +386,9 @@ onMounted(async () => {
   .recommend-results-grid { grid-template-columns: 1fr; }
   .quick-panel, .workspace-side { position: static; }
   .workspace-side { grid-column: auto; grid-template-columns: 1fr; }
-  .trust-status-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .trust-status-bar { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .trust-status-bar article { align-items: flex-start; flex-direction: column; }
-  .trust-status-bar small { grid-column: 1 / 4; }
+  .trust-status-bar small { grid-column: 1 / 5; }
   .quick-prompts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conversation-panel { min-height: 600px; }
   .message { max-width: 94%; }

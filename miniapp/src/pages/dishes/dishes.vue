@@ -23,6 +23,8 @@
       <view v-if="searchResult" class="search-summary panel-card">
         <view class="summary-head"><text class="source-badge">{{ searchResult.meta?.semanticUsed ? '语义检索' : '规则检索' }}</text><text class="ui-strong">检索结论</text><button @tap="clearSearch">清除条件</button></view>
         <text class="summary-copy">{{ resultSummary }}</text>
+        <sc-rag-trust-state :item="searchResult" />
+        <view v-if="searchResult.warnings?.length" class="rag-warnings"><text v-for="warning in searchResult.warnings" :key="`${warning.code}-${warning.dishId||''}`">{{ warning.message }}</text></view>
         <view v-if="searchResult.suggestedRelaxations?.length" class="relaxations"><text v-for="item in searchResult.suggestedRelaxations" :key="relaxationLabel(item)">{{ relaxationLabel(item) }}</text></view>
       </view>
       <text v-if="message" class="page-message" :class="{ error:isError }">{{ message }}</text>
@@ -49,7 +51,8 @@
         :prompts="recommendPrompts" :loading="recommendLoading" :memory-open="memoryOpen" :memory-saving="memorySaving" action-text="生成推荐"
         @submit="runPrompt(question)" @prompt="runPrompt" @toggle-memory="memoryOpen=!memoryOpen" @save-memory="saveMemory" @clear-memory="clearMemory"
       />
-      <sc-trust-bar v-if="recommendationResult" :evaluation="recommendationResult.eval||{}" />
+      <sc-trust-bar v-if="recommendationResult" :evaluation="recommendationResult.eval||{}" :confidence="recommendationResult.confidence||{}" />
+      <view v-if="recommendationResult?.warnings?.length" class="rag-warnings"><text v-for="warning in recommendationResult.warnings" :key="`${warning.code}-${warning.dishId||''}`">{{ warning.message }}</text></view>
 
       <view class="conversation-panel panel-card">
         <view class="conversation-head"><view><text>RECOMMENDATION</text><text class="ui-strong">你的用餐建议</text></view><text class="live"><text class="ui-dot"></text>{{ recommendLoading?'分析中':'数据已连接' }}</text></view>
@@ -192,4 +195,6 @@ async function rejectAction(action){try{await store.rejectAgentAction(action.id)
 .pending-action text { color:#966218; font-size:22rpx; }
 .action-buttons { display:grid; grid-template-columns:1fr 1fr; gap:10rpx; margin-top:12rpx; }
 .action-buttons button:disabled { grid-column:1/3; min-height:88rpx; border-radius:var(--radius); color:var(--muted); background:var(--surface-soft); font-size:24rpx; }
+.rag-warnings { display:flex; flex-direction:column; gap:8rpx; margin:12rpx 0 20rpx; }
+.rag-warnings text { display:block; padding:12rpx 14rpx; border:1rpx solid #eecb83; border-radius:10rpx; color:#874f08; background:#fff7e8; font-size:22rpx; line-height:1.5; }
 </style>

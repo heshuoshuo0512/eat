@@ -12,7 +12,7 @@ import {
 
 describe('production form validation', () => {
   it('rejects malformed login credentials before API submission', () => {
-    assert.match(validateLoginForm({ username: 'a', password: 'student123' }), /用户名/);
+    assert.match(validateLoginForm({ username: 'a', password: 'student123' }), /手机号或账号/);
     assert.match(validateLoginForm({ username: '演示学生', password: '123' }), /密码长度/);
     assert.equal(validateLoginForm({ username: '演示学生', password: 'student123' }), '');
   });

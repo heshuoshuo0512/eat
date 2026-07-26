@@ -35,6 +35,7 @@ export function normalizeProfile(profile = {}) {
   const list = (value) => Array.isArray(value)
     ? value.filter(Boolean)
     : String(value || '').split(/[，,\s]+/).filter(Boolean);
+  const onboardingStatus = ['pending', 'deferred', 'completed'].includes(profile.onboardingStatus) ? profile.onboardingStatus : 'completed';
   return {
     goal: profile.goal || 'healthy',
     budgetMax: Number(profile.budgetMax || 20),
@@ -43,28 +44,36 @@ export function normalizeProfile(profile = {}) {
     halalOnly: Boolean(profile.halalOnly),
     avoid: list(profile.avoid),
     allergies: list(profile.allergies),
-    dietaryPattern: profile.dietaryPattern || 'balanced',
-    spiceLevel: Number(profile.spiceLevel || 3),
+    dietaryPattern: profile.dietaryPattern === 'balanced' || profile.dietaryPattern === 'omnivore' ? 'unrestricted' : (profile.dietaryPattern || 'unrestricted'),
+    spiceLevel: Number.isFinite(Number(profile.spiceLevel)) ? Number(profile.spiceLevel) : 0,
     nutritionFocus: list(profile.nutritionFocus),
     favoriteTags: list(profile.favoriteTags),
     preferLowCrowd: Boolean(profile.preferLowCrowd),
-    activityLevel: profile.activityLevel || 'moderate',
-    conditions: list(profile.conditions),
-    weight: profile.weight ? Number(profile.weight) : null,
-    height: profile.height ? Number(profile.height) : null
+    onboardingStatus,
+    allergyStatus: ['unknown', 'none', 'declared'].includes(profile.allergyStatus) ? profile.allergyStatus : (list(profile.allergies).length ? 'declared' : 'none')
   };
+}
+
+function matchesDietaryPattern(dish, pattern) {
+  if (!pattern || pattern === 'unrestricted') return true;
+  const labels = new Set(Array.isArray(dish.dietaryLabels) ? dish.dietaryLabels : []);
+  if (pattern === 'vegan') return labels.has('vegan');
+  if (pattern === 'vegetarian') return labels.has('vegetarian') || labels.has('vegan');
+  if (pattern === 'pescatarian') return labels.has('pescatarian') || labels.has('vegetarian') || labels.has('vegan');
+  return true;
 }
 
 export function filterDishes(dishes, profile) {
   const normalized = normalizeProfile(profile);
   return dishes.filter((dish) => {
-    if (dish.price > normalized.budgetMax) return false;
+    if (normalized.onboardingStatus === 'completed' && dish.price > normalized.budgetMax) return false;
     if (normalized.halalOnly && !dish.halal) return false;
     if (!dish.mealTypes.includes(normalized.mealType)) return false;
     if (normalized.taste !== '不限' && dish.taste !== normalized.taste && !dish.tags.includes(normalized.taste)) return false;
     const unsafeWords = [...normalized.avoid, ...normalized.allergies];
     const dishSafetyText = [...(dish.ingredients || []), ...(dish.allergens || [])].join(' ');
     if (unsafeWords.some((word) => dishSafetyText.includes(word))) return false;
+    if (!matchesDietaryPattern(dish, normalized.dietaryPattern)) return false;
     return true;
   });
 }
@@ -75,7 +84,7 @@ export function rankDishes(dishes, profile) {
   return filterDishes(dishes, normalized)
     .map((dish) => {
       const ratingScore = dish.rating * 8 + Math.log10(dish.reviewCount + 1) * 6;
-      const budgetScore = Math.max(0, normalized.budgetMax - dish.price) * 0.8;
+      const budgetScore = normalized.onboardingStatus === 'completed' ? Math.max(0, normalized.budgetMax - dish.price) * 0.8 : 0;
       const score = goal.score(dish) + ratingScore + budgetScore;
       return { ...dish, recommendationScore: Number(score.toFixed(1)) };
     })
@@ -115,7 +124,7 @@ export function buildMealPlan(dishes, profile) {
   return {
     goalLabel: goal.label,
     reason: picks.length
-      ? `${goal.reason} 本次只从真实档口菜品中筛选，预算上限 ${normalized.budgetMax} 元，已匹配 ${normalized.mealType === 'breakfast' ? '早餐' : normalized.mealType === 'dinner' ? '晚餐' : '午餐'} 场景。`
+      ? `${goal.reason} 本次只从真实档口菜品中筛选，${normalized.onboardingStatus === 'completed' ? `预算上限 ${normalized.budgetMax} 元，` : ''}已匹配 ${normalized.mealType === 'breakfast' ? '早餐' : normalized.mealType === 'dinner' ? '晚餐' : '午餐'} 场景。`
       : '当前条件没有匹配菜品，请放宽预算、口味或清真限制。',
     dishes: picks,
     totals
