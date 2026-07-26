@@ -1,11 +1,14 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { canteens as seedCanteens, dishes as seedDishes, reviews as seedReviews, stalls as seedStalls, userDishPreferences as seedUserDishPreferences, campusEnvironment as seedCampusEnvironment } from '../src/domain/seedData.js';
-import { hashPassword } from './security.js';
+import { hashPassword, resolveUploadReference } from './security.js';
 import { runMigrations } from './migrations.js';
+import { businessDate } from './time.js';
 
 const DEFAULT_DB_PATH = resolve('data/smart-canteen.sqlite');
+const pgRequestContext = new AsyncLocalStorage();
 
 /* ── optional pg driver (loaded once at module level) ────────────── */
 let PgPool;
@@ -51,6 +54,12 @@ function migrate(db) {
       password_hash TEXT NOT NULL,
       nickname TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('student', 'operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin')),
+      phone_hash TEXT,
+      phone_encrypted TEXT,
+      phone_verified_at TEXT,
+      token_version INTEGER NOT NULL DEFAULT 0,
+      agreement_version TEXT NOT NULL DEFAULT '',
+      agreement_accepted_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -90,6 +99,8 @@ function migrate(db) {
       taste TEXT NOT NULL,
       cuisine TEXT NOT NULL,
       ingredients_json TEXT NOT NULL DEFAULT '[]',
+      seasonings_json TEXT NOT NULL DEFAULT '[]',
+      additives_json TEXT NOT NULL DEFAULT '[]',
       tags_json TEXT NOT NULL DEFAULT '[]',
       halal INTEGER NOT NULL DEFAULT 0,
       meal_types_json TEXT NOT NULL DEFAULT '["lunch","dinner"]',
@@ -106,6 +117,19 @@ function migrate(db) {
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
       regional_taste TEXT NOT NULL DEFAULT '',
       allergens_json TEXT NOT NULL DEFAULT '[]',
+      safety_declarations_json TEXT NOT NULL DEFAULT '[]',
+      dietary_labels_json TEXT NOT NULL DEFAULT '[]',
+      nutrition_fact_status TEXT NOT NULL DEFAULT 'unknown',
+      recipe_fact_status TEXT NOT NULL DEFAULT 'unknown',
+      halal_fact_status TEXT NOT NULL DEFAULT 'unknown',
+      dietary_fact_status TEXT NOT NULL DEFAULT 'unknown',
+      spice_level INTEGER,
+      spice_fact_status TEXT NOT NULL DEFAULT 'unknown',
+      fact_source TEXT NOT NULL DEFAULT 'legacy',
+      fact_verified_at TEXT,
+      fact_expires_at TEXT,
+      data_version TEXT NOT NULL DEFAULT 'legacy',
+      synthetic INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -144,7 +168,63 @@ function migrate(db) {
       halal_only INTEGER NOT NULL DEFAULT 0,
       avoid_json TEXT NOT NULL DEFAULT '[]',
       allergies_json TEXT NOT NULL DEFAULT '[]',
+      onboarding_status TEXT NOT NULL DEFAULT 'completed',
+      allergy_status TEXT NOT NULL DEFAULT 'none',
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_verification_codes (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      phone_hash TEXT NOT NULL,
+      purpose TEXT NOT NULL CHECK(purpose IN ('register','reset_password')),
+      code_hash TEXT NOT NULL,
+      requested_ip TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_identities (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK(provider IN ('password','phone','wechat_miniapp')),
+      subject_hash TEXT NOT NULL,
+      subject_encrypted TEXT,
+      verified_at TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, provider, subject_hash)
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      refresh_family_id TEXT NOT NULL,
+      device_hash TEXT NOT NULL DEFAULT '',
+      device_summary TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked','expired')),
+      last_used_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+      token_hash TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      session_id TEXT NOT NULL REFERENCES auth_sessions(id) ON DELETE CASCADE,
+      family_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','rotated','revoked')),
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS uploads (
@@ -155,7 +235,28 @@ function migrate(db) {
       size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
       storage_key TEXT NOT NULL UNIQUE,
       public_url TEXT NOT NULL,
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','public')),
+      storage_provider TEXT NOT NULL DEFAULT 'local',
+      object_version TEXT NOT NULL DEFAULT 'v1',
       created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS outbox_events (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      aggregate_type TEXT NOT NULL,
+      aggregate_id TEXT,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      idempotency_key TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','succeeded','dead')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      available_at TEXT NOT NULL,
+      locked_at TEXT,
+      locked_by TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      processed_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS rag_documents (
@@ -370,11 +471,25 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_stalls_canteen ON stalls(canteen_id);
     CREATE INDEX IF NOT EXISTS idx_rag_documents_source ON rag_documents(source_type, source_id);
     CREATE INDEX IF NOT EXISTS idx_uploads_owner ON uploads(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(tenant_id, user_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_status ON auth_sessions(tenant_id, user_id, status);
+    CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_session ON auth_refresh_tokens(session_id, status);
+    CREATE INDEX IF NOT EXISTS idx_outbox_claim ON outbox_events(status, available_at, created_at);
+    CREATE INDEX IF NOT EXISTS idx_outbox_tenant_created ON outbox_events(tenant_id, created_at);
   `);
 
   // Add embedding_json column for RAG embedding storage (idempotent)
   try { db.exec('ALTER TABLE rag_documents ADD COLUMN embedding_json TEXT'); } catch {}
   try { db.exec('ALTER TABLE users ADD COLUMN wechat_openid TEXT'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN phone_hash TEXT'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN phone_encrypted TEXT'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN phone_verified_at TEXT'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN agreement_version TEXT NOT NULL DEFAULT ''"); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN agreement_accepted_at TEXT'); } catch {}
+  try { db.exec("ALTER TABLE uploads ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'"); } catch {}
+  try { db.exec("ALTER TABLE uploads ADD COLUMN storage_provider TEXT NOT NULL DEFAULT 'local'"); } catch {}
+  try { db.exec("ALTER TABLE uploads ADD COLUMN object_version TEXT NOT NULL DEFAULT 'v1'"); } catch {}
 
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN expires_at TEXT"); } catch {}
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN payload_hash TEXT NOT NULL DEFAULT ''"); } catch {}
@@ -400,9 +515,35 @@ function migrate(db) {
   try { db.exec("ALTER TABLE menu_items ADD COLUMN serving_end TEXT NOT NULL DEFAULT '13:30'"); } catch {}
   // Dish allergen info
   try { db.exec("ALTER TABLE dishes ADD COLUMN allergens_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN seasonings_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN additives_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN safety_declarations_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN nutrition_fact_status TEXT NOT NULL DEFAULT 'unknown'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN recipe_fact_status TEXT NOT NULL DEFAULT 'unknown'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN halal_fact_status TEXT NOT NULL DEFAULT 'unknown'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN dietary_fact_status TEXT NOT NULL DEFAULT 'unknown'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN spice_level INTEGER"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN spice_fact_status TEXT NOT NULL DEFAULT 'unknown'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN fact_source TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN fact_verified_at TEXT"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN fact_expires_at TEXT"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN data_version TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN synthetic INTEGER NOT NULL DEFAULT 0"); } catch {}
+  const legacySafetyRows = db.prepare("SELECT id, allergens_json, safety_declarations_json FROM dishes WHERE safety_declarations_json IS NULL OR safety_declarations_json = '[]'").all();
+  const updateLegacySafety = db.prepare('UPDATE dishes SET safety_declarations_json = ? WHERE id = ?');
+  for (const row of legacySafetyRows) {
+    const allergens = parseJson(row.allergens_json, []);
+    const declarations = allergens.length
+      ? allergens.map((allergenCode) => ({ allergenCode, status: 'confirmed_present', source: 'legacy_allergens_json', dataVersion: 'legacy' }))
+      : [{ allergenCode: '*', status: 'unknown', source: 'legacy_empty_allergens', dataVersion: 'legacy' }];
+    updateLegacySafety.run(json(declarations), row.id);
+  }
   // Regional display label and health-profile allergen constraints
   try { db.exec("ALTER TABLE dishes ADD COLUMN regional_taste TEXT NOT NULL DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE health_profiles ADD COLUMN allergies_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN dietary_labels_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN onboarding_status TEXT NOT NULL DEFAULT 'completed'"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN allergy_status TEXT NOT NULL DEFAULT 'none'"); } catch {}
   // Review moderation status
   try { db.exec("ALTER TABLE reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
   const reviewSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reviews'").get()?.sql || '';
@@ -445,8 +586,8 @@ function migrate(db) {
   try { db.exec("ALTER TABLE dishes ADD COLUMN calcium REAL NOT NULL DEFAULT 0"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN iron REAL NOT NULL DEFAULT 0"); } catch {}
   // Expanded health profile
-  try { db.exec("ALTER TABLE health_profiles ADD COLUMN dietary_pattern TEXT NOT NULL DEFAULT 'balanced'"); } catch {}
-  try { db.exec("ALTER TABLE health_profiles ADD COLUMN spice_level INTEGER NOT NULL DEFAULT 3"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN dietary_pattern TEXT NOT NULL DEFAULT 'unrestricted'"); } catch {}
+  try { db.exec("ALTER TABLE health_profiles ADD COLUMN spice_level INTEGER NOT NULL DEFAULT 0"); } catch {}
   try { db.exec("ALTER TABLE health_profiles ADD COLUMN nutrition_focus_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE health_profiles ADD COLUMN prefer_low_crowd INTEGER NOT NULL DEFAULT 0"); } catch {}
   try { db.exec("ALTER TABLE health_profiles ADD COLUMN favorite_tags_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
@@ -481,7 +622,9 @@ function migrate(db) {
 
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL AND wechat_openid != '';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_tenant_phone_hash ON users(tenant_id, phone_hash) WHERE phone_hash IS NOT NULL AND phone_hash != '';
     CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
+    CREATE INDEX IF NOT EXISTS idx_auth_codes_phone_created ON auth_verification_codes(tenant_id, phone_hash, purpose, created_at);
     CREATE INDEX IF NOT EXISTS idx_canteens_tenant ON canteens(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_stalls_tenant_canteen ON stalls(tenant_id, canteen_id);
     CREATE INDEX IF NOT EXISTS idx_stalls_tenant_parent ON stalls(tenant_id, parent_id);
@@ -524,8 +667,8 @@ function seed(db) {
     const insertUser = db.prepare('INSERT INTO users (id, username, password_hash, nickname, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
     insertUser.run('u-demo-student', '演示学生', hashPassword('student123'), '演示学生', 'student', now, now);
     insertUser.run('u-admin', 'admin', hashPassword('admin123'), '管理员', 'admin', now, now);
-    db.prepare('INSERT INTO health_profiles (user_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run('u-demo-student', 'fatLoss', 18, 'lunch', '不限', 0, '[]', 'balanced', 3, '[]', 0, '[]', now);
+    db.prepare('INSERT INTO health_profiles (user_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, dietary_pattern, spice_level, nutrition_focus_json, prefer_low_crowd, favorite_tags_json, onboarding_status, allergy_status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('u-demo-student', 'fatLoss', 18, 'lunch', '不限', 0, '[]', 'unrestricted', 0, '[]', 0, '[]', 'completed', 'none', now);
   }
 
   if (db.prepare("SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = 'default'").get().count === 0) {
@@ -561,11 +704,11 @@ function seed(db) {
   }
 
   if (db.prepare("SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = 'default'").get().count === 0) {
-    const insert = db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insert = db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, dietary_labels_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const item of seedDishes) {
       const en = item.expandedNutrition || {};
-      insert.run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+      insert.run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, json(item.dietaryLabels || []), now, now);
     }
   } else {
     // Backfill new dishes and expanded nutrition for existing databases
@@ -573,9 +716,9 @@ function seed(db) {
       const exists = db.prepare('SELECT id FROM dishes WHERE id = ?').get(item.id);
       if (!exists) {
         const en = item.expandedNutrition || {};
-        db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, now, now);
+        db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, dietary_labels_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, json(item.dietaryLabels || []), now, now);
       }
     }
   }
@@ -617,7 +760,7 @@ function seed(db) {
   }
 
   // ── Seed today's default lunch menu (idempotent) ───────────────
-  const today = now.slice(0, 10);
+  const today = businessDate(now);
   const defaultMenuId = `menu-default-${today}-lunch`;
   const existingMenu = db.prepare('SELECT id FROM menus WHERE id = ?').get(defaultMenuId);
   if (!existingMenu) {
@@ -657,8 +800,8 @@ export function rowToCanteen(row) {
     description: row.description,
     parentId: row.parent_id || null,
     canteenType: row.canteen_type || 'primary',
-    image: row.image && !String(row.image).startsWith('http') ? row.image : '',
-    imageUrl: row.image && String(row.image).startsWith('http') ? row.image : ''
+    image: row.image && !String(row.image).startsWith('http') && !String(row.image).startsWith('upload://') ? row.image : '',
+    imageUrl: resolveUploadReference(row.image && (String(row.image).startsWith('http') || String(row.image).startsWith('upload://')) ? row.image : '')
   };
 }
 
@@ -686,6 +829,8 @@ export function rowToDish(row) {
     taste: row.taste,
     cuisine: row.cuisine,
     ingredients: parseJson(row.ingredients_json, []),
+    seasonings: parseJson(row.seasonings_json, []),
+    additives: parseJson(row.additives_json, []),
     tags: parseJson(row.tags_json, []).filter((tag) => tag !== '不辣'),
     halal: Boolean(row.halal),
     mealTypes: parseJson(row.meal_types_json, ['lunch', 'dinner']),
@@ -696,12 +841,27 @@ export function rowToDish(row) {
     calcium: row.calcium || 0,
     iron: row.iron || 0,
     allergens: parseJson(row.allergens_json, []),
+    safetyDeclarations: parseJson(row.safety_declarations_json, []),
+    dietaryLabels: parseJson(row.dietary_labels_json, []),
+    factStatus: {
+      nutrition: row.nutrition_fact_status || 'unknown',
+      recipe: row.recipe_fact_status || 'unknown',
+      halal: row.halal_fact_status || 'unknown',
+      dietary: row.dietary_fact_status || 'unknown',
+      spice: row.spice_fact_status || 'unknown'
+    },
+    spiceLevel: row.spice_level == null ? null : Number(row.spice_level),
+    factSource: row.fact_source || 'legacy',
+    factVerifiedAt: row.fact_verified_at || null,
+    factExpiresAt: row.fact_expires_at || null,
+    dataVersion: row.data_version || 'legacy',
+    synthetic: Boolean(row.synthetic),
     regionalTaste: row.regional_taste || '',
     rating: row.rating,
     reviewCount: row.review_count,
     sales: row.sales,
     image: row.image,
-    imageUrl: row.image_url,
+    imageUrl: resolveUploadReference(row.image_url),
     description: row.description,
     status: row.status
   };
@@ -734,7 +894,7 @@ export function rowToPost(row) {
     user,
     author: { id: row.user_id, name: user, username: row.username || null, nickname: row.nickname || null },
     content: row.content,
-    imageUrl: row.image_url || '',
+    imageUrl: resolveUploadReference(row.image_url),
     rating: row.rating == null ? null : Number(row.rating),
     status: row.status || 'pending',
     linkedReviewId: row.linked_review_id || null,
@@ -753,12 +913,14 @@ export function rowToProfile(row) {
     halalOnly: Boolean(row.halal_only),
     avoid: parseJson(row.avoid_json, []),
     allergies: parseJson(row.allergies_json, []),
-    dietaryPattern: row.dietary_pattern || 'balanced',
-    spiceLevel: row.spice_level ?? 3,
+    dietaryPattern: row.dietary_pattern === 'balanced' ? 'unrestricted' : (row.dietary_pattern || 'unrestricted'),
+    spiceLevel: row.spice_level ?? 0,
     nutritionFocus: parseJson(row.nutrition_focus_json, []),
     preferLowCrowd: Boolean(row.prefer_low_crowd),
-    favoriteTags: parseJson(row.favorite_tags_json, [])
-  } : { goal: 'healthy', budgetMax: 20, mealType: 'lunch', taste: '不限', halalOnly: false, avoid: [], allergies: [], dietaryPattern: 'balanced', spiceLevel: 3, nutritionFocus: [], preferLowCrowd: false, favoriteTags: [] };
+    favoriteTags: parseJson(row.favorite_tags_json, []),
+    onboardingStatus: row.onboarding_status || 'completed',
+    allergyStatus: row.allergy_status || (parseJson(row.allergies_json, []).length ? 'declared' : 'none')
+  } : { goal: 'healthy', budgetMax: 20, mealType: 'lunch', taste: '不限', halalOnly: false, avoid: [], allergies: [], dietaryPattern: 'unrestricted', spiceLevel: 0, nutritionFocus: [], preferLowCrowd: false, favoriteTags: [], onboardingStatus: 'pending', allergyStatus: 'unknown' };
 }
 
 export function rowToUser(row) {
@@ -912,20 +1074,78 @@ export class PgDatabase {
   constructor(pool, queryable = pool) {
     this.pool = pool;
     this.queryable = queryable;
+    this.isPostgres = true;
+  }
+
+  runWithContext(context, operation) {
+    const normalized = {
+      tenantId: String(context?.tenantId || 'default').slice(0, 80),
+      userId: String(context?.userId || '').slice(0, 120),
+      role: String(context?.role || 'anonymous').slice(0, 80),
+      requestId: String(context?.requestId || '').slice(0, 120)
+    };
+    return pgRequestContext.run(normalized, operation);
+  }
+
+  updateContext(context = {}) {
+    const current = pgRequestContext.getStore();
+    if (!current) return;
+    if (context.tenantId !== undefined) current.tenantId = String(context.tenantId || 'default').slice(0, 80);
+    if (context.userId !== undefined) current.userId = String(context.userId || '').slice(0, 120);
+    if (context.role !== undefined) current.role = String(context.role || 'anonymous').slice(0, 80);
+    if (context.requestId !== undefined) current.requestId = String(context.requestId || '').slice(0, 120);
+  }
+
+  currentContext() {
+    return pgRequestContext.getStore() || null;
+  }
+
+  async applyContext(client, local = true) {
+    const context = this.currentContext();
+    if (!context) return;
+    await client.query(
+      `SELECT
+        set_config('app.tenant_id', $1, $5),
+        set_config('app.user_id', $2, $5),
+        set_config('app.role', $3, $5),
+        set_config('app.request_id', $4, $5)`,
+      [context.tenantId, context.userId, context.role, context.requestId, local]
+    );
+  }
+
+  async query(sql, params = []) {
+    if (this.queryable !== this.pool || !this.currentContext()) {
+      return this.queryable.query(sql, params);
+    }
+
+    const client = await this.pool.connect();
+    let began = false;
+    try {
+      await client.query('BEGIN');
+      began = true;
+      await this.applyContext(client, true);
+      const result = await client.query(sql, params);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      if (began) await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   prepare(sql) {
     const pgSql = sqliteToPg(sql);
-    const queryable = this.queryable;
     return {
-      all:  (...params) => queryable.query(pgSql, params).then(r => r.rows),
-      get:  (...params) => queryable.query(pgSql, params).then(r => r.rows[0] ?? undefined),
-      run:  (...params) => queryable.query(pgSql, params).then(r => ({ changes: r.rowCount })),
+      all:  (...params) => this.query(pgSql, params).then(r => r.rows),
+      get:  (...params) => this.query(pgSql, params).then(r => r.rows[0] ?? undefined),
+      run:  (...params) => this.query(pgSql, params).then(r => ({ changes: r.rowCount })),
     };
   }
 
   exec(sql) {
-    return this.queryable.query(sql);
+    return this.query(sql);
   }
 
   async transaction(operation) {
@@ -935,6 +1155,7 @@ export class PgDatabase {
     try {
       await client.query('BEGIN');
       began = true;
+      await transactionDb.applyContext(client, true);
       const result = await operation(transactionDb);
       await client.query('COMMIT');
       return result;
@@ -949,6 +1170,11 @@ export class PgDatabase {
   close() {
     return this.pool.end();
   }
+
+  async ping() {
+    const row = await this.prepare('SELECT 1 AS ok').get();
+    return Number(row?.ok || 0) === 1;
+  }
 }
 
 /**
@@ -959,18 +1185,59 @@ export class PgDatabase {
  * @param {string} [url]  — defaults to DATABASE_URL env
  * @returns {Promise<PgDatabase>}
  */
-export async function openPostgresDatabase(url = process.env.DATABASE_URL) {
+function positiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) return fallback;
+  return parsed;
+}
+
+function postgresPoolOptions(connectionString, { applicationName = process.env.PG_APPLICATION_NAME || 'smart-canteen-api' } = {}) {
+  return {
+    connectionString,
+    max: positiveInteger(process.env.PG_POOL_MAX, 10, { max: 100 }),
+    min: positiveInteger(process.env.PG_POOL_MIN, 0, { min: 0, max: 20 }),
+    connectionTimeoutMillis: positiveInteger(process.env.PG_POOL_ACQUIRE_TIMEOUT_MS, 5000, { max: 120000 }),
+    idleTimeoutMillis: positiveInteger(process.env.PG_POOL_IDLE_TIMEOUT_MS, 30000, { max: 600000 }),
+    maxLifetimeSeconds: positiveInteger(process.env.PG_POOL_MAX_LIFETIME_SECONDS, 1800, { max: 86400 }),
+    statement_timeout: positiveInteger(process.env.PG_STATEMENT_TIMEOUT_MS, 10000, { max: 300000 }),
+    query_timeout: positiveInteger(process.env.PG_QUERY_TIMEOUT_MS, 12000, { max: 300000 }),
+    idle_in_transaction_session_timeout: positiveInteger(process.env.PG_IDLE_TRANSACTION_TIMEOUT_MS, 15000, { max: 300000 }),
+    application_name: String(applicationName).slice(0, 63)
+  };
+}
+
+export async function openPostgresDatabase(url = process.env.DATABASE_URL, {
+  migrate = process.env.DB_MIGRATE === '1' || process.env.DB_MIGRATE === 'true',
+  applicationName = process.env.PG_APPLICATION_NAME || 'smart-canteen-api'
+} = {}) {
   if (!PgPool) {
     throw new Error('PostgreSQL driver (pg) is not installed. Run: npm install pg');
   }
-  const pool = new PgPool({ connectionString: url });
+  if (!url) throw new Error('DATABASE_URL is required for PostgreSQL');
+
+  if (migrate) {
+    const migrationUrl = process.env.DATABASE_MIGRATION_URL || url;
+    const migrationPool = new PgPool({
+      ...postgresPoolOptions(migrationUrl),
+      max: 1,
+      application_name: 'smart-canteen-migrator'
+    });
+    try {
+      await runMigrations(new PgDatabase(migrationPool));
+    } finally {
+      await migrationPool.end();
+    }
+  }
+
+  const pool = new PgPool(postgresPoolOptions(url, { applicationName }));
   // Verify connectivity before returning the adapter.
   const client = await pool.connect();
-  client.release();
-  const db = new PgDatabase(pool);
-  if (process.env.DB_MIGRATE === '1' || process.env.DB_MIGRATE === 'true') {
-    await runMigrations(db);
+  try {
+    await client.query('SELECT 1');
+  } finally {
+    client.release();
   }
+  const db = new PgDatabase(pool);
   return db;
 }
 

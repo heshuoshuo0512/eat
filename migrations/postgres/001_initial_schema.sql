@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS users (
   nickname TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('student', 'operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin')),
   wechat_openid TEXT,
+  phone_hash TEXT,
+  phone_encrypted TEXT,
+  phone_verified_at TEXT,
+  token_version INTEGER NOT NULL DEFAULT 0,
+  agreement_version TEXT NOT NULL DEFAULT '',
+  agreement_accepted_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE (tenant_id, username)
@@ -85,6 +91,8 @@ CREATE TABLE IF NOT EXISTS dishes (
   taste TEXT NOT NULL,
   cuisine TEXT NOT NULL,
   ingredients_json TEXT NOT NULL DEFAULT '[]',
+  seasonings_json TEXT NOT NULL DEFAULT '[]',
+  additives_json TEXT NOT NULL DEFAULT '[]',
   tags_json TEXT NOT NULL DEFAULT '[]',
   halal INTEGER NOT NULL DEFAULT 0,
   meal_types_json TEXT NOT NULL DEFAULT '["lunch","dinner"]',
@@ -106,6 +114,19 @@ CREATE TABLE IF NOT EXISTS dishes (
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
   regional_taste TEXT NOT NULL DEFAULT '',
   allergens_json TEXT NOT NULL DEFAULT '[]',
+  safety_declarations_json TEXT NOT NULL DEFAULT '[]',
+  dietary_labels_json TEXT NOT NULL DEFAULT '[]',
+  nutrition_fact_status TEXT NOT NULL DEFAULT 'unknown',
+  recipe_fact_status TEXT NOT NULL DEFAULT 'unknown',
+  halal_fact_status TEXT NOT NULL DEFAULT 'unknown',
+  dietary_fact_status TEXT NOT NULL DEFAULT 'unknown',
+  spice_level INTEGER,
+  spice_fact_status TEXT NOT NULL DEFAULT 'unknown',
+  fact_source TEXT NOT NULL DEFAULT 'legacy',
+  fact_verified_at TEXT,
+  fact_expires_at TEXT,
+  data_version TEXT NOT NULL DEFAULT 'legacy',
+  synthetic INTEGER NOT NULL DEFAULT 0,
   search_vector tsvector GENERATED ALWAYS AS (
     setweight(to_tsvector('simple', coalesce(name, '')), 'A') ||
     setweight(to_tsvector('simple', coalesce(cuisine, '')), 'B') ||
@@ -140,12 +161,27 @@ CREATE TABLE IF NOT EXISTS health_profiles (
   halal_only INTEGER NOT NULL DEFAULT 0,
   avoid_json TEXT NOT NULL DEFAULT '[]',
   allergies_json TEXT NOT NULL DEFAULT '[]',
-  dietary_pattern TEXT NOT NULL DEFAULT 'balanced',
-  spice_level INTEGER NOT NULL DEFAULT 3 CHECK(spice_level BETWEEN 0 AND 5),
+  dietary_pattern TEXT NOT NULL DEFAULT 'unrestricted',
+  spice_level INTEGER NOT NULL DEFAULT 0 CHECK(spice_level BETWEEN 0 AND 5),
   nutrition_focus_json TEXT NOT NULL DEFAULT '[]',
   prefer_low_crowd INTEGER NOT NULL DEFAULT 0,
   favorite_tags_json TEXT NOT NULL DEFAULT '[]',
+  onboarding_status TEXT NOT NULL DEFAULT 'completed',
+  allergy_status TEXT NOT NULL DEFAULT 'none',
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_verification_codes (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  phone_hash TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK(purpose IN ('register','reset_password')),
+  code_hash TEXT NOT NULL,
+  requested_ip TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL
 );
 
 -- Uploads
@@ -158,6 +194,9 @@ CREATE TABLE IF NOT EXISTS uploads (
   size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
   storage_key TEXT NOT NULL UNIQUE,
   public_url TEXT NOT NULL,
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','public')),
+  storage_provider TEXT NOT NULL DEFAULT 'local',
+  object_version TEXT NOT NULL DEFAULT 'v1',
   created_at TEXT NOT NULL
 );
 
@@ -414,9 +453,116 @@ CREATE TABLE IF NOT EXISTS campus_environment (
   UNIQUE(tenant_id)
 );
 
+-- Normalized authentication identities and rotating sessions
+CREATE TABLE IF NOT EXISTS user_identities (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK(provider IN ('password','phone','wechat_miniapp')),
+  subject_hash TEXT NOT NULL,
+  subject_encrypted TEXT,
+  verified_at TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(tenant_id, provider, subject_hash)
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  refresh_family_id TEXT NOT NULL,
+  device_hash TEXT NOT NULL DEFAULT '',
+  device_summary TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked','expired')),
+  last_used_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+  token_hash TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  session_id TEXT NOT NULL REFERENCES auth_sessions(id) ON DELETE CASCADE,
+  family_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','rotated','revoked')),
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- Durable asynchronous work queue
+CREATE TABLE IF NOT EXISTS outbox_events (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  aggregate_type TEXT NOT NULL,
+  aggregate_id TEXT,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','succeeded','dead')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  available_at TEXT NOT NULL,
+  locked_at TEXT,
+  locked_by TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  processed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS data_import_batches (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  entity_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','validated','approved','published','archived','rejected')),
+  source_name TEXT NOT NULL DEFAULT '',
+  row_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  reviewed_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS campus_posts (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK(target_type IN ('dish','canteen')),
+  target_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  image_url TEXT,
+  rating INTEGER CHECK(rating BETWEEN 1 AND 5),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+  linked_review_id TEXT REFERENCES reviews(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS retrieval_index_runs (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+  document_count INTEGER NOT NULL DEFAULT 0,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  embedding_model TEXT,
+  embedding_dimension INTEGER,
+  index_version TEXT,
+  metrics_json TEXT,
+  error TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+
 -- Indexes
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL AND wechat_openid != '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_tenant_phone_hash ON users(tenant_id, phone_hash) WHERE phone_hash IS NOT NULL AND phone_hash <> '';
 CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
+CREATE INDEX IF NOT EXISTS idx_auth_codes_phone_created ON auth_verification_codes(tenant_id, phone_hash, purpose, created_at);
 CREATE INDEX IF NOT EXISTS idx_canteens_tenant ON canteens(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_canteens_parent ON canteens(tenant_id, parent_id);
 CREATE INDEX IF NOT EXISTS idx_stalls_tenant_canteen ON stalls(tenant_id, canteen_id);
@@ -449,14 +595,42 @@ CREATE INDEX IF NOT EXISTS idx_agent_eval_cases_tenant_enabled ON agent_eval_cas
 CREATE INDEX IF NOT EXISTS idx_agent_eval_case_runs_case_created ON agent_eval_case_runs(tenant_id, case_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_user ON user_dish_preferences(tenant_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_dish ON user_dish_preferences(tenant_id, dish_id);
+CREATE INDEX IF NOT EXISTS idx_user_identities_user ON user_identities(tenant_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_status ON auth_sessions(tenant_id, user_id, status);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_family ON auth_sessions(refresh_family_id, status);
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_session ON auth_refresh_tokens(session_id, status);
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_tenant_family ON auth_refresh_tokens(tenant_id, family_id, status);
+CREATE INDEX IF NOT EXISTS idx_outbox_claim ON outbox_events(status, available_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_tenant_created ON outbox_events(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_import_batches_tenant_status ON data_import_batches(tenant_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_campus_posts_tenant_status ON campus_posts(tenant_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_campus_posts_user ON campus_posts(tenant_id, user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_retrieval_index_runs_tenant_started ON retrieval_index_runs(tenant_id, started_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_documents_tenant_source_chunk ON rag_documents(tenant_id, source_type, source_id, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_rag_documents_tenant_type ON rag_documents(tenant_id, source_type, indexed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rag_documents_search_trgm ON rag_documents USING gin(search_text gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_rag_documents_metadata ON rag_documents USING gin(metadata);
+CREATE INDEX IF NOT EXISTS idx_rag_documents_embedding_hnsw
+  ON rag_documents USING hnsw(embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64)
+  WHERE embedding IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_schema_migrations_applied_at ON schema_migrations(applied_at);
 
--- Runtime migrations 004, 005 and 008 remain separate because this baseline
--- does not provide their complete schema contract.
+-- Fresh databases already contain the complete structural contract. RLS remains
+-- migration 014 so deployment can switch to the restricted API role in order.
 INSERT INTO schema_migrations(version) VALUES
   ('001_initial_schema'),
   ('001_enterprise_foundation'),
   ('002_generic_review_targets'),
   ('003_contextual_recommendation'),
+  ('004_database_workbench'),
+  ('005_campus_posts'),
   ('006_admin_stall_hierarchy'),
-  ('007_admin_audit_metadata')
+  ('007_admin_audit_metadata'),
+  ('008_retrieval_pgvector'),
+  ('009_dish_menu_runtime_columns'),
+  ('010_region_allergen_contract'),
+  ('011_student_auth_onboarding'),
+  ('012_rag_safety_facts'),
+  ('013_supabase_foundation')
 ON CONFLICT (version) DO NOTHING;

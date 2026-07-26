@@ -16,7 +16,7 @@ CREATE TABLE reviews (
 );
 
 INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at)
-SELECT id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at FROM reviews_dish_only;
+SELECT id, tenant_id, user_id, target_type, target_id, rating, content, 'approved', created_at FROM reviews_dish_only;
 
 DROP TABLE reviews_dish_only;
 

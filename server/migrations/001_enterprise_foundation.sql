@@ -82,7 +82,6 @@ CREATE TABLE IF NOT EXISTS dishes (
   description TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
   regional_taste TEXT NOT NULL DEFAULT '',
-  allergens_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
