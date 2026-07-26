@@ -228,6 +228,29 @@ describe('student phone authentication and onboarding', { concurrency: false }, 
     assert.equal(replay.data.code, 'VERIFICATION_CODE_EXPIRED');
   });
 
+  it('allows only one concurrent registration to consume a verification code', async () => {
+    const phone = '13800138109';
+    const verificationCode = await issueCode(phone, 'register', '203.0.113.69');
+    const body = {
+      phone,
+      verificationCode,
+      password: 'Student123',
+      agreementVersion: '2026-07'
+    };
+
+    const responses = await Promise.all([
+      request('/api/auth/register', { body, ip: '203.0.113.69' }),
+      request('/api/auth/register', { body, ip: '203.0.113.70' })
+    ]);
+    const statuses = responses.map((response) => response.status);
+    assert.equal(statuses.filter((status) => status === 201).length, 1);
+    const rejected = responses.find((response) => response.status !== 201);
+    assert.ok([400, 409].includes(rejected?.status));
+    assert.ok(['VERIFICATION_CODE_EXPIRED', 'PHONE_ALREADY_REGISTERED'].includes(rejected?.data.code));
+    const users = await db.prepare('SELECT COUNT(*) AS count FROM users WHERE phone_hash = ?').get(phoneLookupHash(phone));
+    assert.equal(users.count, 1);
+  });
+
   it('defers onboarding once and completes only a valid safety profile', async () => {
     const created = await register('13800138105', '203.0.113.15');
     assert.equal(created.status, 201);

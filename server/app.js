@@ -478,11 +478,26 @@ async function consumeVerificationCode(db, phone, purpose, value) {
   if (!row || Date.parse(row.expires_at) <= Date.now()) throw Object.assign(new Error('验证码不存在或已过期'), { status: 400, code: 'VERIFICATION_CODE_EXPIRED' });
   if (Number(row.attempts || 0) >= AUTH_CODE_MAX_ATTEMPTS) throw Object.assign(new Error('验证码尝试次数过多，请重新获取'), { status: 429, code: 'VERIFICATION_CODE_LOCKED' });
   if (!verifyPassword(code, row.code_hash)) {
-    const attempts = Number(row.attempts || 0) + 1;
-    await db.prepare('UPDATE auth_verification_codes SET attempts = ?, consumed_at = CASE WHEN ? >= ? THEN ? ELSE consumed_at END WHERE id = ?').run(attempts, attempts, AUTH_CODE_MAX_ATTEMPTS, now(), row.id);
+    const attemptedAt = now();
+    const updated = await db.prepare(`
+      UPDATE auth_verification_codes
+      SET attempts = attempts + 1,
+          consumed_at = CASE WHEN attempts + 1 >= ? THEN ? ELSE consumed_at END
+      WHERE id = ? AND consumed_at IS NULL AND attempts < ?
+    `).run(AUTH_CODE_MAX_ATTEMPTS, attemptedAt, row.id, AUTH_CODE_MAX_ATTEMPTS);
+    if (Number(updated.changes || 0) !== 1) {
+      throw Object.assign(new Error('验证码不存在或已过期'), { status: 400, code: 'VERIFICATION_CODE_EXPIRED' });
+    }
     throw Object.assign(new Error('验证码错误'), { status: 400, code: 'INVALID_VERIFICATION_CODE' });
   }
-  await db.prepare('UPDATE auth_verification_codes SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL').run(now(), row.id);
+  const consumed = await db.prepare(`
+    UPDATE auth_verification_codes
+    SET consumed_at = ?
+    WHERE id = ? AND consumed_at IS NULL AND attempts < ? AND expires_at > ?
+  `).run(now(), row.id, AUTH_CODE_MAX_ATTEMPTS, now());
+  if (Number(consumed.changes || 0) !== 1) {
+    throw Object.assign(new Error('验证码不存在或已过期'), { status: 400, code: 'VERIFICATION_CODE_EXPIRED' });
+  }
   return normalized;
 }
 
