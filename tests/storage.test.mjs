@@ -20,13 +20,15 @@ describe('storage adapter tenant-scoped contracts', () => {
     process.env.PUBLIC_UPLOAD_BASE_URL = '/files';
     delete process.env.S3_BUCKET;
     try {
-      const upload = await storeUpload({ filename: 'dish.png', contentType: 'image/png', dataBase64: pngBase64, tenantId: 'tenant-a' });
+      const upload = await storeUpload({ filename: 'dish.png', contentType: 'image/png', dataBase64: pngBase64, tenantId: 'tenant-a', ownerId: 'user-a' });
       assert.equal(upload.provider, 'local');
       assert.equal(upload.filename, 'dish.png');
       assert.equal(upload.contentType, 'image/png');
       assert.equal(upload.sizeBytes, Buffer.from(pngBase64, 'base64').length);
-      assert.match(upload.storageKey, /^tenant-a\/upload-[\w-]+\.png$/);
-      assert.equal(upload.url, `/files/${upload.storageKey}`);
+      assert.match(upload.storageKey, /^tenant-a\/user-a\/upload-[\w-]+\.png$/);
+      assert.equal(upload.reference, `upload://${upload.id}`);
+      assert.match(upload.url, new RegExp(`^/api/uploads/${upload.id}/content\\?expires=\\d+&signature=`));
+      assert.equal(upload.visibility, 'private');
       assert.equal(readFileSync(join(dir, upload.storageKey), 'utf8'), 'fake-image');
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -38,8 +40,8 @@ describe('storage adapter tenant-scoped contracts', () => {
     process.env.UPLOAD_DIR = dir;
     delete process.env.S3_BUCKET;
     try {
-      const upload = await storeUpload({ filename: 'dish.jpeg', contentType: 'image/jpeg', dataBase64: pngBase64, tenantId: '../tenant bad' });
-      assert.match(upload.storageKey, /^___tenant_bad\/upload-[\w-]+\.jpeg$/);
+      const upload = await storeUpload({ filename: 'dish.jpeg', contentType: 'image/jpeg', dataBase64: pngBase64, tenantId: '../tenant bad', ownerId: '../user bad' });
+      assert.match(upload.storageKey, /^___tenant_bad\/___user_bad\/upload-[\w-]+\.jpeg$/);
       assert.doesNotMatch(upload.storageKey, /\.\./);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -63,10 +65,11 @@ describe('storage adapter tenant-scoped contracts', () => {
     process.env.S3_SECRET_ACCESS_KEY = 'secret';
     process.env.S3_PUBLIC_URL = 'https://cdn.example.com/bucket';
 
-    const upload = await storeUpload({ filename: 'meal.webp', contentType: 'image/webp', dataBase64: pngBase64, tenantId: 'tenant-b' });
+    const upload = await storeUpload({ filename: 'meal.webp', contentType: 'image/webp', dataBase64: pngBase64, tenantId: 'tenant-b', ownerId: 'user-b' });
     assert.equal(upload.provider, 's3');
-    assert.match(upload.storageKey, /^tenant-b\/upload-[\w-]+\.webp$/);
-    assert.equal(upload.url, `https://cdn.example.com/bucket/${upload.storageKey}`);
+    assert.match(upload.storageKey, /^tenant-b\/user-b\/upload-[\w-]+\.webp$/);
+    assert.equal(upload.reference, `upload://${upload.id}`);
+    assert.match(upload.url, /^\/api\/uploads\/upload-[\w-]+\/content\?expires=\d+&signature=/);
     assert.equal(sent.length, 1);
     assert.equal(sent[0].input.Bucket, 'smart-canteen-uploads');
     assert.equal(sent[0].input.Key, upload.storageKey);

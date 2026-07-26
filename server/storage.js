@@ -1,24 +1,28 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, resolve } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, extname, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createSignedUploadUrl } from './security.js';
 
-let S3ClientCtor, PutObjectCommandCtor;
+let S3ClientCtor, PutObjectCommandCtor, GetObjectCommandCtor;
 try {
   const s3 = await import('@aws-sdk/client-s3');
   S3ClientCtor = s3.S3Client;
   PutObjectCommandCtor = s3.PutObjectCommand;
+  GetObjectCommandCtor = s3.GetObjectCommand;
 } catch {
   S3ClientCtor = null;
 }
 
-export function setS3ClientForTests(clientCtor, putObjectCommandCtor) {
+export function setS3ClientForTests(clientCtor, putObjectCommandCtor, getObjectCommandCtor = null) {
   S3ClientCtor = clientCtor;
   PutObjectCommandCtor = putObjectCommandCtor;
+  GetObjectCommandCtor = getObjectCommandCtor;
 }
 
 export function resetS3ClientForTests() {
   S3ClientCtor = null;
   PutObjectCommandCtor = null;
+  GetObjectCommandCtor = null;
 }
 
 const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -43,38 +47,45 @@ function validateUpload({ filename, contentType, dataBase64 }) {
   return buffer;
 }
 
-function scopedStorageKey(id, filename, contentType, tenantId = 'default') {
-  const safeTenant = String(tenantId || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `${safeTenant}/${id}${safeExtension(filename, contentType)}`;
+function safeSegment(value, fallback) {
+  return String(value || fallback).replace(/[^a-zA-Z0-9_-]/g, '_') || fallback;
 }
 
-function storeLocal(buffer, filename, contentType, tenantId = 'default') {
+function scopedStorageKey(id, filename, contentType, tenantId = 'default', ownerId = 'system') {
+  return `${safeSegment(tenantId, 'default')}/${safeSegment(ownerId, 'system')}/${id}${safeExtension(filename, contentType)}`;
+}
+
+function publicMetadata(id) {
+  return {
+    reference: `upload://${id}`,
+    url: createSignedUploadUrl(id),
+    visibility: 'private',
+    objectVersion: 'v1'
+  };
+}
+
+function storeLocal(buffer, filename, contentType, tenantId = 'default', ownerId = 'system') {
   const root = resolve(process.env.UPLOAD_DIR || 'uploads');
   const id = `upload-${randomUUID()}`;
-  const storageKey = scopedStorageKey(id, filename, contentType, tenantId);
+  const storageKey = scopedStorageKey(id, filename, contentType, tenantId, ownerId);
   const target = join(root, storageKey);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, buffer);
-  const publicBase = process.env.PUBLIC_UPLOAD_BASE_URL || '/uploads';
   return {
     id,
     filename,
     contentType,
     sizeBytes: buffer.length,
     storageKey,
-    url: `${publicBase}/${storageKey}`,
-    provider: 'local'
+    provider: 'local',
+    ...publicMetadata(id)
   };
 }
 
-async function storeS3(buffer, filename, contentType, tenantId = 'default') {
-  const bucket = process.env.S3_BUCKET;
+function s3Client() {
   const region = process.env.S3_REGION || 'us-east-1';
   const endpoint = process.env.S3_ENDPOINT || undefined;
-  const id = `upload-${randomUUID()}`;
-  const storageKey = scopedStorageKey(id, filename, contentType, tenantId);
-
-  const client = new S3ClientCtor({
+  return new S3ClientCtor({
     region,
     ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
     credentials: {
@@ -82,36 +93,72 @@ async function storeS3(buffer, filename, contentType, tenantId = 'default') {
       secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || ''
     }
   });
+}
 
-  await client.send(new PutObjectCommandCtor({
+async function storeS3(buffer, filename, contentType, tenantId = 'default', ownerId = 'system') {
+  const bucket = process.env.S3_BUCKET;
+  const id = `upload-${randomUUID()}`;
+  const storageKey = scopedStorageKey(id, filename, contentType, tenantId, ownerId);
+  await s3Client().send(new PutObjectCommandCtor({
     Bucket: bucket,
     Key: storageKey,
     Body: buffer,
     ContentType: contentType
   }));
-
-  const publicBase = process.env.S3_PUBLIC_URL
-    || (endpoint ? `${endpoint}/${bucket}` : `https://${bucket}.s3.${region}.amazonaws.com`);
   return {
     id,
     filename,
     contentType,
     sizeBytes: buffer.length,
     storageKey,
-    url: `${publicBase}/${storageKey}`,
-    provider: 's3'
+    provider: 's3',
+    ...publicMetadata(id)
   };
 }
 
-/**
- * Store an upload — routes to S3 when S3_BUCKET is configured, otherwise local.
- * Returns a plain object for local (sync) or a Promise for S3 (async).
- * The caller should `await` the result for portable code.
- */
-export function storeUpload({ filename, contentType, dataBase64, tenantId = 'default' }) {
+export function storeUpload({ filename, contentType, dataBase64, tenantId = 'default', ownerId = 'system' }) {
   const buffer = validateUpload({ filename, contentType, dataBase64 });
   if (S3ClientCtor && process.env.S3_BUCKET) {
-    return storeS3(buffer, filename, contentType, tenantId);
+    return storeS3(buffer, filename, contentType, tenantId, ownerId);
   }
-  return storeLocal(buffer, filename, contentType, tenantId);
+  return storeLocal(buffer, filename, contentType, tenantId, ownerId);
+}
+
+function safeLocalPath(storageKey) {
+  const root = resolve(process.env.UPLOAD_DIR || 'uploads');
+  const target = resolve(root, String(storageKey || ''));
+  if (target !== root && !target.startsWith(`${root}${sep}`)) {
+    throw Object.assign(new Error('上传对象路径无效'), { status: 400, code: 'INVALID_STORAGE_KEY' });
+  }
+  return target;
+}
+
+async function bodyToBuffer(body) {
+  if (!body) return Buffer.alloc(0);
+  if (Buffer.isBuffer(body)) return body;
+  if (typeof body.transformToByteArray === 'function') return Buffer.from(await body.transformToByteArray());
+  const chunks = [];
+  for await (const chunk of body) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+export async function readStoredUpload(upload) {
+  const provider = upload.storage_provider || upload.storageProvider || 'local';
+  if (provider === 's3') {
+    if (!S3ClientCtor || !GetObjectCommandCtor || !process.env.S3_BUCKET) {
+      throw Object.assign(new Error('对象存储读取未配置'), { status: 503, code: 'STORAGE_NOT_CONFIGURED' });
+    }
+    const response = await s3Client().send(new GetObjectCommandCtor({
+      Bucket: process.env.S3_BUCKET,
+      Key: upload.storage_key || upload.storageKey
+    }));
+    return {
+      body: await bodyToBuffer(response.Body),
+      contentType: response.ContentType || upload.content_type || upload.contentType || 'application/octet-stream'
+    };
+  }
+  return {
+    body: readFileSync(safeLocalPath(upload.storage_key || upload.storageKey)),
+    contentType: upload.content_type || upload.contentType || 'application/octet-stream'
+  };
 }
