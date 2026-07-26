@@ -6,6 +6,15 @@ const baseUrl = (__ENV.BASE_URL || 'http://host.docker.internal:18080/api').repl
 const vus = Math.max(1, Number(__ENV.VUS || 100));
 const duration = __ENV.DURATION || '5m';
 const accessToken = __ENV.ACCESS_TOKEN || '';
+const thinkTimeSeconds = Math.max(0.1, Number(__ENV.THINK_TIME_SECONDS || 1));
+
+function benchmarkClientIp() {
+  const index = Math.max(0, __VU - 1);
+  const scenarioOffset = { catalog: 0, session: 64, community: 128, agent: 192 }[scenario] || 224;
+  const thirdOctet = (scenarioOffset + Math.floor(index / 254)) % 256;
+  const fourthOctet = (index % 254) + 1;
+  return `198.18.${thirdOctet}.${fourthOctet}`;
+}
 
 const durationLimit = scenario === 'agent' ? 30_000 : 2_000;
 export const options = {
@@ -26,6 +35,7 @@ export const options = {
 function headers(authenticated = false) {
   return {
     'Content-Type': 'application/json',
+    'X-Forwarded-For': benchmarkClientIp(),
     ...(authenticated && accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
   };
 }
@@ -37,7 +47,9 @@ function expect(response, expectedStatus, name) {
 function catalogScenario() {
   const paths = ['/canteens', '/menus/today?mealType=lunch', '/rankings'];
   const path = paths[(__ITER + __VU) % paths.length];
-  const response = http.get(`${baseUrl}${path}`, { tags: { operation: path.split('?')[0] } });
+  const response = http.get(`${baseUrl}${path}`, {
+    headers: headers(Boolean(accessToken)), tags: { operation: path.split('?')[0] }
+  });
   expect(response, 200, path);
 }
 
@@ -81,5 +93,5 @@ export default function () {
   else if (scenario === 'community') communityScenario();
   else if (scenario === 'agent') agentScenario();
   else catalogScenario();
-  sleep(scenario === 'catalog' ? 0.1 : 0.5);
+  sleep(scenario === 'catalog' ? thinkTimeSeconds : 0.5);
 }

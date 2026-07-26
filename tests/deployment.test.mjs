@@ -155,6 +155,11 @@ describe('Deployment contract', () => {
     }
     assert.match(scenario, /http_req_failed/);
     assert.match(scenario, /http_req_duration/);
+    assert.match(scenario, /198\.18\./);
+    assert.match(scenario, /X-Forwarded-For/);
+    assert.match(scenario, /community: 128/);
+    assert.match(scenario, /THINK_TIME_SECONDS \|\| 1/);
+    assert.match(runner, /THINK_TIME_SECONDS/);
   });
 
   it('README documents CI quality gate', () => {

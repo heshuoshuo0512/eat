@@ -14,3 +14,8 @@ The session scenario requires `IDENTIFIER` and `PASSWORD`. Community writes
 require `ACCESS_TOKEN`, `TARGET_TYPE` and `TARGET_ID`, and must use a disposable
 test tenant. The Agent scenario is measured separately because model latency
 must not be mixed with ordinary API latency.
+
+The catalog scenario defaults to one request per VU per second and assigns each
+VU an address from the RFC 2544 benchmarking range. Run it only against the
+isolated stack with its configured trusted proxy CIDR; production clients cannot
+override their source address unless the request came through a trusted proxy.

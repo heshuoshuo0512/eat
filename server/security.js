@@ -125,17 +125,35 @@ export function opaqueTokenHash(value) {
 
 export function createRefreshToken(tenantId = 'default') {
   const tenant = Buffer.from(String(tenantId || 'default')).toString('base64url');
-  return `sc_rt_${tenant}_${randomBytes(48).toString('base64url')}`;
+  return `sc_rt_${tenant}.${randomBytes(48).toString('base64url')}`;
 }
 
-export function refreshTokenTenant(value) {
-  const match = String(value || '').match(/^sc_rt_([A-Za-z0-9_-]+)_[A-Za-z0-9_-]+$/);
-  if (!match) return '';
+function decodeRefreshTenant(segment) {
+  if (!/^[A-Za-z0-9_-]+$/.test(segment)) return '';
   try {
-    return Buffer.from(match[1], 'base64url').toString('utf8').slice(0, 80);
+    const bytes = Buffer.from(segment, 'base64url');
+    const tenant = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    if (Buffer.from(tenant).toString('base64url') !== segment) return '';
+    return /^[\p{L}\p{N}][\p{L}\p{N}._:-]{0,79}$/u.test(tenant) ? tenant : '';
   } catch {
     return '';
   }
+}
+
+export function refreshTokenTenant(value) {
+  const token = String(value || '');
+  const current = token.match(/^sc_rt_([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
+  if (current) return decodeRefreshTenant(current[1]);
+
+  // Legacy tokens used an ambiguous underscore delimiter. Try each separator
+  // from left to right and accept only a canonical, valid tenant identifier.
+  const legacy = token.match(/^sc_rt_([A-Za-z0-9_-]+)$/)?.[1] || '';
+  for (let index = legacy.indexOf('_'); index > 0; index = legacy.indexOf('_', index + 1)) {
+    if (!legacy.slice(index + 1)) continue;
+    const tenant = decodeRefreshTenant(legacy.slice(0, index));
+    if (tenant) return tenant;
+  }
+  return '';
 }
 
 function createSignedToken(user, { ttlSeconds, sessionId = '', tokenType = 'access' } = {}) {

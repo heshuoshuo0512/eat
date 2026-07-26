@@ -36,7 +36,7 @@ const dockerArguments = [
   '/scripts/smart-canteen.js'
 ];
 
-for (const name of ['ACCESS_TOKEN', 'IDENTIFIER', 'PASSWORD', 'TARGET_TYPE', 'TARGET_ID', 'AGENT_QUERY']) {
+for (const name of ['ACCESS_TOKEN', 'IDENTIFIER', 'PASSWORD', 'TARGET_TYPE', 'TARGET_ID', 'AGENT_QUERY', 'THINK_TIME_SECONDS']) {
   if (process.env[name]) dockerArguments.splice(4, 0, '-e', `${name}=${process.env[name]}`);
 }
 

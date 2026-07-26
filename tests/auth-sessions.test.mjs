@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
-import { createToken } from '../server/security.js';
+import { createRefreshToken, createToken, refreshTokenTenant } from '../server/security.js';
 
 let db;
 let server;
@@ -79,6 +79,17 @@ describe('rotating authentication sessions', { concurrency: false }, () => {
     assert.notEqual(refreshed.data.refreshToken, created.data.refreshToken);
     assert.notEqual(refreshed.data.accessToken, created.data.accessToken);
     assert.equal((await request('/api/orders', { token: refreshed.data.accessToken })).status, 200);
+  });
+
+  it('parses current and legacy refresh tokens without consuming random separators', () => {
+    for (let index = 0; index < 500; index += 1) {
+      const token = createRefreshToken('tenant-cn-01');
+      assert.match(token, /^sc_rt_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+      assert.equal(refreshTokenTenant(token), 'tenant-cn-01');
+    }
+    const legacyTenant = Buffer.from('default').toString('base64url');
+    assert.equal(refreshTokenTenant(`sc_rt_${legacyTenant}_random_part_with_underscores`), 'default');
+    assert.equal(refreshTokenTenant(createRefreshToken('测试校区-01')), '测试校区-01');
   });
 
   it('revokes the whole family when a rotated token is replayed', async () => {
