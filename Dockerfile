@@ -16,7 +16,9 @@ COPY server ./server
 COPY src ./src
 COPY migrations ./migrations
 COPY scripts/reindex-retrieval.mjs ./scripts/reindex-retrieval.mjs
+COPY scripts/migrate-postgres.mjs ./scripts/migrate-postgres.mjs
 COPY data/health-knowledge-bases ./knowledge/health-knowledge-bases
+COPY data/campus-dining-knowledge ./data/campus-dining-knowledge
 COPY --from=build /app/dist ./dist
 EXPOSE 8787
 CMD ["node", "server/index.js"]

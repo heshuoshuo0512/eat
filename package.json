@@ -10,8 +10,17 @@
     "dev:full": "node scripts/dev-full.js",
     "build": "vite build",
     "build:miniapp": "npm --prefix miniapp run build:mp-weixin",
+    "generate:campus-kb": "node scripts/generate-campus-dining-corpus.mjs",
+    "generate:campus-challenges": "node scripts/generate-campus-dining-challenges.mjs",
+    "generate:rag-simulation": "node scripts/generate-rag-simulation.mjs",
+    "validate:campus-kb": "node scripts/validate-campus-dining-corpus.mjs",
+    "eval:rag-local": "node scripts/evaluate-local-retrieval.mjs",
+    "eval:rag-simulation": "node scripts/evaluate-rag-simulation.mjs",
+    "trace:rag-requests": "node scripts/trace-rag-requests.mjs",
+    "perf:k6": "node scripts/run-k6.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:postgres-rls": "node --test tests/postgres-rls.integration.test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "latest",

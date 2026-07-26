@@ -1,43 +1,137 @@
 name: smart-canteen
 
 services:
+  db-roles:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smart_canteen}
+      POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-postgres}
+      POSTGRES_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:?set POSTGRES_MIGRATOR_PASSWORD in .env}
+      POSTGRES_API_PASSWORD: ${POSTGRES_API_PASSWORD:?set POSTGRES_API_PASSWORD in .env}
+      POSTGRES_WORKER_PASSWORD: ${POSTGRES_WORKER_PASSWORD:?set POSTGRES_WORKER_PASSWORD in .env}
+    volumes:
+      - ./scripts/create-postgres-roles.sql:/scripts/create-postgres-roles.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -ec
+      - >-
+        export PGPASSWORD="$${POSTGRES_ADMIN_PASSWORD}";
+        psql --host=postgres --username="$${POSTGRES_ADMIN_USER}" --dbname="$${POSTGRES_DB}"
+        -v migrator_password="$${POSTGRES_MIGRATOR_PASSWORD}"
+        -v api_password="$${POSTGRES_API_PASSWORD}"
+        -v worker_password="$${POSTGRES_WORKER_PASSWORD}"
+        --file=/scripts/create-postgres-roles.sql
+    restart: "no"
+
+  db-migrate:
+    build: .
+    image: smart-canteen-api:local
+    environment:
+      NODE_ENV: production
+      SMART_CANTEEN_SECRET: ${SMART_CANTEEN_SECRET:?set SMART_CANTEEN_SECRET in .env}
+      DB_DRIVER: postgres
+      DB_MIGRATE: 1
+      DATABASE_MIGRATION_URL: ${DOCKER_DATABASE_MIGRATION_URL:?set DOCKER_DATABASE_MIGRATION_URL in .env}
+      DATABASE_URL: ${DOCKER_DATABASE_MIGRATION_URL:?set DOCKER_DATABASE_MIGRATION_URL in .env}
+      PG_POOL_MAX: 1
+      PG_STATEMENT_TIMEOUT_MS: ${PG_STATEMENT_TIMEOUT_MS:-30000}
+      PG_QUERY_TIMEOUT_MS: ${PG_QUERY_TIMEOUT_MS:-30000}
+    depends_on:
+      db-roles:
+        condition: service_completed_successfully
+    command: ["node", "scripts/migrate-postgres.mjs"]
+    restart: "no"
+
+  db-grants:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smart_canteen}
+      POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-postgres}
+      POSTGRES_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      POSTGRES_MIGRATOR_PASSWORD: ${POSTGRES_MIGRATOR_PASSWORD:?set POSTGRES_MIGRATOR_PASSWORD in .env}
+      POSTGRES_API_PASSWORD: ${POSTGRES_API_PASSWORD:?set POSTGRES_API_PASSWORD in .env}
+      POSTGRES_WORKER_PASSWORD: ${POSTGRES_WORKER_PASSWORD:?set POSTGRES_WORKER_PASSWORD in .env}
+    volumes:
+      - ./scripts/provision-postgres-roles.sql:/scripts/provision-postgres-roles.sql:ro
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -ec
+      - >-
+        export PGPASSWORD="$${POSTGRES_ADMIN_PASSWORD}";
+        psql --host=postgres --username="$${POSTGRES_ADMIN_USER}" --dbname="$${POSTGRES_DB}"
+        -v migrator_password="$${POSTGRES_MIGRATOR_PASSWORD}"
+        -v api_password="$${POSTGRES_API_PASSWORD}"
+        -v worker_password="$${POSTGRES_WORKER_PASSWORD}"
+        --file=/scripts/provision-postgres-roles.sql
+    restart: "no"
+
   api:
     build: .
-    container_name: smart-canteen-api
+    image: smart-canteen-api:local
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 8787
       SMART_CANTEEN_SECRET: ${SMART_CANTEEN_SECRET:?set SMART_CANTEEN_SECRET in .env}
       DB_DRIVER: ${DB_DRIVER:-postgres}
-      DB_MIGRATE: ${DB_MIGRATE:-1}
+      DB_MIGRATE: 0
       HEALTH_KB_AUTOLOAD: ${HEALTH_KB_AUTOLOAD:-1}
       HEALTH_KB_DIR: ${HEALTH_KB_DIR:-/app/knowledge/health-knowledge-bases}
       HEALTH_KB_CHUNK_SIZE: ${HEALTH_KB_CHUNK_SIZE:-900}
       HEALTH_KB_CHUNK_OVERLAP: ${HEALTH_KB_CHUNK_OVERLAP:-120}
-      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgres://${POSTGRES_USER:-smart_canteen}:${POSTGRES_PASSWORD:-smart_canteen}@postgres:5432/${POSTGRES_DB:-smart_canteen}}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:?set DOCKER_DATABASE_URL in .env}
+      DATABASE_WORKER_URL: ${DOCKER_DATABASE_WORKER_URL:?set DOCKER_DATABASE_WORKER_URL in .env}
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+      PG_POOL_MIN: ${PG_POOL_MIN:-0}
+      PG_POOL_ACQUIRE_TIMEOUT_MS: ${PG_POOL_ACQUIRE_TIMEOUT_MS:-5000}
+      PG_POOL_IDLE_TIMEOUT_MS: ${PG_POOL_IDLE_TIMEOUT_MS:-30000}
+      PG_POOL_MAX_LIFETIME_SECONDS: ${PG_POOL_MAX_LIFETIME_SECONDS:-1800}
+      PG_STATEMENT_TIMEOUT_MS: ${PG_STATEMENT_TIMEOUT_MS:-10000}
+      PG_QUERY_TIMEOUT_MS: ${PG_QUERY_TIMEOUT_MS:-12000}
+      PG_IDLE_TRANSACTION_TIMEOUT_MS: ${PG_IDLE_TRANSACTION_TIMEOUT_MS:-15000}
       SMART_CANTEEN_DB: /app/data/smart-canteen.sqlite
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      REDIS_REQUIRED: ${REDIS_REQUIRED:-1}
+      REDIS_CONNECT_TIMEOUT_MS: ${REDIS_CONNECT_TIMEOUT_MS:-3000}
+      REDIS_COMMAND_TIMEOUT_MS: ${REDIS_COMMAND_TIMEOUT_MS:-2000}
+      MEMORY_CACHE_MAX_ENTRIES: ${MEMORY_CACHE_MAX_ENTRIES:-2000}
+      OUTBOX_WORKER_ENABLED: ${OUTBOX_WORKER_ENABLED:-1}
+      OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
+      OUTBOX_LOCK_TIMEOUT_MS: ${OUTBOX_LOCK_TIMEOUT_MS:-60000}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-8}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+      INTERNAL_METRICS_TOKEN: ${INTERNAL_METRICS_TOKEN:-}
+      ALLOW_LEGACY_STATELESS_TOKENS: ${ALLOW_LEGACY_STATELESS_TOKENS:-0}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-15000}
       UPLOAD_DIR: /app/uploads
-      PUBLIC_UPLOAD_BASE_URL: ${PUBLIC_UPLOAD_BASE_URL:-/uploads}
+      UPLOAD_URL_TTL_SECONDS: ${UPLOAD_URL_TTL_SECONDS:-900}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-smart-canteen}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-smart-canteen-secret}
-      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9000/smart-canteen-uploads}
     volumes:
       - smart_canteen_data:/app/data
       - smart_canteen_uploads:/app/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-grants:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     ports:
-      - "8787:8787"
+      - "127.0.0.1:${API_PORT:-8787}:8787"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -45,13 +139,14 @@ services:
 
   postgres:
     image: pgvector/pgvector:pg17
-    container_name: smart-canteen-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-smart_canteen}
-      POSTGRES_USER: ${POSTGRES_USER:-smart_canteen}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smart_canteen}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
     volumes:
       - smart_canteen_pg:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -61,7 +156,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: smart-canteen-redis
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - smart_canteen_redis:/data
@@ -74,7 +168,6 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: smart-canteen-minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smart-canteen}
@@ -82,8 +175,8 @@ services:
     volumes:
       - smart_canteen_minio:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -91,18 +184,35 @@ services:
       retries: 20
     restart: unless-stopped
 
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smart-canteen}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-smart-canteen-secret}
+      S3_BUCKET: ${S3_BUCKET:-}
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -ec
+      - >-
+        if [ -n "$${S3_BUCKET}" ]; then
+          mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
+          mc mb --ignore-existing "local/$${S3_BUCKET}";
+        fi
+    restart: "no"
+
   nginx:
     image: nginx:1.27-alpine
-    container_name: smart-canteen-nginx
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./dist:/usr/share/nginx/html:ro
-      - smart_canteen_uploads:/usr/share/nginx/uploads:ro
     depends_on:
       api:
         condition: service_healthy
     ports:
-      - "8080:80"
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
       interval: 10s

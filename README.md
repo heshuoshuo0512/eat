@@ -226,16 +226,15 @@ node --test tests/enterprise-api.test.mjs # 企业 API 测试
 | `AI_API_KEY` | 无 | 可选：启动时默认 AI key |
 | `AI_BASE_URL` | `https://api.openai.com/v1` | AI 服务地址 |
 | `S3_BUCKET` | 无 | 配置后切换到 S3/MinIO 对象存储 |
-| `S3_PUBLIC_URL` | 无 | 公共桶或 CDN 基础地址；私有桶不配置 |
-| `PUBLIC_UPLOAD_BASE_URL` | `/uploads` | 本地上传的公开访问前缀 |
+| `UPLOAD_URL_TTL_SECONDS` | `900` | 上传内容短期签名 URL 的有效秒数 |
 
 ### 菜单、AI 配额与上传运维
 
 - `GET /api/menus/today` 返回今日真实供餐；`source=menu` 表示来自已发布菜单，`source=fallback` 表示菜品库兜底。
 - `POST /api/admin/menus/batch` 批量发布菜单时会事务化校验食堂和菜品归属，任一条失败则整批回滚。
 - `GET /api/admin/ai-usage` 查看租户 AI 用量和 AI 月额度；额度耗尽时 AI 请求返回 `429`，不会静默绕过限制。
-- 默认使用 `UPLOAD_DIR` 本地存储；设置 `S3_BUCKET` 后使用 S3/MinIO。对象键统一为 `tenant_id/upload-uuid.ext`，接口返回 `provider` 与 `storageKey`。
-- 生产 bucket 私有化，通过 signed URL 提供限时访问；只有明确使用公共桶或 CDN 时才配置 `S3_PUBLIC_URL`。
+- 默认使用 `UPLOAD_DIR` 本地存储；设置 `S3_BUCKET` 后使用 S3/MinIO。对象键统一为 `tenant_id/user_id/upload-uuid.ext`，接口返回 `provider`、`storageKey`、持久化 `upload://<id>` 引用和短期访问 URL。
+- 本地目录与生产 bucket 均保持私有，Nginx 不直接暴露上传卷；图片通过所有者/管理员鉴权或 API 签发的 `/api/uploads/{id}/content` 限时 URL 读取。
 
 ## RAG 和 Agent 设计
 

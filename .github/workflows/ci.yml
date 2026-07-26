@@ -2,8 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+      - 'codex/release-candidate-*'
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,11 +16,18 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       AI_API_KEY: ''
       OPENAI_API_KEY: ''
       SMART_CANTEEN_SECRET: ci-smart-canteen-secret-change-me
+      POSTGRES_ADMIN_PASSWORD: ci-postgres-admin
+      POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator
+      POSTGRES_API_PASSWORD: ci-postgres-api
+      POSTGRES_WORKER_PASSWORD: ci-postgres-worker
+      DOCKER_DATABASE_MIGRATION_URL: postgres://smart_canteen_migrator:ci-postgres-migrator@postgres:5432/smart_canteen
+      DOCKER_DATABASE_URL: postgres://smart_canteen_api:ci-postgres-api@postgres:5432/smart_canteen
+      DOCKER_DATABASE_WORKER_URL: postgres://smart_canteen_worker:ci-postgres-worker@postgres:5432/smart_canteen
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,6 +48,10 @@ jobs:
           node --check server/storage.js
           node --check server/migrations.js
           node --check server/rbac.js
+          node --check server/outbox.js
+          node --check server/metrics.js
+          node --check server/network.js
+          node --check server/modules/auth/sessionService.js
 
       - name: Run full test suite
         run: npm test
@@ -44,8 +59,70 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Install miniapp dependencies
+        run: npm --prefix miniapp ci
+
+      - name: Build WeChat miniapp
+        run: npm run build:miniapp
+
       - name: Validate Docker Compose config
         run: docker compose config --quiet
 
       - name: Docker build smoke
         run: docker build -t smart-canteen-ci .
+
+  postgres-rls:
+    name: PostgreSQL roles and RLS
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SMART_CANTEEN_SECRET: ci-smart-canteen-secret-change-me
+      POSTGRES_ADMIN_PASSWORD: ci-postgres-admin
+      POSTGRES_MIGRATOR_PASSWORD: ci-postgres-migrator
+      POSTGRES_API_PASSWORD: ci-postgres-api
+      POSTGRES_WORKER_PASSWORD: ci-postgres-worker
+      POSTGRES_PORT: 55432
+      API_PORT: 18787
+      WEB_PORT: 18080
+      MINIO_API_PORT: 19000
+      MINIO_CONSOLE_PORT: 19001
+      DOCKER_DATABASE_MIGRATION_URL: postgres://smart_canteen_migrator:ci-postgres-migrator@postgres:5432/smart_canteen
+      DOCKER_DATABASE_URL: postgres://smart_canteen_api:ci-postgres-api@postgres:5432/smart_canteen
+      DOCKER_DATABASE_WORKER_URL: postgres://smart_canteen_worker:ci-postgres-worker@postgres:5432/smart_canteen
+      TEST_POSTGRES_MIGRATION_URL: postgres://smart_canteen_migrator:ci-postgres-migrator@127.0.0.1:55432/smart_canteen
+      TEST_POSTGRES_API_URL: postgres://smart_canteen_api:ci-postgres-api@127.0.0.1:55432/smart_canteen
+      TEST_POSTGRES_WORKER_URL: postgres://smart_canteen_worker:ci-postgres-worker@127.0.0.1:55432/smart_canteen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start isolated PostgreSQL stack
+        run: docker compose -p smart-canteen-ci-rls up -d --build api
+
+      - name: Wait for API readiness
+        run: |
+          for attempt in $(seq 1 60); do
+            curl --fail --silent http://127.0.0.1:18787/api/health/ready && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Verify PostgreSQL RLS
+        run: npm run test:postgres-rls
+
+      - name: Print service logs on failure
+        if: failure()
+        run: docker compose -p smart-canteen-ci-rls logs --no-color
+
+      - name: Stop isolated stack
+        if: always()
+        run: docker compose -p smart-canteen-ci-rls down --volumes --remove-orphans

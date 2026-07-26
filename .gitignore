@@ -1,4 +1,11 @@
 node_modules/
+.codex-worktrees/
+.deploy-*.bundle
+.idea/
+.local-ollama-models/
+.performance-results/
+.rag-evals/
+.rag-simulations/
 dist/
 data/*.sqlite
 data/*.sqlite-shm
@@ -6,6 +13,7 @@ data/*.sqlite-wal
 uploads/*
 !uploads/.gitkeep
 .env
+.env.rc*
 *.log
 .DS_Store
 Thumbs.db

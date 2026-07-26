@@ -11,21 +11,61 @@ function readText(path) {
 }
 
 describe('Deployment contract', () => {
-  it('compose stack includes API, PostgreSQL, Redis, MinIO and Nginx health checks', () => {
+  it('compose stack separates role creation, migration, grants and runtime services', () => {
     const compose = readText('docker-compose.yml');
-    for (const service of ['api:', 'postgres:', 'redis:', 'minio:', 'nginx:']) {
+    for (const service of ['db-roles:', 'db-migrate:', 'db-grants:', 'api:', 'postgres:', 'redis:', 'minio:', 'minio-init:', 'nginx:']) {
       assert.match(compose, new RegExp(`\\n  ${service}`));
     }
     assert.match(compose, /SMART_CANTEEN_SECRET: \$\{SMART_CANTEEN_SECRET:\?set SMART_CANTEEN_SECRET in \.env\}/);
-    assert.match(compose, /DB_MIGRATE: \$\{DB_MIGRATE:-1\}/);
+    assert.match(compose, /DATABASE_MIGRATION_URL: \$\{DOCKER_DATABASE_MIGRATION_URL:/);
+    assert.match(compose, /DATABASE_URL: \$\{DOCKER_DATABASE_URL:/);
+    assert.match(compose, /DATABASE_WORKER_URL: \$\{DOCKER_DATABASE_WORKER_URL:/);
+    assert.match(compose, /DB_MIGRATE: 0/);
+    assert.match(compose, /service_completed_successfully/);
+    assert.match(compose, /\/api\/health\/ready/);
     assert.match(compose, /S3_BUCKET: \$\{S3_BUCKET:-\}/);
     assert.match(compose, /condition: service_healthy/);
+    assert.doesNotMatch(compose, /container_name:/);
+    assert.match(compose, /POSTGRES_PORT:-55432/);
+    assert.match(compose, /WEB_PORT:-8080/);
+    const apiService = compose.slice(compose.indexOf('\n  api:'), compose.indexOf('\n  postgres:'));
+    assert.doesNotMatch(apiService, /DATABASE_MIGRATION_URL/);
+  });
+
+  it('provides an explicit existing-database ownership handoff', () => {
+    const script = readText('scripts/reassign-postgres-owner.sql');
+    assert.match(script, /legacy_owner is required/);
+    assert.match(script, /REASSIGN OWNED BY :"legacy_owner" TO smart_canteen_migrator/);
+  });
+
+  it('packages both retrieval knowledge bases in the runtime image', () => {
+    const dockerfile = readText('Dockerfile');
+    assert.match(dockerfile, /COPY data\/health-knowledge-bases \.\/knowledge\/health-knowledge-bases/);
+    assert.match(dockerfile, /COPY data\/campus-dining-knowledge \.\/data\/campus-dining-knowledge/);
   });
 
   it('environment template documents production secrets and storage switches', () => {
     const env = readText('.env.example');
-    for (const key of ['SMART_CANTEEN_SECRET=', 'DB_DRIVER=postgres', 'DB_MIGRATE=1', 'DATABASE_URL=', 'REDIS_URL=', 'S3_BUCKET=', 'S3_ENDPOINT=', 'AI_BASE_URL=']) {
+    for (const key of [
+      'SMART_CANTEEN_SECRET=', 'DB_DRIVER=postgres', 'DB_MIGRATE=0',
+      'DATABASE_MIGRATION_URL=', 'DATABASE_URL=', 'DATABASE_WORKER_URL=',
+      'PG_POOL_MAX=', 'REDIS_URL=', 'REDIS_REQUIRED=1', 'OUTBOX_WORKER_ENABLED=1',
+      'TRUSTED_PROXY_CIDRS=', 'INTERNAL_METRICS_TOKEN=', 'UPLOAD_URL_TTL_SECONDS=',
+      'S3_BUCKET=', 'S3_ENDPOINT=', 'AI_BASE_URL='
+    ]) {
       assert.match(env, new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+  });
+
+  it('documents the role-separated RLS cutover and rollback order', () => {
+    const runbook = readText('docs/后端架构与RLS部署手册-2026-07-26.md');
+    for (const text of [
+      'smart_canteen_migrator', 'smart_canteen_api', 'smart_canteen_worker',
+      'scripts/create-postgres-roles.sql', 'scripts/migrate-postgres.mjs',
+      'scripts/provision-postgres-roles.sql', 'npm run test:postgres-rls',
+      '/api/health/ready', 'REDIS_REQUIRED=1', '回滚'
+    ]) {
+      assert.match(runbook, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
   });
 
@@ -64,27 +104,57 @@ describe('Deployment contract', () => {
     assert.match(readme, /返回 `429`/);
   });
 
-  it('OpenAPI documents tenant-scoped upload storage metadata', () => {
+  it('OpenAPI documents rotating sessions, probes, metrics and private uploads', () => {
     const openapi = readText('openapi/smart-canteen.yaml');
-    for (const text of ['tenant_id/upload-uuid.ext', 'provider', 'storageKey', 'S3_BUCKET', 'S3/MinIO', 'PUBLIC_UPLOAD_BASE_URL', 'S3_PUBLIC_URL']) {
+    for (const text of [
+      '/auth/refresh:', '/auth/logout:', '/auth/logout-all:', 'AuthSessionResponse:',
+      '/health/live:', '/health/ready:', '/internal/metrics:', 'RuntimeMetrics:',
+      '/uploads/{id}/content:', 'tenant_id/user_id/upload-uuid.ext', 'upload://upload-uuid',
+      'Short-lived signed', 'private S3/MinIO bucket'
+    ]) {
       assert.match(openapi, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
+    assert.doesNotMatch(openapi, /PUBLIC_UPLOAD_BASE_URL|S3_PUBLIC_URL/);
+  });
+
+  it('does not expose the local private upload volume through Nginx', () => {
+    const nginx = readText('nginx/nginx.conf');
+    assert.doesNotMatch(nginx, /location \/uploads\//);
+    assert.match(nginx, /location \/api\//);
   });
 
   it('README documents local and S3 upload storage contracts', () => {
     const readme = readText('README.md');
-    for (const text of ['S3_BUCKET', 'UPLOAD_DIR', 'tenant_id/upload-uuid.ext', 'provider', 'storageKey', 'signed URL', 'bucket 私有化']) {
+    for (const text of [
+      'S3_BUCKET', 'UPLOAD_DIR', 'tenant_id/user_id/upload-uuid.ext', 'provider', 'storageKey',
+      'upload://<id>', '/api/uploads/{id}/content', '均保持私有'
+    ]) {
       assert.match(readme, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
   });
 
   it('CI workflow enforces tests build compose and docker gates', () => {
     const workflow = readText('.github/workflows/ci.yml');
-    for (const text of ['npm ci', 'node --check server/app.js', 'npm test', 'npm run build', 'docker compose config --quiet', 'docker build -t smart-canteen-ci .']) {
+    for (const text of ['npm ci', 'node --check server/app.js', 'node --check server/outbox.js', 'npm test', 'npm run build', 'docker compose config --quiet', 'docker build -t smart-canteen-ci .']) {
       assert.match(workflow, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(workflow, /AI_API_KEY: ''/);
     assert.match(workflow, /OPENAI_API_KEY: ''/);
+    assert.match(workflow, /codex\/release-candidate-\*/);
+    assert.match(workflow, /workflow_dispatch:/);
+    assert.match(workflow, /npm run build:miniapp/);
+    assert.match(workflow, /npm run test:postgres-rls/);
+  });
+
+  it('ships Docker-based k6 scenarios without a runtime dependency', () => {
+    const runner = readText('scripts/run-k6.mjs');
+    const scenario = readText('tests/performance/smart-canteen.js');
+    assert.match(runner, /grafana\/k6:0\.54\.0/);
+    for (const name of ['catalog', 'session', 'community', 'agent']) {
+      assert.match(scenario, new RegExp(name));
+    }
+    assert.match(scenario, /http_req_failed/);
+    assert.match(scenario, /http_req_duration/);
   });
 
   it('README documents CI quality gate', () => {
@@ -108,6 +178,21 @@ describe('Request tracing', () => {
       assert.equal(res.status, 200);
       assert.deepEqual(data, { ok: true });
       assert.equal(res.headers.get('x-request-id'), 'trace-test-1');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('echoes request id on ordinary successful API responses', async () => {
+    const db = openDatabase(':memory:');
+    const app = createApp({ db });
+    const server = createServer(app.handler);
+    await new Promise((resolve) => server.listen(0, resolve));
+    try {
+      const baseUrl = `http://127.0.0.1:${server.address().port}`;
+      const res = await fetch(`${baseUrl}/api/canteens`, { headers: { 'X-Request-Id': 'trace-success-1' } });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('x-request-id'), 'trace-success-1');
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

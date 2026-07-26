@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Smart Canteen Enterprise MVP API
-  version: 0.7.0
+  version: 0.9.0
   description: Database-backed campus smart canteen API with RBAC, tenant management, menu operations, authenticated uploads, student review overview, moderated campus posts, dual retrieval workflows, RAG evidence, agent routing, vision meal analysis, AI usage metering and quota governance. RAG is used for recall and explanation only; tenant authorization, price, inventory, sold-out state, serving windows and allergen constraints always come from relational SQL data.
 servers:
   - url: /api
@@ -13,6 +13,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    internalMetricsToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
   schemas:
     Error:
       type: object
@@ -106,19 +110,102 @@ components:
           items: { $ref: '#/components/schemas/AdminCatalogStallNode' }
     LoginRequest:
       type: object
-      required: [username, password]
+      required: [identifier, password]
       properties:
-        username: { type: string }
+        identifier: { type: string, description: Student phone number or legacy username/account. }
+        username: { type: string, deprecated: true, description: Compatibility alias for identifier. }
         password: { type: string }
+    VerificationCodeRequest:
+      type: object
+      required: [phone, purpose]
+      properties:
+        phone: { type: string, pattern: '^1[3-9]\d{9}$' }
+        purpose: { type: string, enum: [register, reset_password] }
     RegisterRequest:
       type: object
-      required: [username, password]
-      description: Public registration always creates a student; role is ignored.
+      required: [phone, verificationCode, password, agreementVersion]
+      description: Public registration always creates a student with a pending health-profile onboarding state.
       properties:
-        username: { type: string }
-        password: { type: string }
+        phone: { type: string, pattern: '^1[3-9]\d{9}$' }
+        verificationCode: { type: string, pattern: '^\d{6}$' }
+        password: { type: string, minLength: 8, maxLength: 72, description: Must contain at least one letter and one digit. }
         nickname: { type: string }
-        role: { type: string, description: Ignored; always student. }
+        agreementVersion: { type: string, maxLength: 32 }
+    WechatLoginRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string, description: Temporary code returned by uni.login/wx.login. }
+        phoneCode: { type: string, description: One-time getPhoneNumber code. Required when creating or binding an account. }
+        agreementVersion: { type: string, maxLength: 32, description: Required for a newly created or newly bound account. }
+        profile:
+          type: object
+          properties:
+            nickName: { type: string, maxLength: 32 }
+    PasswordResetRequest:
+      type: object
+      required: [phone, verificationCode, newPassword]
+      properties:
+        phone: { type: string, pattern: '^1[3-9]\d{9}$' }
+        verificationCode: { type: string, pattern: '^\d{6}$' }
+        newPassword: { type: string, minLength: 8, maxLength: 72, description: Must contain at least one letter and one digit. }
+    PublicUser:
+      type: object
+      properties:
+        id: { type: string }
+        username: { type: string }
+        nickname: { type: string }
+        role: { type: string }
+        tenantId: { type: string }
+        maskedPhone: { type: string, example: '138****8000' }
+        phoneVerified: { type: boolean }
+    AuthSessionResponse:
+      type: object
+      required: [user, token, accessToken, refreshToken, expiresIn, refreshExpiresIn]
+      properties:
+        user: { $ref: '#/components/schemas/PublicUser' }
+        token: { type: string, description: Compatibility alias for accessToken. }
+        accessToken: { type: string, description: Short-lived JWT; default lifetime is 15 minutes. }
+        refreshToken: { type: string, description: Opaque rotating token; default session lifetime is 30 days. }
+        expiresIn: { type: integer, example: 900 }
+        refreshExpiresIn: { type: integer, example: 2592000 }
+        state: { type: object, description: Initial application state returned by login and registration endpoints. }
+        isNewUser: { type: boolean }
+    RefreshTokenRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    LogoutRequest:
+      type: object
+      properties:
+        refreshToken: { type: string, description: Allows revoking the session when the Access Token has expired. }
+    ReadinessResponse:
+      type: object
+      required: [ok, status, checks]
+      properties:
+        ok: { type: boolean }
+        status: { type: string, enum: [ready, not_ready] }
+        checks:
+          type: object
+          properties:
+            database: { type: boolean }
+            cache:
+              type: object
+              properties:
+                ok: { type: boolean }
+                backend: { type: string, enum: [redis, memory, unknown] }
+                distributed: { type: boolean }
+                degraded: { type: boolean }
+    RuntimeMetrics:
+      type: object
+      properties:
+        process: { type: object }
+        http: { type: object, description: Request totals, in-flight count, errors, p50/p95/p99 and status totals. }
+        eventLoop: { type: object, description: Mean, p95 and maximum event-loop delay in milliseconds. }
+        database: { type: object, description: PostgreSQL pool total, idle, waiting and configured maximum. }
+        cache: { type: object }
+        outbox: { type: object, description: Pending, processing and dead event counts. }
     UploadRequest:
       type: object
       required: [filename, contentType, dataBase64]
@@ -128,13 +215,17 @@ components:
         dataBase64: { type: string }
     Upload:
       type: object
+      required: [id, filename, contentType, sizeBytes, storageKey, provider, reference, url, visibility, objectVersion]
       properties:
         id: { type: string }
         filename: { type: string }
         contentType: { type: string }
         sizeBytes: { type: integer }
-        storageKey: { type: string, description: Tenant-scoped key in the form tenant_id/upload-uuid.ext; tenant id is sanitized before key generation. }
-        url: { type: string, description: Public URL from PUBLIC_UPLOAD_BASE_URL or S3_PUBLIC_URL. }
+        storageKey: { type: string, description: Private owner-scoped key in the form tenant_id/user_id/upload-uuid.ext; path segments are sanitized before key generation. }
+        reference: { type: string, example: 'upload://upload-uuid', description: Persistent database reference. Store this value instead of the expiring URL. }
+        url: { type: string, description: 'Short-lived signed /api/uploads/{id}/content URL.' }
+        visibility: { type: string, enum: [private] }
+        objectVersion: { type: string, example: v1 }
         provider: { type: string, enum: [local, s3], description: local when S3_BUCKET is unset; s3 when S3_BUCKET and S3 client are configured. }
     AgentRequest:
       type: object
@@ -366,7 +457,7 @@ components:
         includeIngredients: { type: array, items: { type: string } }
         avoidIngredients: { type: array, items: { type: string } }
         allergens: { type: array, items: { type: string } }
-        dietaryPattern: { type: string, enum: [balanced, vegetarian, vegan] }
+        dietaryPattern: { type: string, enum: [unrestricted, balanced, pescatarian, vegetarian, vegan] }
         minProtein: { type: number, minimum: 0 }
         minFiber: { type: number, minimum: 0 }
         maxCalories: { type: number, minimum: 0 }
@@ -411,6 +502,58 @@ components:
         remaining: { type: integer, minimum: 0, nullable: true }
         servingStart: { type: string, nullable: true }
         servingEnd: { type: string, nullable: true }
+    SafetyDeclaration:
+      type: object
+      required: [allergenCode, status, source, dataVersion]
+      properties:
+        allergenCode: { type: string, description: Canonical allergen code; '*' means the requested allergen has not been individually verified. }
+        status: { type: string, enum: [confirmed_absent, confirmed_present, unknown, cross_contact_possible] }
+        source: { type: string }
+        verifiedBy: { type: string, nullable: true }
+        verifiedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        dataVersion: { type: string }
+        requestedAllergen: { type: string, nullable: true }
+    DishSafety:
+      type: object
+      required: [status, blocked, declarations, unknownAllergens, matchedAllergens]
+      description: Safety is independent from retrieval confidence. Unknown never means confirmed absent.
+      properties:
+        status: { type: string, enum: [not_applicable, blocked, unknown, confirmed_absent] }
+        blocked: { type: boolean }
+        declarations: { type: array, items: { $ref: '#/components/schemas/SafetyDeclaration' } }
+        unknownAllergens: { type: array, items: { type: string } }
+        matchedAllergens: { type: array, items: { type: string } }
+    DishDataQuality:
+      type: object
+      required: [completeness, freshness, checks, source, dataVersion, synthetic]
+      properties:
+        completeness: { type: number, minimum: 0, maximum: 1 }
+        freshness: { type: number, minimum: 0, maximum: 1 }
+        checks: { type: object, additionalProperties: { type: boolean } }
+        source: { type: string }
+        verifiedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        dataVersion: { type: string }
+        synthetic: { type: boolean, description: Synthetic records are local-test only and are rejected in production mode. }
+    RetrievalConfidence:
+      type: object
+      required: [level, score, factors, calibrated, note]
+      description: Composite retrieval and data-quality signal; it is not raw cosine similarity and is not a medical safety probability.
+      properties:
+        level: { type: string, enum: [high, medium, low] }
+        score: { type: number, minimum: 0, maximum: 1 }
+        factors:
+          type: object
+          properties:
+            channelAgreement: { type: number, minimum: 0, maximum: 1 }
+            semanticSupport: { type: number, minimum: 0, maximum: 1 }
+            rankSeparation: { type: number, minimum: 0, maximum: 1 }
+            factCompleteness: { type: number, minimum: 0, maximum: 1 }
+            sourceQuality: { type: number, minimum: 0, maximum: 1 }
+            freshness: { type: number, minimum: 0, maximum: 1 }
+        calibrated: { type: boolean }
+        note: { type: string }
     DishSearchItem:
       type: object
       required: [id, name, price, availability, matchReasons, retrievalScore]
@@ -435,8 +578,12 @@ components:
         rating: { type: number }
         reviewCount: { type: integer }
         availability: { $ref: '#/components/schemas/DishAvailability' }
+        safety: { $ref: '#/components/schemas/DishSafety' }
+        dataQuality: { $ref: '#/components/schemas/DishDataQuality' }
+        confidence: { $ref: '#/components/schemas/RetrievalConfidence' }
         matchReasons: { type: array, items: { type: string } }
         retrievalScore: { type: number }
+        retrievalBreakdown: { type: object, additionalProperties: { type: number }, description: Internal channel contributions; clients should display confidence instead of these raw values. }
     SuggestedRelaxation:
       type: object
       required: [filter, message]
@@ -447,8 +594,11 @@ components:
       type: object
       required: [code, message]
       properties:
-        code: { type: string, examples: [NO_ORDERABLE_MENU, RETRIEVAL_DEGRADED, NO_COMBINATION_WITHIN_BUDGET] }
+        code: { type: string, examples: [ALLERGEN_UNVERIFIED, PROFILE_INCOMPLETE, QUERY_REQUIREMENT_CONFLICT, NO_ORDERABLE_MENU, RETRIEVAL_DEGRADED, NO_COMBINATION_WITHIN_BUDGET] }
         message: { type: string }
+        dishId: { type: string, nullable: true }
+        allergens: { type: array, items: { type: string } }
+        requiresConfirmation: { type: boolean }
     RetrievalCitation:
       type: object
       required: [sourceId, sourceType, title]
@@ -497,6 +647,8 @@ components:
       required: [interpreted, items, availability, matchReasons, suggestedRelaxations, page, meta]
       properties:
         interpreted: { type: object }
+        confidence: { $ref: '#/components/schemas/RetrievalConfidence' }
+        warnings: { type: array, items: { $ref: '#/components/schemas/RetrievalWarning' } }
         items:
           type: array
           items: { $ref: '#/components/schemas/DishSearchItem' }
@@ -577,6 +729,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/RecommendationItem' }
         mealPlan: { $ref: '#/components/schemas/MealPlan' }
+        confidence: { $ref: '#/components/schemas/RetrievalConfidence' }
         evidence: { $ref: '#/components/schemas/RetrievalEvidence' }
         warnings:
           type: array
@@ -626,7 +779,7 @@ components:
         ready: { type: boolean }
         mode: { type: string, enum: [hybrid, lexical_fallback] }
         indexVersion: { type: string }
-        embeddingDimension: { type: integer, enum: [1536] }
+        embeddingDimension: { type: integer, minimum: 1, examples: [1024, 1536], description: Local experimental indexes may use 1024 dimensions; the production PostgreSQL contract remains 1536 until an explicit migration. }
         documentCount: { type: integer }
         embeddedCount: { type: integer }
         sourceCounts: { type: array, items: { type: object } }
@@ -706,11 +859,29 @@ components:
         cuisine: { type: string }
         regionalTaste: { type: string }
         ingredients: { type: array, items: { type: string } }
+        seasonings: { type: array, items: { type: string } }
+        additives: { type: array, items: { type: string } }
         tags: { type: array, items: { type: string } }
         allergens: { type: array, items: { type: string } }
+        safetyDeclarations: { type: array, items: { $ref: '#/components/schemas/SafetyDeclaration' } }
+        dietaryLabels:
+          type: array
+          description: Structured dietary labels used as hard recommendation filters; labels are not inferred from names or ingredients.
+          items: { type: string, enum: [pescatarian, vegetarian, vegan] }
         halal: { type: boolean }
         mealTypes: { type: array, items: { type: string } }
         nutrition: { type: object }
+        nutritionFactStatus: { type: string, enum: [unknown, estimated, verified] }
+        recipeFactStatus: { type: string, enum: [unknown, estimated, verified] }
+        halalFactStatus: { type: string, enum: [unknown, estimated, verified] }
+        dietaryFactStatus: { type: string, enum: [unknown, estimated, verified] }
+        spiceLevel: { type: integer, minimum: 0, maximum: 5, nullable: true }
+        spiceFactStatus: { type: string, enum: [unknown, estimated, verified] }
+        factSource: { type: string }
+        factVerifiedAt: { type: string, format: date-time, nullable: true }
+        factExpiresAt: { type: string, format: date-time, nullable: true }
+        dataVersion: { type: string }
+        synthetic: { type: boolean, readOnly: true, description: Local simulation records only; production API writes reject synthetic=true. }
         imageUrl: { type: string, nullable: true }
         description: { type: string }
     ReviewStatusUpdate:
@@ -720,19 +891,29 @@ components:
         status: { type: string, enum: [approved, pending, rejected] }
     HealthProfile:
       type: object
+      required: [budgetMax, allergyStatus]
       properties:
         goal: { type: string, enum: [healthy, fatLoss, muscleGain, maintain] }
-        budgetMax: { type: number, minimum: 0 }
+        budgetMax: { type: number, minimum: 8, maximum: 200 }
         mealType: { type: string, enum: [breakfast, lunch, dinner] }
         taste: { type: string }
         halalOnly: { type: boolean }
-        avoid: { type: array, items: { type: string } }
-        allergies: { type: array, items: { type: string }, description: Allergen terms matched against dish ingredients and allergens_json. }
-        dietaryPattern: { type: string, enum: [balanced, vegetarian, vegan] }
+        avoid: { type: array, items: { type: string }, description: Non-allergy ingredients the user chooses to avoid. Never automatically relaxed. }
+        allergies: { type: array, items: { type: string }, description: Declared allergens matched against dish ingredients and allergens_json. Never automatically relaxed. }
+        allergyStatus: { type: string, enum: [unknown, none, declared] }
+        onboardingStatus: { type: string, enum: [pending, deferred, completed], readOnly: true }
+        dietaryPattern: { type: string, enum: [unrestricted, pescatarian, vegetarian, vegan] }
         spiceLevel: { type: integer, minimum: 0, maximum: 5 }
-        nutritionFocus: { type: array, items: { type: string } }
+        nutritionFocus:
+          type: array
+          items: { type: string, enum: [highProtein, lowFat, lowCarb, highFiber, lowSodium, lowSugar] }
         preferLowCrowd: { type: boolean }
         favoriteTags: { type: array, items: { type: string } }
+    HealthOnboardingUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [deferred] }
     ReviewInput:
       type: object
       required: [targetType, targetId, rating, content]
@@ -779,6 +960,28 @@ paths:
     get:
       security: []
       responses: { '200': { description: OK; X-Request-Id is echoed in headers } }
+  /health/live:
+    get:
+      security: []
+      description: Liveness probe. It does not depend on PostgreSQL or Redis.
+      responses: { '200': { description: Process is alive } }
+  /health/ready:
+    get:
+      security: []
+      description: Readiness probe. PostgreSQL must be available; Redis must also be distributed and available when REDIS_REQUIRED=1.
+      responses:
+        '200': { description: Service can receive traffic, content: { application/json: { schema: { $ref: '#/components/schemas/ReadinessResponse' } } } }
+        '503': { description: A required dependency is unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/ReadinessResponse' } } } }
+  /internal/metrics:
+    get:
+      security:
+        - internalMetricsToken: []
+        - bearerAuth: []
+      description: Internal runtime snapshot. Accepts X-Internal-Token or an authenticated account with audit:read.
+      responses:
+        '200': { description: Runtime, HTTP, pool, cache and Outbox metrics, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeMetrics' } } } }
+        '401': { description: Login required when no valid internal token is supplied }
+        '403': { description: audit:read permission required }
   /bootstrap:
     get:
       security: []
@@ -803,29 +1006,99 @@ paths:
       responses:
         '200': { description: Personalized alternatives or a budget-constrained combination, content: { application/json: { schema: { $ref: '#/components/schemas/RecommendationResponse' } } } }
         '400': { description: Invalid recommendation request, profile override or budget range, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /auth/verification-codes:
+    post:
+      security: []
+      description: Issues a five-minute student verification code. Resends are blocked for 60 seconds, phone and IP are limited to five sends per hour, and production returns SMS_PROVIDER_NOT_CONFIGURED until a provider is configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerificationCodeRequest' }
+      responses:
+        '202': { description: Verification code accepted for delivery; plaintext codes are returned only in the test environment. }
+        '429': { description: Resend or hourly rate limit reached, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: SMS provider is not configured, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /auth/login:
     post:
       security: []
+      description: Unified login for student phone numbers and legacy admin/student usernames.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/LoginRequest' }
       responses:
-        '200': { description: Token and app state }
+        '200': { description: Rotating session and app state, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSessionResponse' } } } }
         '401': { description: Invalid credentials }
   /auth/register:
     post:
       security: []
-      description: Creates a student user. Any role field is ignored.
+      description: Creates a phone-verified student after consuming a one-time registration code and recording agreement consent.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/RegisterRequest' }
       responses:
-        '201': { description: Token and app state for new student }
-        '409': { description: Username already exists }
+        '201': { description: Rotating session and app state for new student, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSessionResponse' } } } }
+        '400': { description: Invalid phone, code, password or agreement consent }
+        '409': { description: Phone number already registered }
+  /auth/wechat-login:
+    post:
+      security: []
+      description: Logs in by WeChat code. New users must also provide a getPhoneNumber phoneCode and agreement version. Existing phone accounts are bound instead of duplicated; conflicting bindings return 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WechatLoginRequest' }
+      responses:
+        '200': { description: Rotating session, public user, app state and isNewUser flag, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSessionResponse' } } } }
+        '401': { description: Invalid WeChat login or phone authorization code }
+        '409': { description: Phone and WeChat identities are bound to different users }
+        '503': { description: WeChat miniapp credentials are not configured }
+  /auth/password/reset:
+    post:
+      security: []
+      description: Resets a student password after consuming a one-time code and increments token_version so all previous JWTs become invalid.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordResetRequest' }
+      responses:
+        '200': { description: Password reset completed }
+        '400': { description: Invalid or expired code or weak password }
+        '404': { description: Phone number is not registered }
+  /auth/refresh:
+    post:
+      security: []
+      description: Atomically consumes the current Refresh Token and returns a new Access/Refresh pair. Reuse of a rotated token revokes the entire session family.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshTokenRequest' }
+      responses:
+        '200': { description: Rotated session tokens, content: { application/json: { schema: { $ref: '#/components/schemas/AuthSessionResponse' } } } }
+        '401': { description: Invalid, expired, revoked or replayed Refresh Token }
+  /auth/logout:
+    post:
+      security: []
+      description: Revokes one session using the Access Token session id or a Refresh Token supplied in the body.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LogoutRequest' }
+      responses:
+        '200': { description: Session revoked or already absent }
+  /auth/logout-all:
+    post:
+      description: Revokes all active sessions and Refresh Tokens for the authenticated user.
+      responses:
+        '200': { description: All device sessions revoked }
+        '401': { description: Login required }
   /canteens:
     get:
       security: []
@@ -987,6 +1260,18 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/HealthProfile' }
       responses: { '200': { description: Updated profile and recommendation } }
+  /health/profile/onboarding:
+    patch:
+      description: Changes a pending first-login health-profile prompt to deferred. Completed profiles cannot be downgraded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HealthOnboardingUpdate' }
+      responses:
+        '200': { description: Updated profile and app state }
+        '400': { description: Only the deferred transition is accepted }
+        '401': { description: Login required }
   /admin/reviews/{id}:
     delete:
       description: Delete a review and refresh its dish review count. Requires review:moderate.
@@ -994,7 +1279,7 @@ paths:
       responses: { '200': { description: Review deleted }, '404': { description: Review not found } }
   /uploads:
     post:
-      description: Store image upload. Requires upload:create; anonymous uploads are rejected and owner_id is recorded. Storage keys are tenant-scoped as tenant_id/upload-uuid.ext. Set S3_BUCKET to route uploads to S3/MinIO; otherwise UPLOAD_DIR is used.
+      description: Store a private image upload. Requires upload:create; anonymous uploads are rejected and owner_id is recorded. Storage keys are owner-scoped as tenant_id/user_id/upload-uuid.ext. Set S3_BUCKET to route uploads to a private S3/MinIO bucket; otherwise UPLOAD_DIR is used.
       requestBody:
         content:
           application/json:
@@ -1002,6 +1287,20 @@ paths:
       responses:
         '201': { description: Upload metadata, content: { application/json: { schema: { $ref: '#/components/schemas/Upload' } } } }
         '401': { description: Login required }
+  /uploads/{id}/content:
+    get:
+      security:
+        - bearerAuth: []
+        - {}
+      description: Reads private upload bytes. Access requires an owner/moderator bearer token or an unexpired URL signature generated by the API.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: expires, in: query, required: false, schema: { type: integer } }
+        - { name: signature, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Original image bytes }
+        '403': { description: Upload access denied or signed URL invalid }
+        '404': { description: Upload not found }
   /vision/meal-analyze:
     post:
       description: Student photo meal analysis. Requires agent:use and configured vision AI; recommendations are grounded in database dishes and source.menuSource indicates menu vs fallback. Successful calls count against monthly tenant quota.
