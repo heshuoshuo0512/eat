@@ -81,10 +81,10 @@ describe('miniapp safety contracts', () => {
   const sourceFiles = walk(MINIAPP, ['.vue', '.js', '.json']);
   const combined = sourceFiles.map((file) => readFileSync(file, 'utf8')).join('\n');
 
-  it('does not expose an order creation client or POST to /api/orders', () => {
-    assert.doesNotMatch(combined, /createOrder\s*[:=(]/);
-    assert.doesNotMatch(combined, /request\(\s*['"]\/api\/orders['"]\s*,\s*\{\s*method\s*:\s*['"]POST['"]/);
-    assert.match(readFileSync(join(MINIAPP, 'pages/orders/orders.vue'), 'utf8'), /联调中，暂不可提交/);
+  it('submits idempotent at-stall reservations through the production orders API', () => {
+    assert.match(combined, /createOrder\s*[:=(]/);
+    assert.match(combined, /request\(\s*['"]\/api\/orders['"]\s*,\s*\{\s*method\s*:\s*['"]POST['"]/);
+    assert.match(readFileSync(join(MINIAPP, 'pages/orders/orders.vue'), 'utf8'), /提交预约/);
   });
 
   it('keeps development fixtures out of operational pages and store', () => {
@@ -100,10 +100,9 @@ describe('miniapp safety contracts', () => {
     }
   });
 
-  it('provides a one-tap student demo login without exposing admin credentials', () => {
+  it('does not expose demo login credentials in the production miniapp', () => {
     const login = readFileSync(join(MINIAPP, 'pages/login/login.vue'), 'utf8');
-    assert.match(login, /DEMO_STUDENT/);
-    assert.match(login, /演示账号登录/);
+    assert.doesNotMatch(login, /DEMO_STUDENT|演示账号登录/);
     assert.doesNotMatch(login, /DEMO_ADMIN|admin123/);
   });
 });

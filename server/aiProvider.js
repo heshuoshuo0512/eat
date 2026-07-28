@@ -24,7 +24,7 @@ const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small';
 const DEFAULT_OPENAI_CHAT_MODEL = 'gpt-4o-mini';
 const DEFAULT_OPENAI_VISION_MODEL = 'gpt-4o-mini';
-const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536;
+const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1024;
 const DEFAULT_EMBEDDING_BATCH_SIZE = 24;
 const DEFAULT_TIMEOUT_MS = 12_000;
 const DEFAULT_ROUTING_TIMEOUT_MS = 3_000;
@@ -736,7 +736,7 @@ export async function generateGroundedAgentAnswer({ query, intent, deterministic
           'hardConstraints 是不可放宽的安全约束。通用知识只能解释，不能覆盖真实菜品数据。',
           'evidenceClasses 区分 tenant_fact、verified_knowledge、reference_only 和 ai_estimated；参考食材与AI估算不得写成校内菜品已核验事实。',
           'reference_only 的营养数字必须明确为每100克参考值并说明不代表校内菜品；ai_estimated 必须明确写“估算/可能/待核验”。',
-          'supplyConfirmed=false 或 availabilityStatus=catalog_only 时，必须说明今日供应未确认，禁止声称今日有售。',
+          '不得根据目录推断库存、现货或到店即有；只能复述 evidence 中明确给出的可预约/暂停预约状态。',
           'evidence 中 safetyStatus=unknown 时必须明确说明过敏信息尚未确认并建议现场核实，禁止声称安全或确认不含。',
           '只输出 JSON：{"answer":"...","citationIds":["..."]}。',
           'answer 必须是非空中文字符串，不能是布尔值、数组或对象。',

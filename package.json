@@ -25,10 +25,12 @@
     "eval:grounded-answers": "node scripts/evaluate-grounded-agent-answers.mjs",
     "eval:rag-local": "node scripts/evaluate-local-retrieval.mjs",
     "eval:rag-simulation": "node scripts/evaluate-rag-simulation.mjs",
+    "catalog:promote:pg": "node scripts/promote-real-catalog-postgres.mjs",
+    "admin:bootstrap": "node scripts/bootstrap-admin.mjs",
     "trace:rag-requests": "node scripts/trace-rag-requests.mjs",
     "perf:k6": "node scripts/run-k6.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "test:postgres-rls": "node --test tests/postgres-rls.integration.test.mjs"
   },
   "dependencies": {

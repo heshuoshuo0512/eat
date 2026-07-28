@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { buildHealthPlan, calculateRanking, normalizeProfile } from '../src/domain/recommendation.js';
-import { openDatabase, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToEnvironment, rowToMenu, rowToMenuItem, rowToPost, rowToPreference, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
+import { openDatabase, parseJson, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToEnvironment, rowToMenu, rowToMenuItem, rowToPost, rowToPreference, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
 import { assignableRoles, hasPermission, requirePermission } from './rbac.js';
 import { decryptSecret, encryptPhone, encryptSecret, hashPassword, normalizePhone, phoneLookupHash, publicUser, verifyPassword, verifySignedUploadUrl, verifyToken } from './security.js';
 import { readStoredUpload, storeUpload } from './storage.js';
@@ -638,7 +638,7 @@ async function authenticatedSessionResponse(db, req, user, extra = {}) {
   return {
     user: publicUser(user),
     ...session,
-    state: await snapshot(db, user),
+    state: await clientBootstrapSnapshot(db, user),
     ...extra
   };
 }
@@ -1342,27 +1342,6 @@ async function listMenus(db, tenantId = 'default', filters = {}) {
   return { menus: menus.map((menu) => ({ ...menu, items: byMenu.get(menu.id) || [] })), total: totalRow.count };
 }
 
-async function todayMenuBundle(db, tenantId = 'default', mealType = 'lunch', date = businessDate()) {
-  const { menus } = await listMenus(db, tenantId, { date, mealType, status: 'published', limit: 200, offset: 0 });
-  if (!menus.length) return { date, mealType, menus: [], dishes: [], source: 'fallback' };
-  const dishIds = new Set();
-  const itemByDish = new Map();
-  for (const menu of menus) {
-    for (const item of menu.items) {
-      dishIds.add(item.dishId);
-      itemByDish.set(item.dishId, item);
-    }
-  }
-  if (!dishIds.size) return { date, mealType, menus, dishes: [], source: 'menu' };
-  const dishes = (await listDishes(db, new URLSearchParams(), tenantId))
-    .filter((dish) => dishIds.has(dish.id))
-    .map((dish) => {
-      const item = itemByDish.get(dish.id);
-      return { ...dish, price: Number(item?.price || dish.price), menuItem: item, supplyStatus: item?.supplyStatus || 'available' };
-    });
-  return { date, mealType, menus, dishes, source: 'menu' };
-}
-
 function recommendationGoalLabel(goal) {
   return ({ fatLoss: '减脂控卡', muscleGain: '增肌高蛋白', maintain: '均衡维持', healthy: '健康均衡' })[goal] || '健康均衡';
 }
@@ -1433,6 +1412,204 @@ async function retrievalIndexQuery(db, user, { query, tenantId, limit, candidate
       },
     },
   };
+}
+
+function positivePage(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+}
+
+async function catalogStats(db, tenantId) {
+  const [venues, stalls, dishes] = await Promise.all([
+    db.prepare('SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = ?').get(tenantId),
+    db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ?').get(tenantId),
+    db.prepare("SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = ? AND status = 'active'").get(tenantId),
+  ]);
+  return { venues: Number(venues?.count || 0), stalls: Number(stalls?.count || 0), dishes: Number(dishes?.count || 0), imported: Number(dishes?.count || 0) > 0 };
+}
+
+async function bootstrapSnapshot(db, user = null) {
+  const tenantId = tenantIdFor(user);
+  return {
+    session: { user: publicUser(user) },
+    profile: user ? await getProfile(db, user.id, tenantId) : normalizeProfile({ goal: 'healthy', budgetMax: 20, mealType: 'lunch' }),
+    features: {
+      stableCatalog: true,
+      reservations: true,
+      paymentMethod: 'at_stall',
+      todayMenus: false,
+      vectorSearchMode: 'shadow',
+    },
+    catalogStats: await catalogStats(db, tenantId),
+  };
+}
+
+async function clientBootstrapSnapshot(db, user = null) {
+  if (process.env.NODE_ENV === 'test' && process.env.ENABLE_LEGACY_TEST_BOOTSTRAP === '1') return snapshot(db, user);
+  return bootstrapSnapshot(db, user);
+}
+
+async function listCatalogVenues(db, tenantId) {
+  const venues = await listCanteens(db, tenantId);
+  return { venues, total: venues.length };
+}
+
+async function listCatalogStalls(db, tenantId, params) {
+  const page = positivePage(params.get('page'), 1);
+  const pageSize = positivePage(params.get('pageSize'), 30, 100);
+  const venueId = String(params.get('venueId') || '').trim();
+  const clauses = ['tenant_id = ?'];
+  const values = [tenantId];
+  if (venueId) { clauses.push('canteen_id = ?'); values.push(venueId); }
+  const where = clauses.join(' AND ');
+  const total = Number((await db.prepare(`SELECT COUNT(*) AS count FROM stalls WHERE ${where}`).get(...values))?.count || 0);
+  const rows = await db.prepare(`SELECT stalls.*,
+      (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = stalls.tenant_id AND d.stall_id = stalls.id AND d.status = 'active') AS dish_count
+      FROM stalls WHERE ${where} ORDER BY canteen_id, floor, name LIMIT ? OFFSET ?`)
+    .all(...values, pageSize, (page - 1) * pageSize);
+  return { stalls: rows.map((row) => ({ ...rowToStall(row), dishCount: Number(row.dish_count || 0) })), page: { page, pageSize, total, hasMore: page * pageSize < total } };
+}
+
+function catalogDishPresentation(row) {
+  const dish = rowToDish(row);
+  return {
+    ...dish,
+    stallName: row.stall_name || '',
+    canteenId: row.canteen_id || '',
+    canteenName: row.canteen_name || '',
+    venueKind: row.venue_kind || 'dining_hall',
+    availability: {
+      status: dish.reservationEnabled && Boolean(row.stall_reservation_enabled) ? 'reservable' : 'reservation_paused',
+      orderable: dish.reservationEnabled && Boolean(row.stall_reservation_enabled),
+      reason: dish.reservationEnabled && Boolean(row.stall_reservation_enabled) ? '可预约，到店支付' : '暂停预约',
+      price: dish.pricing.minAmount,
+      priceDisplay: dish.priceDisplay,
+    },
+  };
+}
+
+async function searchCatalogDishes(db, tenantId, body = {}) {
+  const page = positivePage(body.page, 1);
+  const pageSize = positivePage(body.pageSize, positivePage(body.limit, 20, 100), 100);
+  const offset = body.offset == null ? (page - 1) * pageSize : Math.max(Number(body.offset) || 0, 0);
+  const filters = body.filters || {};
+  const keyword = String(body.query ?? body.keyword ?? filters.keyword ?? '').trim().toLocaleLowerCase().slice(0, 80);
+  const clauses = ["d.tenant_id = ?", "d.status = 'active'"];
+  const values = [tenantId];
+  if (keyword) {
+    clauses.push("LOWER(d.name || ' ' || d.cuisine || ' ' || d.taste || ' ' || d.tags_json || ' ' || d.description) LIKE ?");
+    values.push(`%${keyword}%`);
+  }
+  const stallIds = [...new Set([
+    ...[].concat(body.stallIds || filters.stallIds || []),
+    body.stallId || filters.stallId || '',
+  ].map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 100);
+  const venueIds = [...new Set([
+    ...[].concat(body.venueIds || filters.venueIds || []),
+    body.venueId || filters.venueId || '',
+  ].map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 50);
+  if (stallIds.length) {
+    clauses.push(`d.stall_id IN (${stallIds.map(() => '?').join(', ')})`);
+    values.push(...stallIds);
+  }
+  if (venueIds.length) {
+    clauses.push(`s.canteen_id IN (${venueIds.map(() => '?').join(', ')})`);
+    values.push(...venueIds);
+  }
+  const maxPrice = Number(body.maxPrice ?? filters.maxPrice);
+  if (Number.isFinite(maxPrice) && maxPrice >= 0) { clauses.push('d.price <= ?'); values.push(maxPrice); }
+  const taste = String(body.taste || filters.taste || '').trim();
+  if (taste && taste !== '不限') { clauses.push('(d.taste = ? OR d.tags_json LIKE ?)'); values.push(taste, `%${taste}%`); }
+  if (body.halalOnly || filters.halalOnly) clauses.push('d.halal = 1');
+  if (body.reservationOnly || filters.reservationOnly) clauses.push('d.reservation_enabled = TRUE AND s.reservation_enabled = TRUE');
+  const where = clauses.join(' AND ');
+  const from = `FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id`;
+  const total = Number((await db.prepare(`SELECT COUNT(*) AS count ${from} WHERE ${where}`).get(...values))?.count || 0);
+  const sort = String(body.sort || 'name');
+  const orderBy = sort === 'price_asc' ? 'd.price ASC, d.name' : sort === 'rating_desc' ? 'd.rating DESC, d.review_count DESC, d.name' : 'd.name';
+  const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
+      c.name AS canteen_name, c.venue_kind ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
+    .all(...values, pageSize, offset);
+  const items = rows.map(catalogDishPresentation);
+  return {
+    query: keyword,
+    items,
+    dishes: items,
+    availability: { orderableCount: items.filter((item) => item.availability.orderable).length, totalCount: total },
+    page: { page: Math.floor(offset / pageSize) + 1, pageSize, limit: pageSize, offset, total, hasMore: offset + items.length < total },
+    meta: { source: 'stable_catalog', vectorSearchMode: 'shadow' },
+  };
+}
+
+async function listCatalogRankings(db, tenantId, params) {
+  const type = ['dishes', 'stalls', 'venues'].includes(String(params.get('type') || '')) ? String(params.get('type')) : 'dishes';
+  const page = positivePage(params.get('page'), 1);
+  const pageSize = positivePage(params.get('pageSize'), 20, 50);
+  const offset = (page - 1) * pageSize;
+  let total = 0;
+  let items = [];
+  if (type === 'dishes') {
+    total = Number((await db.prepare("SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = ? AND status = 'active'").get(tenantId))?.count || 0);
+    const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
+      c.name AS canteen_name, c.venue_kind
+      FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+      WHERE d.tenant_id = ? AND d.status = 'active'
+      ORDER BY d.rating DESC, d.review_count DESC, d.sales DESC, d.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
+    items = rows.map((row) => ({ ...catalogDishPresentation(row), rankScore: Number(row.rating || 0) }));
+  } else if (type === 'stalls') {
+    total = Number((await db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ?').get(tenantId))?.count || 0);
+    const rows = await db.prepare(`SELECT s.*, c.name AS canteen_name,
+      (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active') AS dish_count
+      FROM stalls s JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
+      WHERE s.tenant_id = ? ORDER BY s.rating DESC, dish_count DESC, s.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
+    items = rows.map((row) => ({ ...rowToStall(row), canteenName: row.canteen_name || '', dishCount: Number(row.dish_count || 0), rankScore: Number(row.rating || 0) }));
+  } else {
+    total = Number((await db.prepare('SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = ?').get(tenantId))?.count || 0);
+    const rows = await db.prepare(`SELECT c.*,
+      (SELECT COUNT(*) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id) AS stall_count,
+      (SELECT COALESCE(AVG(s.rating), 0) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id) AS rank_score
+      FROM canteens c WHERE c.tenant_id = ? ORDER BY rank_score DESC, stall_count DESC, c.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
+    items = rows.map((row) => ({ ...rowToCanteen(row), stallCount: Number(row.stall_count || 0), rankScore: Number(Number(row.rank_score || 0).toFixed(2)) }));
+  }
+  return { type, items, page: { page, pageSize, total, hasMore: offset + items.length < total } };
+}
+
+async function listSavedCatalogDishes(db, user, params) {
+  const tenantId = tenantIdFor(user);
+  const kind = ['favorite', 'eaten'].includes(String(params.get('kind') || '')) ? String(params.get('kind')) : 'favorite';
+  const page = positivePage(params.get('page'), 1);
+  const pageSize = positivePage(params.get('pageSize'), 20, 50);
+  const offset = (page - 1) * pageSize;
+  const predicate = kind === 'eaten' ? 'p.eaten_count > 0' : 'p.favorite = 1';
+  const values = [tenantId, user.id];
+  const from = `FROM user_dish_preferences p JOIN dishes d ON d.id = p.dish_id AND d.tenant_id = p.tenant_id
+    JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+    WHERE p.tenant_id = ? AND p.user_id = ? AND d.status = 'active' AND ${predicate}`;
+  const total = Number((await db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...values))?.count || 0);
+  const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
+      c.name AS canteen_name, c.venue_kind, p.favorite, p.eaten_count, p.drawn_count, p.last_eaten_at, p.last_drawn_at
+      ${from} ORDER BY p.updated_at DESC, d.name ASC LIMIT ? OFFSET ?`).all(...values, pageSize, offset);
+  const items = rows.map((row) => ({
+    ...catalogDishPresentation(row),
+    preference: {
+      favorite: Boolean(row.favorite), eatenCount: Number(row.eaten_count || 0), drawnCount: Number(row.drawn_count || 0),
+      lastEatenAt: row.last_eaten_at || null, lastDrawnAt: row.last_drawn_at || null,
+    },
+  }));
+  return { kind, items, page: { page, pageSize, total, hasMore: offset + items.length < total } };
+}
+
+async function listCommunityDishOptions(db, tenantId, params) {
+  const result = await searchCatalogDishes(db, tenantId, {
+    query: params.get('query') || '',
+    venueId: params.get('venueId') || '',
+    stallId: params.get('stallId') || '',
+    page: params.get('page') || 1,
+    pageSize: params.get('pageSize') || 30,
+  });
+  return { options: result.items.map((dish) => ({ id: dish.id, name: dish.name, stallId: dish.stallId, stallName: dish.stallName, canteenId: dish.canteenId, canteenName: dish.canteenName, priceDisplay: dish.priceDisplay })), page: result.page };
 }
 
 let foodCompositionReferenceCache = null;
@@ -1546,8 +1723,9 @@ function compatibleRecommendationResponse(result) {
       timeOfDay: result.meta?.timeOfDay,
       profile
     },
-    source: result.meta?.menus?.length ? 'menu' : 'fallback',
-    menu: { date: result.meta?.date, mealType: result.meta?.mealType, menus: result.meta?.menus || [] }
+    source: 'stable_catalog',
+    menu: null,
+    catalog: { source: 'stable_catalog', mealType: result.meta?.mealType }
   };
 }
 
@@ -1560,7 +1738,7 @@ function recommendationAnswer(result) {
   const orderable = result.meta?.orderable !== false;
   const hasUnknownSafety = (result.recommendations || []).some((dish) => dish.safety?.status === 'unknown');
   const safetyNote = hasUnknownSafety ? '部分菜品的相关过敏原信息尚未确认，请务必向食堂现场核实配方和交叉接触风险。' : '';
-  return `${orderable ? '根据当前已发布菜单' : '当前无可点菜单，以下仅作菜品库参考'}，为你筛选出：${names.join('、')}。价格、库存和供应时段以实时数据库结果为准。${safetyNote}`;
+  return `${orderable ? '根据校园稳定目录与当前预约开关' : '根据校园稳定目录'}，为你筛选出：${names.join('、')}。价格按目录展示，实际金额与可取时间以档口确认结果为准。${safetyNote}`;
 }
 
 function dishEvidenceFromSearch(result) {
@@ -1573,7 +1751,7 @@ function dishEvidenceFromSearch(result) {
       ? `${Number(dish.nutrition.calories)} kcal，蛋白质 ${Number(dish.nutrition.protein)} g`
       : '营养数据待核验';
     const availabilityStatus = dish.availability?.status || 'unknown';
-    const supplyConfirmed = Boolean(dish.availability?.menuItemId);
+    const reservationEnabled = Boolean(dish.availability?.orderable);
     return ({
       id: `dish:${dish.id}`,
       sourceId: dish.id,
@@ -1597,7 +1775,7 @@ function dishEvidenceFromSearch(result) {
         price: dish.availability?.price ?? dish.price,
         priceDisplay: dish.availability?.priceDisplay || dish.priceDisplay || null,
         availabilityStatus,
-        supplyConfirmed,
+        reservationEnabled,
         safetyStatus: dish.safety?.status || 'not_applicable',
         unknownAllergens: dish.safety?.unknownAllergens || [],
         nutritionFactStatus,
@@ -1634,7 +1812,7 @@ async function executeMealRecommendation(db, user, body = {}) {
   const result = await runMealRecommendationWorkflow(input, retrievalWorkflowDependencies(db, user));
   result.meta.environment = input.context.environment;
   result.meta.timeOfDay = input.context.timeOfDay;
-  result.meta.menus = (await listMenus(db, input.tenantId, { date: result.meta.date, mealType: result.meta.mealType, status: 'published', limit: 200, offset: 0 })).menus;
+  result.meta.catalogSource = 'stable_catalog';
   return result;
 }
 function rowToOrder(row, items = [], payments = []) {
@@ -1646,6 +1824,12 @@ function rowToOrder(row, items = [], payments = []) {
     paymentStatus: row.payment_status || 'unpaid',
     paidAt: row.paid_at || null,
     totalAmount: Number(row.total_amount || 0),
+    stallId: row.stall_id || '',
+    orderType: row.order_type || 'reservation',
+    paymentMethod: row.payment_method || 'at_stall',
+    pricingStatus: row.pricing_status || 'exact',
+    estimatedAmount: Number(row.estimated_amount ?? row.total_amount ?? 0),
+    finalAmount: row.final_amount == null ? null : Number(row.final_amount),
     pickupCode: row.pickup_code,
     note: row.note || '',
     createdAt: row.created_at,
@@ -1666,6 +1850,13 @@ function rowToOrderItem(row) {
     price: Number(row.unit_price || 0),
     quantity: Number(row.quantity || 0),
     lineTotal: Number(row.line_total || 0),
+    pricingMode: row.pricing_mode || 'fixed',
+    priceDisplay: row.price_display || '',
+    pricingSnapshot: parseJson(row.pricing_snapshot_json, {}),
+    pricingStatus: row.pricing_status || 'exact',
+    estimatedUnitPrice: Number(row.estimated_unit_price ?? row.unit_price ?? 0),
+    confirmedUnitPrice: row.confirmed_unit_price == null ? null : Number(row.confirmed_unit_price),
+    note: row.item_note || '',
     createdAt: row.created_at
   };
 }
@@ -1722,60 +1913,66 @@ async function createOrder(db, user, body) {
   const tenantId = tenantIdFor(user);
   const rawItems = Array.isArray(body.items) ? body.items : [];
   if (!rawItems.length) throw Object.assign(new Error('订单至少包含 1 个菜品'), { status: 400 });
+  const idempotencyKey = String(body.idempotencyKey || (process.env.NODE_ENV === 'test' ? `test:${randomUUID()}` : '')).trim();
+  if (!/^[a-zA-Z0-9:_-]{8,128}$/.test(idempotencyKey)) throw Object.assign(new Error('预约请求缺少有效幂等键'), { status: 400, code: 'IDEMPOTENCY_KEY_REQUIRED' });
+  const existingOrder = await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND user_id = ? AND idempotency_key = ?').get(tenantId, user.id, idempotencyKey);
+  if (existingOrder) return (await hydrateOrders(db, [existingOrder], tenantId))[0];
   const quantities = new Map();
+  const selections = new Map();
   for (const item of rawItems) {
     const dishId = String(item.dishId || '').trim();
     const quantity = Number(item.quantity || 0);
     if (!dishId || !Number.isInteger(quantity) || quantity <= 0 || quantity > 20) throw Object.assign(new Error('订单菜品和数量不合法'), { status: 400 });
     quantities.set(dishId, (quantities.get(dishId) || 0) + quantity);
+    selections.set(dishId, item);
   }
-  const bundle = await todayMenuBundle(db, tenantId, body.mealType || (await getProfile(db, user.id, tenantId)).mealType, businessDate());
-  const menuItemsByDish = new Map();
-  for (const menu of bundle.menus) for (const item of menu.items) menuItemsByDish.set(item.dishId, item);
   const orderItems = [];
-  let totalAmount = 0;
+  let estimatedAmount = 0;
+  let pricingStatus = 'exact';
+  let stallId = '';
   for (const [dishId, quantity] of quantities.entries()) {
-    const dish = bundle.dishes.find((candidate) => candidate.id === dishId);
-    if (!dish) throw Object.assign(new Error(`今日菜单没有可购买菜品：${dishId}`), { status: 400 });
-    const menuItem = menuItemsByDish.get(dishId);
-    if (!menuItem || menuItem.soldOut || menuItem.supplyStatus === 'sold_out') throw Object.assign(new Error(`菜品已售罄：${dish.name}`), { status: 400 });
-    if (menuItem.supplyLimit > 0 && menuItem.supplyCount + quantity > menuItem.supplyLimit) throw Object.assign(new Error(`菜品剩余份数不足：${dish.name}`), { status: 400 });
-    const unitPrice = Number(menuItem.price || dish.price || 0);
+    const row = await db.prepare(`SELECT d.*, s.reservation_enabled AS stall_reservation_enabled
+      FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+      WHERE d.tenant_id = ? AND d.id = ? AND d.status = 'active'`).get(tenantId, dishId);
+    if (!row) throw Object.assign(new Error(`菜品不存在：${dishId}`), { status: 400, code: 'DISH_NOT_FOUND' });
+    const dish = rowToDish(row);
+    if (!dish.reservationEnabled || !Boolean(row.stall_reservation_enabled)) throw Object.assign(new Error(`菜品暂停预约：${dish.name}`), { status: 409, code: 'RESERVATION_PAUSED' });
+    if (stallId && stallId !== dish.stallId) throw Object.assign(new Error('一张预约单只能包含同一档口的菜品'), { status: 400, code: 'MIXED_STALL_ORDER' });
+    stallId = dish.stallId;
+    const selection = selections.get(dishId) || {};
+    let unitPrice = Number(dish.pricing.baseAmount || dish.price || 0);
+    let itemPricingStatus = 'exact';
+    if (dish.pricingMode === 'variants') {
+      const variant = dish.pricing.variants.find((item) => item.id === selection.variantId);
+      if (variant) unitPrice = Number(variant.amount);
+      else { unitPrice = Number(dish.pricing.minAmount || unitPrice); itemPricingStatus = 'pending_confirmation'; }
+    } else if (dish.pricingMode === 'per_weight' || dish.pricing.maxAmount > dish.pricing.minAmount) {
+      unitPrice = Number(dish.pricing.minAmount || unitPrice);
+      itemPricingStatus = 'pending_confirmation';
+    }
     const lineTotal = Number((unitPrice * quantity).toFixed(2));
-    totalAmount += lineTotal;
-    orderItems.push({ dish, menuItem, quantity, unitPrice, lineTotal });
+    estimatedAmount += lineTotal;
+    if (itemPricingStatus !== 'exact') pricingStatus = 'pending_confirmation';
+    orderItems.push({ dish, quantity, unitPrice, lineTotal, pricingStatus: itemPricingStatus, note: String(selection.note || '').trim().slice(0, 80) });
   }
   const id = `order-${randomUUID()}`;
   const createdAt = now();
   await withTransaction(db, async (tx) => {
-    await tx.prepare('INSERT INTO orders (id, tenant_id, user_id, status, payment_status, total_amount, pickup_code, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, tenantId, user.id, 'pending', 'unpaid', Number(totalAmount.toFixed(2)), pickupCode(), String(body.note || '').trim().slice(0, 120), createdAt, createdAt);
+    await tx.prepare(`INSERT INTO orders (id, tenant_id, user_id, status, payment_status, total_amount, pickup_code, note,
+      stall_id, order_type, payment_method, pricing_status, estimated_amount, final_amount, idempotency_key, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'reservation', 'at_stall', ?, ?, ?, ?, ?, ?)`)
+      .run(id, tenantId, user.id, 'pending', 'unpaid', Number(estimatedAmount.toFixed(2)), pickupCode(), String(body.note || '').trim().slice(0, 120), stallId, pricingStatus, Number(estimatedAmount.toFixed(2)), pricingStatus === 'exact' ? Number(estimatedAmount.toFixed(2)) : null, idempotencyKey, createdAt, createdAt);
     for (const item of orderItems) {
-      await tx.prepare('INSERT INTO order_items (id, tenant_id, order_id, dish_id, menu_item_id, dish_name, unit_price, quantity, line_total, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(`order-item-${randomUUID()}`, tenantId, id, item.dish.id, item.menuItem.id, item.dish.name, item.unitPrice, item.quantity, item.lineTotal, createdAt);
-      await tx.prepare('UPDATE menu_items SET supply_count = supply_count + ?, sold_out = CASE WHEN supply_limit > 0 AND supply_count + ? >= supply_limit THEN 1 ELSE sold_out END, updated_at = ? WHERE tenant_id = ? AND id = ?')
-        .run(item.quantity, item.quantity, createdAt, tenantId, item.menuItem.id);
-      await tx.prepare('UPDATE dishes SET sales = sales + ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(item.quantity, createdAt, tenantId, item.dish.id);
+      await tx.prepare(`INSERT INTO order_items (id, tenant_id, order_id, dish_id, menu_item_id, dish_name, unit_price, quantity, line_total,
+        pricing_mode, price_display, pricing_snapshot_json, pricing_status, estimated_unit_price, confirmed_unit_price, item_note, created_at)
+        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(`order-item-${randomUUID()}`, tenantId, id, item.dish.id, item.dish.name, item.unitPrice, item.quantity, item.lineTotal,
+          item.dish.pricingMode, item.dish.priceDisplay, serializeJson(item.dish.pricing), item.pricingStatus, item.unitPrice,
+          item.pricingStatus === 'exact' ? item.unitPrice : null, item.note, createdAt);
     }
   });
   const [order] = await hydrateOrders(db, [await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND id = ?').get(tenantId, id)], tenantId);
   return order;
-}
-
-async function rollbackOrderInventory(db, tenantId, orderId, timestamp) {
-  const items = await db.prepare('SELECT * FROM order_items WHERE tenant_id = ? AND order_id = ?').all(tenantId, orderId);
-  for (const item of items) {
-    if (item.menu_item_id) {
-      await db.prepare(`UPDATE menu_items
-        SET supply_count = CASE WHEN supply_count - ? < 0 THEN 0 ELSE supply_count - ? END,
-            sold_out = CASE WHEN supply_limit > 0 AND (CASE WHEN supply_count - ? < 0 THEN 0 ELSE supply_count - ? END) >= supply_limit THEN 1 ELSE 0 END,
-            updated_at = ?
-        WHERE tenant_id = ? AND id = ?`)
-        .run(item.quantity, item.quantity, item.quantity, item.quantity, timestamp, tenantId, item.menu_item_id);
-    }
-    await db.prepare('UPDATE dishes SET sales = CASE WHEN sales - ? < 0 THEN 0 ELSE sales - ? END, updated_at = ? WHERE tenant_id = ? AND id = ?')
-      .run(item.quantity, item.quantity, timestamp, tenantId, item.dish_id);
-  }
 }
 
 async function cancelOrder(db, user, orderId) {
@@ -1786,7 +1983,6 @@ async function cancelOrder(db, user, orderId) {
   if (!['pending', 'preparing'].includes(order.status) || order.payment_status === 'paid') throw Object.assign(new Error('当前订单不能取消'), { status: 400 });
   const timestamp = now();
   await withTransaction(db, async (tx) => {
-    await rollbackOrderInventory(tx, tenantId, orderId, timestamp);
     await tx.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run('cancelled', timestamp, tenantId, orderId);
   });
   const [updated] = await hydrateOrders(db, [await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND id = ?').get(tenantId, orderId)], tenantId);
@@ -1800,6 +1996,7 @@ async function payOrder(db, user, orderId, body = {}) {
   if (order.user_id !== user.id) throw Object.assign(new Error('不能支付他人订单'), { status: 403 });
   if (order.status === 'cancelled') throw Object.assign(new Error('已取消订单不能支付'), { status: 400 });
   if (order.payment_status === 'paid') throw Object.assign(new Error('订单已支付'), { status: 400 });
+  if ((order.order_type || 'reservation') === 'reservation') throw Object.assign(new Error('预约单需到档口支付'), { status: 409, code: 'PAY_AT_STALL_REQUIRED' });
   const timestamp = now();
   await withTransaction(db, async (tx) => {
     await tx.prepare('INSERT INTO payments (id, tenant_id, order_id, user_id, amount, channel, status, transaction_no, paid_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -1813,20 +2010,19 @@ async function payOrder(db, user, orderId, body = {}) {
 async function orderAnalytics(db, tenantId, date = businessDate()) {
   const { startInclusive, endExclusive } = businessDayUtcRange(date);
   const orders = await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND created_at >= ? AND created_at < ?').all(tenantId, startInclusive, endExclusive);
-  const paidRevenue = await db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE tenant_id = ? AND status = 'paid' AND created_at >= ? AND created_at < ?").get(tenantId, startInclusive, endExclusive);
+  const completedRevenue = await db.prepare("SELECT COALESCE(SUM(COALESCE(final_amount, total_amount)), 0) AS total FROM orders WHERE tenant_id = ? AND status = 'completed' AND created_at >= ? AND created_at < ?").get(tenantId, startInclusive, endExclusive);
   const statusRows = await db.prepare('SELECT status, COUNT(*) AS count FROM orders WHERE tenant_id = ? AND created_at >= ? AND created_at < ? GROUP BY status').all(tenantId, startInclusive, endExclusive);
-  const topDishes = await db.prepare(`SELECT dish_id AS dishId, dish_name AS dishName, SUM(quantity) AS quantity, SUM(line_total) AS amount
-    FROM order_items WHERE tenant_id = ? AND created_at >= ? AND created_at < ? GROUP BY dish_id, dish_name ORDER BY quantity DESC, amount DESC LIMIT 10`).all(tenantId, startInclusive, endExclusive);
-  const soldOutItems = await db.prepare(`SELECT mi.id AS menuItemId, mi.dish_id AS dishId, d.name AS dishName, mi.supply_limit AS supplyLimit, mi.supply_count AS supplyCount
-    FROM menu_items mi JOIN menus m ON m.id = mi.menu_id AND m.tenant_id = mi.tenant_id JOIN dishes d ON d.id = mi.dish_id AND d.tenant_id = mi.tenant_id
-    WHERE mi.tenant_id = ? AND m.date = ? AND mi.sold_out = 1`).all(tenantId, date);
+  const topDishes = await db.prepare(`SELECT oi.dish_id AS dishId, oi.dish_name AS dishName, SUM(oi.quantity) AS quantity, SUM(oi.line_total) AS amount
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id AND o.tenant_id = oi.tenant_id
+    WHERE oi.tenant_id = ? AND o.status = 'completed' AND o.created_at >= ? AND o.created_at < ?
+    GROUP BY oi.dish_id, oi.dish_name ORDER BY quantity DESC, amount DESC LIMIT 10`).all(tenantId, startInclusive, endExclusive);
   return {
     date,
     todayOrders: orders.length,
-    todayRevenue: Number(Number(paidRevenue?.total || 0).toFixed(2)),
+    todayRevenue: Number(Number(completedRevenue?.total || 0).toFixed(2)),
     statusCounts: statusRows.reduce((acc, row) => ({ ...acc, [row.status]: Number(row.count || 0) }), {}),
     topDishes: topDishes.map((row) => ({ dishId: row.dishId, dishName: row.dishName, totalQuantity: Number(row.quantity || 0), totalRevenue: Number(Number(row.amount || 0).toFixed(2)), quantity: Number(row.quantity || 0), amount: Number(Number(row.amount || 0).toFixed(2)) })),
-    soldOutItems: soldOutItems.map((row) => ({ menuItemId: row.menuItemId, dishId: row.dishId, dishName: row.dishName, supplyLimit: Number(row.supplyLimit || 0), supplyCount: Number(row.supplyCount || 0) }))
+    soldOutItems: []
   };
 }
 
@@ -1844,9 +2040,54 @@ async function updateOrderStatus(db, user, orderId, nextStatus) {
     cancelled: new Set()
   };
   if (!transitions[order.status]?.has(nextStatus)) throw Object.assign(new Error('订单状态流转不允许'), { status: 400 });
-  await db.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(nextStatus, now(), tenantId, orderId);
+  if (nextStatus === 'completed' && order.pricing_status === 'pending_confirmation') {
+    throw Object.assign(new Error('请先确认最终金额再完成预约'), { status: 409, code: 'FINAL_PRICE_REQUIRED' });
+  }
+  await withTransaction(db, async (tx) => {
+    const timestamp = now();
+    if (nextStatus === 'completed') {
+      await tx.prepare("UPDATE orders SET status = ?, payment_status = 'paid', paid_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ?")
+        .run(nextStatus, timestamp, timestamp, tenantId, orderId);
+    } else {
+      await tx.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(nextStatus, timestamp, tenantId, orderId);
+    }
+    if (nextStatus === 'completed') {
+      const items = await tx.prepare('SELECT dish_id, quantity FROM order_items WHERE tenant_id = ? AND order_id = ?').all(tenantId, orderId);
+      for (const item of items) await tx.prepare('UPDATE dishes SET sales = sales + ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(item.quantity, now(), tenantId, item.dish_id);
+    }
+  });
   const [updated] = await hydrateOrders(db, [await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND id = ?').get(tenantId, orderId)], tenantId);
   return updated;
+}
+
+async function confirmReservationPrice(db, user, orderId, body = {}) {
+  const tenantId = tenantIdFor(user);
+  const order = await db.prepare("SELECT * FROM orders WHERE tenant_id = ? AND id = ? AND order_type = 'reservation'").get(tenantId, orderId);
+  if (!order) throw Object.assign(new Error('预约单不存在'), { status: 404 });
+  if (['completed', 'cancelled'].includes(order.status)) throw Object.assign(new Error('已结束预约不能修改金额'), { status: 409, code: 'ORDER_TERMINAL' });
+  const finalAmount = Number(body.finalAmount);
+  if (!Number.isFinite(finalAmount) || finalAmount < 0) throw Object.assign(new Error('最终金额不合法'), { status: 400 });
+  const prices = new Map((body.items || []).map((item) => [String(item.itemId || ''), Number(item.confirmedUnitPrice)]));
+  await withTransaction(db, async (tx) => {
+    for (const [itemId, amount] of prices) {
+      if (!itemId || !Number.isFinite(amount) || amount < 0) throw Object.assign(new Error('确认单价不合法'), { status: 400 });
+      await tx.prepare(`UPDATE order_items SET confirmed_unit_price = ?, unit_price = ?, line_total = quantity * ?, pricing_status = 'confirmed'
+        WHERE tenant_id = ? AND order_id = ? AND id = ?`).run(amount, amount, amount, tenantId, orderId, itemId);
+    }
+    await tx.prepare("UPDATE orders SET final_amount = ?, total_amount = ?, pricing_status = 'confirmed', updated_at = ? WHERE tenant_id = ? AND id = ?")
+      .run(Number(finalAmount.toFixed(2)), Number(finalAmount.toFixed(2)), now(), tenantId, orderId);
+  });
+  return (await hydrateOrders(db, [await db.prepare('SELECT * FROM orders WHERE tenant_id = ? AND id = ?').get(tenantId, orderId)], tenantId))[0];
+}
+
+async function updateReservationState(db, user, entity, id, enabled) {
+  const tenantId = tenantIdFor(user);
+  const table = entity === 'stall' ? 'stalls' : 'dishes';
+  const row = await db.prepare(`SELECT id FROM ${table} WHERE tenant_id = ? AND id = ?`).get(tenantId, id);
+  if (!row) throw Object.assign(new Error(entity === 'stall' ? '档口不存在' : '菜品不存在'), { status: 404 });
+  await db.prepare(`UPDATE ${table} SET reservation_enabled = ?, updated_at = ? WHERE tenant_id = ? AND id = ?`)
+    .run(enabled ? 1 : 0, now(), tenantId, id);
+  return { id, reservationEnabled: Boolean(enabled) };
 }
 
 export function inferAgentIntent(query) {
@@ -1912,9 +2153,8 @@ function agentToolRegistry() {
     'session.load': { name: 'session.load', title: '加载会话记忆', category: 'memory', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { sessionId: { type: 'string' } } } },
     'memory.long_term': { name: 'memory.long_term', title: '读取长期偏好记忆', category: 'memory', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: {} } },
     'profile.load': { name: 'profile.load', title: '读取用户营养档案', category: 'context', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: {} } },
-    'menu.today': { name: 'menu.today', title: '读取今日已发布菜单', category: 'canteen', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { mealType: { type: 'string' }, date: { type: 'string' } } } },
-    'dish.search': { name: 'dish.search', title: '查询真实菜品与实时供应', category: 'retrieval', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' }, filters: { type: 'object' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['query'] } },
-    'meal.recommend': { name: 'meal.recommend', title: '根据档案和实时菜单生成推荐', category: 'recommendation', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' }, profileOverride: { type: 'object' }, options: { type: 'object' } }, required: ['query'] } },
+    'dish.search': { name: 'dish.search', title: '查询校园稳定菜品目录', category: 'retrieval', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' }, filters: { type: 'object' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['query'] } },
+    'meal.recommend': { name: 'meal.recommend', title: '根据档案和校园目录生成推荐', category: 'recommendation', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' }, profileOverride: { type: 'object' }, options: { type: 'object' } }, required: ['query'] } },
     'knowledge.search': { name: 'knowledge.search', title: '检索健康与饮食知识', category: 'knowledge', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['query'] } },
     'rag.meal_advisor': { name: 'rag.meal_advisor', title: '兼容旧版膳食顾问工具', category: 'compatibility', riskLevel: 'low', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
     'orders.mine': { name: 'orders.mine', title: '查询本人订单', category: 'order', riskLevel: 'medium', permission: 'agent:use', requiresConfirmation: false, parameters: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 20 } } } },
@@ -2058,11 +2298,11 @@ function rowToAgentAction(row) {
 
 function agentPersonasFor(intent, user) {
   const personas = [{ name: 'planner', title: '任务规划员', responsibility: '拆解目标并选择工具' }];
-  if (intent === 'dish_search') personas.push({ name: 'dish_retriever', title: '菜品检索员', responsibility: '按数据库真值查询菜品、价格和供应状态' });
-  if (intent === 'meal_recommendation') personas.push({ name: 'nutritionist', title: '营养顾问', responsibility: '结合档案、实时菜单和健康证据给出建议' });
+  if (intent === 'dish_search') personas.push({ name: 'dish_retriever', title: '菜品检索员', responsibility: '按数据库真值查询菜品、价格和预约状态' });
+  if (intent === 'meal_recommendation') personas.push({ name: 'nutritionist', title: '营养顾问', responsibility: '结合档案、校园目录和健康证据给出建议' });
   if (intent === 'knowledge_qa') personas.push({ name: 'knowledge_retriever', title: '知识检索员', responsibility: '只基于可引用健康知识回答问题' });
   if (intent === 'order_status') personas.push({ name: 'order_operator', title: '订单专员', responsibility: '只查询当前用户订单并解释状态' });
-  if (intent === 'operations' && AGENT_OPERATION_ROLES.includes(user.role)) personas.push({ name: 'ops_analyst', title: '运营分析师', responsibility: '分析订单收入、热销和售罄数据' });
+  if (intent === 'operations' && AGENT_OPERATION_ROLES.includes(user.role)) personas.push({ name: 'ops_analyst', title: '运营分析师', responsibility: '分析已完成预约金额与菜品热度' });
   personas.push({ name: 'safety_reviewer', title: '安全审查员', responsibility: '阻止越权和高风险自动执行' });
   return personas;
 }
@@ -2238,32 +2478,32 @@ function resolvedAgentIntent(deterministicIntent, toolRouting, user) {
 
 function buildAgentAnswer({ intent, query, dishSearch, recommendation, knowledge, orders, analytics }) {
   if (intent === 'order_status') {
-    if (!orders.length) return '你当前没有订单。可以先到“点餐取餐”页从今日菜单下单，提交后会生成取餐码。';
+    if (!orders.length) return '你当前没有预约单。可以先到“到店预约”页选择同一档口菜品，提交后会生成预约码。';
     const latest = orders[0];
     const dishes = latest.items.map((item) => `${item.dishName}×${item.quantity}`).join('、');
-    return `你最近的订单取餐码是 ${latest.pickupCode}，状态为 ${latest.status}，支付状态为 ${latest.paymentStatus}，菜品：${dishes}。如果仍未支付，可在“点餐取餐”页点击模拟支付；未支付且未完成的订单可取消并回滚库存。`;
+    return `你最近的预约码是 ${latest.pickupCode}，状态为 ${latest.status}，支付方式为到店支付，菜品：${dishes}。未开始制作的预约可在“到店预约”页取消。`;
   }
   if (intent === 'operations' && analytics) {
     const top = analytics.topDishes?.[0];
-    return `今日订单 ${analytics.todayOrders} 单，已支付收入 ¥${analytics.todayRevenue.toFixed(2)}。${top ? `当前热销菜品是 ${top.dishName}，销量 ${top.totalQuantity} 份。` : '暂无热销菜品数据。'}售罄菜品 ${analytics.soldOutItems.length} 个。`;
+    return `今日预约 ${analytics.todayOrders} 单，已完成预约金额 ¥${analytics.todayRevenue.toFixed(2)}。${top ? `当前已完成预约最多的菜品是 ${top.dishName}，数量 ${top.totalQuantity} 份。` : '暂无已完成预约数据。'}`;
   }
   if (intent === 'operations') return '当前角色不能读取营业分析数据。';
   if (intent === 'dish_search') {
     const names = (dishSearch?.items || []).slice(0, 5).map((item) => `${item.name}${item.availability?.orderable ? '' : '（当前不可点）'}`);
     if (names.length) {
       const hasUnknownSafety = (dishSearch?.items || []).some((item) => item.safety?.status === 'unknown');
-      return `查到 ${dishSearch.page.total} 道匹配菜品：${names.join('、')}。价格和供应状态来自当前菜单与库存。${hasUnknownSafety ? '部分菜品的相关过敏原信息尚未确认，请向食堂现场核实配方和交叉接触风险。' : ''}`;
+      return `查到 ${dishSearch.page.total} 道匹配菜品：${names.join('、')}。价格来自校园稳定目录，可预约状态由档口运营开关决定。${hasUnknownSafety ? '部分菜品的相关过敏原信息尚未确认，请向食堂现场核实配方和交叉接触风险。' : ''}`;
     }
     const relaxation = dishSearch?.suggestedRelaxations?.[0]?.message;
     return relaxation ? `没有找到满足全部条件的菜品。${relaxation}` : '没有找到匹配菜品，系统不会编造结果。';
   }
   if (intent === 'meal_recommendation' && recommendation) return recommendationAnswer(recommendation);
   if (intent === 'knowledge_qa' && knowledge?.answer) return knowledge.answer;
-  return `我已根据当前食堂数据处理你的问题：“${String(query).slice(0, 80)}”。你可以询问今日推荐、订单状态、支付、取餐码或营业数据。`;
+  return `我已根据当前校园目录处理你的问题：“${String(query).slice(0, 80)}”。你可以询问菜品推荐、预约状态、预约码或运营数据。`;
 }
 
 function buildAgentPlan({ intent, steps, user, includeCreateOrder = false }) {
-  const goals = { dish_search: '查询真实菜品与供应状态', meal_recommendation: '为用户推荐合适的餐品', knowledge_qa: '检索健康知识并回答', order_status: '查询用户订单状态', operations: '分析食堂运营数据', general_canteen: '回答用户咨询' };
+  const goals = { dish_search: '查询真实菜品与预约状态', meal_recommendation: '为用户推荐合适的餐品', knowledge_qa: '检索健康知识并回答', order_status: '查询用户预约状态', operations: '分析预约运营情况', general_canteen: '回答用户咨询' };
   const riskLevel = includeCreateOrder ? 'high' : (intent === 'operations' || intent === 'order_status' ? 'medium' : 'low');
   const guardrails = ['仅使用当前用户权限内的数据', '高风险动作只生成待确认动作，不直接执行'];
   if (intent === 'operations' && !AGENT_OPERATION_ROLES.includes(user.role)) guardrails.push('当前角色不能读取营业分析工具');
@@ -2324,10 +2564,6 @@ async function runCanteenAgent(db, user, body) {
     const profile = await runAgentTool(registry, 'profile.load', user, steps, toolResults, async () => {
       const loaded = await getProfile(db, user.id, tenantId);
       return { goal: loaded.goal, mealType: loaded.mealType, taste: loaded.taste, halalOnly: loaded.halalOnly, raw: loaded };
-    });
-    await runAgentTool(registry, 'menu.today', user, steps, toolResults, async () => {
-      const loaded = await todayMenuBundle(db, tenantId, profile.raw.mealType, businessDate());
-      return { ...loaded, dishCount: loaded.dishes.length };
     });
     const args = routedToolArguments(toolRouting, ['meal.recommend', 'rag.meal_advisor']);
     recommendation = await runAgentTool(registry, 'meal.recommend', user, steps, toolResults, async () => executeMealRecommendation(db, user, {
@@ -2403,7 +2639,6 @@ async function runCanteenAgent(db, user, body) {
   plan.degradedReasons = recommendation?.meta?.degradedReasons || dishSearch?.meta?.degradedReasons || [];
   const summary = summarizeAgentRun({ plan, steps, actions });
   toolResults.profile = toolResults['profile.load'] ? { goal: toolResults['profile.load'].goal, mealType: toolResults['profile.load'].mealType, taste: toolResults['profile.load'].taste, halalOnly: toolResults['profile.load'].halalOnly } : undefined;
-  toolResults.todayMenu = toolResults['menu.today'] ? { date: toolResults['menu.today'].date, mealType: toolResults['menu.today'].mealType, source: toolResults['menu.today'].source, dishCount: toolResults['menu.today'].dishCount } : undefined;
   toolResults.recommendation = recommendation ? { source: recommendation.meta.source, citationCount: citations.length, pickCount: recommendation.recommendations.length, orderable: recommendation.meta.orderable } : undefined;
   toolResults.orders = orders;
   toolResults.analytics = analytics;
@@ -2443,17 +2678,6 @@ async function runCanteenAgent(db, user, body) {
   result.eval = evalMetrics;
   if (intent === 'meal_recommendation') result.memory = await updateAgentMemory(db, user, query);
   return result;
-}
-
-async function recommendationDishPool(db, tenantId, profile) {
-  const normalized = normalizeProfile(profile);
-  const bundle = await todayMenuBundle(db, tenantId, normalized.mealType, businessDate());
-  if (bundle.source === 'menu') {
-    const available = bundle.dishes.filter((dish) => dish.supplyStatus !== 'sold_out');
-    if (available.length) return { ...bundle, dishes: available };
-    return { ...bundle, dishes: await listDishes(db, new URLSearchParams(), tenantId), source: 'fallback' };
-  }
-  return { ...bundle, dishes: await listDishes(db, new URLSearchParams(), tenantId), source: 'fallback' };
 }
 
 async function upsertMenu(db, body, id = body.id || `menu-${randomUUID()}`, tenantId = 'default') {
@@ -2587,7 +2811,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const backlog = await outboxBacklog(db).catch(() => null);
         return send(res, 200, metrics.snapshot({ db, cache: cacheStatus, outbox: backlog }), { 'X-Request-Id': requestId });
       }
-      if (method === 'GET' && url.pathname === '/api/bootstrap') return send(res, 200, await snapshot(db, user), { 'X-Request-Id': requestId });
+      if (method === 'GET' && url.pathname === '/api/bootstrap') return send(res, 200, await clientBootstrapSnapshot(db, user), { 'X-Request-Id': requestId });
 
       if (await handleAuthSessionRoute({
         method,
@@ -2688,8 +2912,19 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
 
       if (method === 'GET' && url.pathname === '/api/canteens') return send(res, 200, await listCanteens(db, tenantIdFor(user)));
       if (method === 'GET' && url.pathname === '/api/stalls') return send(res, 200, await listStalls(db, tenantIdFor(user)));
+      if (method === 'GET' && url.pathname === '/api/catalog/venues') return send(res, 200, await listCatalogVenues(db, tenantIdFor(user)));
+      if (method === 'GET' && url.pathname === '/api/catalog/stalls') return send(res, 200, await listCatalogStalls(db, tenantIdFor(user), url.searchParams));
+      if (method === 'GET' && url.pathname === '/api/catalog/rankings') return send(res, 200, await listCatalogRankings(db, tenantIdFor(user), url.searchParams));
+      if (method === 'GET' && url.pathname === '/api/catalog/saved') {
+        const activeUser = await requireUser(db, req);
+        return send(res, 200, await listSavedCatalogDishes(db, activeUser, url.searchParams));
+      }
+      if (method === 'GET' && url.pathname === '/api/community/dish-options') {
+        const activeUser = await requireUser(db, req);
+        return send(res, 200, await listCommunityDishOptions(db, tenantIdFor(activeUser), url.searchParams));
+      }
       if (method === 'POST' && url.pathname === '/api/dishes/search') {
-        const result = await executeDishSearch(db, user, await readBody(req));
+        const result = await searchCatalogDishes(db, tenantIdFor(user), await readBody(req));
         return send(res, 200, result);
       }
       if (method === 'GET' && url.pathname === '/api/dishes') return send(res, 200, await executeLegacyDishList(db, user, url.searchParams));
@@ -2707,11 +2942,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         ));
       }
       if (method === 'GET' && url.pathname === '/api/menus/today') {
-        const activeUser = user || null;
-        const tenantId = tenantIdFor(activeUser);
-        const mealType = String(url.searchParams.get('mealType') || (activeUser ? (await getProfile(db, activeUser.id, tenantId)).mealType : 'lunch'));
-        const date = String(url.searchParams.get('date') || businessDate());
-        return send(res, 200, await todayMenuBundle(db, tenantId, mealType, date));
+        return send(res, 410, { error: { code: 'TODAY_MENU_RETIRED', message: '学生端已切换为学期稳定目录，请使用 /api/dishes/search。' } });
       }
       if (method === 'GET' && url.pathname === '/api/recommend') {
         const activeUser = user || null;
@@ -2739,7 +2970,9 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
 
       if (method === 'POST' && url.pathname === '/api/orders') {
         const activeUser = await requireUser(db, req);
-        const order = await createOrder(db, activeUser, await readBody(req));
+        const body = await readBody(req);
+        body.idempotencyKey ||= String(req.headers['x-idempotency-key'] || '');
+        const order = await createOrder(db, activeUser, body);
         await audit(db, activeUser, 'CREATE', 'order', order.id);
         return send(res, 201, { order });
       }
@@ -2913,6 +3146,31 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
           await recordAiUsage(db, activeUser, { feature: 'student-vision', provider: status.source, model: status.visionModel, status: 'failure', imageCount: 1, latencyMs: Date.now() - startedAt, error: error.message });
           throw error;
         }
+      }
+
+      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'orders' && pathParts[3] && pathParts[4] === 'price') {
+        const activeUser = await requireCapability(db, req, 'dish:write');
+        const order = await confirmReservationPrice(db, activeUser, decodeURIComponent(pathParts[3]), await readBody(req));
+        await audit(db, activeUser, 'CONFIRM_PRICE', 'order', order.id);
+        return send(res, 200, { order });
+      }
+
+      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'stalls' && pathParts[3] && pathParts[4] === 'reservation') {
+        const activeUser = await requireCapability(db, req, 'stall:write');
+        const body = await readBody(req);
+        if (typeof body.enabled !== 'boolean') throw Object.assign(new Error('enabled 必须是布尔值'), { status: 400 });
+        const reservation = await updateReservationState(db, activeUser, 'stall', decodeURIComponent(pathParts[3]), body.enabled);
+        await audit(db, activeUser, 'UPDATE_RESERVATION', 'stall', reservation.id, { enabled: reservation.reservationEnabled });
+        return send(res, 200, { reservation });
+      }
+
+      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'dishes' && pathParts[3] && pathParts[4] === 'reservation') {
+        const activeUser = await requireCapability(db, req, 'dish:write');
+        const body = await readBody(req);
+        if (typeof body.enabled !== 'boolean') throw Object.assign(new Error('enabled 必须是布尔值'), { status: 400 });
+        const reservation = await updateReservationState(db, activeUser, 'dish', decodeURIComponent(pathParts[3]), body.enabled);
+        await audit(db, activeUser, 'UPDATE_RESERVATION', 'dish', reservation.id, { enabled: reservation.reservationEnabled });
+        return send(res, 200, { reservation });
       }
 
       if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'vision' && pathParts[2] === 'analyses' && pathParts[3] && pathParts[4] === 'confirm') {

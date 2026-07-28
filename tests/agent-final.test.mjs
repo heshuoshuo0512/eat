@@ -119,10 +119,11 @@ describe('Agent final upgrade: function-call metadata, permission denial, memory
     assert.ok(orderCreate.parameters.properties.items.items.properties.quantity, 'items[].quantity defined');
     assert.deepEqual(orderCreate.parameters.properties.items.items.required, ['dishId', 'quantity'], 'item fields required');
 
-    const menuToday = catalog.find((e) => e.name === 'menu.today');
-    assert.ok(menuToday, 'menu.today in catalog');
-    assert.equal(menuToday.parameters.properties.mealType.type, 'string', 'menu.today has mealType string param');
-    assert.equal(menuToday.parameters.properties.date.type, 'string', 'menu.today has date string param');
+    const dishSearch = catalog.find((e) => e.name === 'dish.search');
+    assert.ok(dishSearch, 'dish.search in catalog');
+    assert.equal(dishSearch.parameters.properties.query.type, 'string', 'dish.search has query string param');
+    assert.equal(dishSearch.parameters.properties.limit.type, 'integer', 'dish.search has limit integer param');
+    assert.ok(!catalog.some((entry) => entry.name === 'menu.today'), 'retired menu.today is absent');
   });
 
   /* ---------------------------------------------------------------- */

@@ -62,6 +62,7 @@
             <span class="rank-score">{{ dishRatingText(dish) }}</span>
           </div>
         </div>
+        <button v-if="rankingPages.dishes.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='dishes'" @click="loadMore('dishes')">{{ loadingMore==='dishes'?'加载中…':'加载更多菜品' }}</button>
         <div v-else class="empty-state">
           <p>{{ selectedCategory === '全部' ? '暂无菜品数据。' : `"${selectedCategory}"分类暂无菜品。` }}</p>
         </div>
@@ -114,6 +115,7 @@
             <span class="rank-score">{{ stall.rankScore }}</span>
           </div>
         </div>
+        <button v-if="rankingPages.stalls.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='stalls'" @click="loadMore('stalls')">{{ loadingMore==='stalls'?'加载中…':'加载更多档口' }}</button>
         <div v-else class="empty-state">
           <p>暂无档口数据。</p>
         </div>
@@ -124,8 +126,8 @@
     <section class="card rank-card" :class="{ 'is-expanded': expandedSection === 'canteens' }">
       <div class="rank-card-header" @click="toggleSection('canteens')" role="button" tabindex="0" @keydown.enter="toggleSection('canteens')" @keydown.space.prevent="toggleSection('canteens')">
         <div>
-          <p class="eyebrow">食堂排行</p>
-          <h2>食堂综合榜</h2>
+          <p class="eyebrow">场所排行</p>
+          <h2>校园场所综合榜</h2>
         </div>
         <span class="expand-indicator">›</span>
       </div>
@@ -163,6 +165,7 @@
             <span class="rank-score">{{ canteen.rankScore }}</span>
           </div>
         </div>
+        <button v-if="rankingPages.canteens.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='canteens'" @click="loadMore('canteens')">{{ loadingMore==='canteens'?'加载中…':'加载更多场所' }}</button>
         <div v-else class="empty-state">
           <p>暂无食堂数据。</p>
         </div>
@@ -172,11 +175,17 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { dishNutritionPresentation, dishPriceText, dishRatingText } from '../domain/dishPresentation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
+const loadingMore = ref('');
+const rankingPages = ref({
+  dishes: { page: 1, pageSize: 20, total: 0, hasMore: false },
+  stalls: { page: 1, pageSize: 20, total: 0, hasMore: false },
+  canteens: { page: 1, pageSize: 20, total: 0, hasMore: false }
+});
 
 /* ── Expand/collapse state ── */
 const expandedSection = ref('');
@@ -203,18 +212,28 @@ function classifyDish(dish) {
 
 const filteredDishes = computed(() => {
   const ranked = store.rankings.dishes;
-  if (selectedCategory.value === '全部') return ranked.slice(0, 8);
-  return ranked.filter((d) => classifyDish(d) === selectedCategory.value).slice(0, 8);
+  if (selectedCategory.value === '全部') return ranked;
+  return ranked.filter((d) => classifyDish(d) === selectedCategory.value);
 });
 
 /* ── Stall & Canteen rankings ── */
-const rankedStalls = computed(() => store.rankings.stalls.slice(0, 8));
+const rankedStalls = computed(() => store.rankings.stalls);
 
-const rankedSubCanteens = computed(() =>
-  store.rankings.canteens
-    .filter((c) => c.canteenType === 'sub' || c.parentId)
-    .slice(0, 8)
-);
+const rankedSubCanteens = computed(() => store.rankings.canteens);
+
+async function loadRanking(type, page = 1) {
+  const result = await store.loadCatalogRanking(type === 'canteens' ? 'venues' : type, { page, pageSize: 20 });
+  rankingPages.value[type] = result.page || rankingPages.value[type];
+}
+
+async function loadMore(type) {
+  const page = rankingPages.value[type];
+  if (loadingMore.value || !page.hasMore) return;
+  loadingMore.value = type;
+  try { await loadRanking(type, Number(page.page || 1) + 1); } finally { loadingMore.value = ''; }
+}
+
+onMounted(() => Promise.all(['dishes', 'stalls', 'canteens'].map((type) => loadRanking(type))));
 
 /* ── Location helpers ── */
 
@@ -281,6 +300,7 @@ function crowdLabel(level) {
   box-shadow: 0 20px 48px rgba(31, 122, 77, .1);
 }
 .rank-card.is-expanded .expand-indicator { transform: rotate(90deg); }
+.load-more { width: 100%; margin-top: 12px; }
 
 /* ── Clickable Header ── */
 .rank-card-header {

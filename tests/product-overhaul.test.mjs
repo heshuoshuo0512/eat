@@ -176,7 +176,7 @@ describe('Contextual recommendation — score factors', () => {
     }
   });
 
-  it('response includes plan, context, source, and menu', async () => {
+  it('response includes plan, context, and stable catalog metadata', async () => {
     const { status, data } = await req('/api/recommend');
     assert.equal(status, 200);
     assert.ok(data.plan, 'has plan');
@@ -184,7 +184,9 @@ describe('Contextual recommendation — score factors', () => {
     assert.ok(data.plan.totals, 'plan has totals');
     assert.ok(data.context, 'has context');
     assert.ok(data.context.timeOfDay, 'context has timeOfDay');
-    assert.ok(data.menu, 'has menu');
+    assert.equal(data.menu, null, 'retired daily menu metadata is absent');
+    assert.equal(data.source, 'stable_catalog');
+    assert.equal(data.catalog.source, 'stable_catalog');
   });
 });
 

@@ -8,7 +8,7 @@ import {
   buildMealPlan,
   calculateRanking,
 } from '../src/domain/recommendation.js';
-import { dishes, reviews } from '../src/domain/seedData.js';
+import { dishes, reviews } from './fixtures/seedData.js';
 
 /* ------------------------------------------------------------------ */
 /*  Helper: tiny dish factory for focused test scenarios               */

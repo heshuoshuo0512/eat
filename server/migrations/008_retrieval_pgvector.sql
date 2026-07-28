@@ -53,10 +53,10 @@ BEGIN
     AND NOT attribute.attisdropped;
 
   IF embedding_type IS NULL THEN
-    ALTER TABLE rag_documents ADD COLUMN embedding vector(1536);
-  ELSIF embedding_type <> 'vector(1536)' THEN
+    ALTER TABLE rag_documents ADD COLUMN embedding vector(1024);
+  ELSIF embedding_type <> 'vector(1024)' THEN
     ALTER TABLE rag_documents DROP COLUMN embedding;
-    ALTER TABLE rag_documents ADD COLUMN embedding vector(1536);
+    ALTER TABLE rag_documents ADD COLUMN embedding vector(1024);
   END IF;
 END $$;
 

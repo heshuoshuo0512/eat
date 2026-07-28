@@ -42,6 +42,8 @@ function candidate(overrides = {}) {
     reviewCount: 120,
     sales: 300,
     status: 'active',
+    reservationEnabled: true,
+    stallReservationEnabled: true,
     menuItem: {
       id: 'menu-item-1',
       menuId: 'menu-1',
@@ -238,7 +240,7 @@ describe('dish search workflow', () => {
     assert.ok(result.items[0].matchReasons.some((reason) => reason.includes('鸡胸肉')));
     assert.equal(result.items.some((item) => item.id === 'other-tenant'), false);
     assert.equal(result.items.some((item) => item.id === 'health-doc'), false);
-    assert.equal(result.items[0].availability.price, 15, 'menu price is database truth');
+    assert.equal(result.items[0].availability.price, 16, 'stable catalog price is database truth');
   });
 
   it('prefers the longest explicitly named dish over a shorter contained name', async () => {
@@ -308,7 +310,7 @@ describe('dish search workflow', () => {
     assert.equal(result.interpreted.detected.includes('canteenId'), true);
   });
 
-  it('warns about both allergen and supply uncertainty for an empty catalog area', async () => {
+  it('warns about allergen uncertainty for an empty catalog area without inventing supply facts', async () => {
     const db = openDatabase(':memory:');
     const now = new Date().toISOString();
     try {
@@ -326,7 +328,7 @@ describe('dish search workflow', () => {
       assert.deepEqual(result.items, []);
       assert.equal(result.interpreted.filters.canteenId, 'east-dongdahuo-empty');
       assert.ok(result.warnings.some((warning) => warning.code === 'ALLERGEN_UNVERIFIED'));
-      assert.ok(result.warnings.some((warning) => warning.code === 'SUPPLY_UNCONFIRMED'));
+      assert.ok(!result.warnings.some((warning) => warning.code === 'SUPPLY_UNCONFIRMED'));
     } finally {
       db.close();
     }
@@ -348,12 +350,13 @@ describe('dish search workflow', () => {
     assert.equal(result.interpreted.filters.stallId, 'burger');
   });
 
-  it('keeps sold-out catalog matches but marks them non-orderable', async () => {
-    const soldOut = candidate({ menuItem: { ...candidate().menuItem, soldOut: true, supplyCount: 50 } });
-    const result = await runDishSearchWorkflow({ tenantId: 'tenant-a', query: '香煎鸡胸饭', candidates: [soldOut], context: fixedContext });
+  it('keeps paused catalog matches visible but marks them non-orderable', async () => {
+    const paused = candidate({ reservationEnabled: false });
+    const result = await runDishSearchWorkflow({ tenantId: 'tenant-a', query: '香煎鸡胸饭', candidates: [paused], context: fixedContext });
     assert.equal(result.items.length, 1);
     assert.equal(result.items[0].availability.orderable, false);
-    assert.equal(result.items[0].availability.status, 'sold_out');
+    assert.equal(result.items[0].availability.status, 'reservation_paused');
+    assert.ok(result.warnings.some((warning) => warning.code === 'RESERVATION_PAUSED'));
   });
 
   it('never sends hidden dishes into lexical, semantic or availability ranking', async () => {
@@ -421,8 +424,8 @@ describe('meal recommendation workflow', () => {
         candidate(),
         candidate({ id: 'allergen', name: '花生鸡丁', ingredients: ['花生', '鸡肉'], allergens: ['花生'] }),
         candidate({ id: 'not-halal', name: '红烧肉饭', halal: false }),
-        candidate({ id: 'too-pricey', name: '牛排饭', menuItem: { ...candidate().menuItem, price: 25 } }),
-        candidate({ id: 'sold-out', name: '清真牛肉饭', menuItem: { ...candidate().menuItem, soldOut: true } })
+        candidate({ id: 'too-pricey', name: '牛排饭', price: 25 }),
+        candidate({ id: 'sold-out', name: '清真牛肉饭', reservationEnabled: false })
       ]
     });
     assert.deepEqual(result.recommendations.map((item) => item.id), ['dish-1']);
@@ -438,9 +441,9 @@ describe('meal recommendation workflow', () => {
       profile: { goal: 'healthy', mealType: 'lunch', budgetMax: 30 },
       context: fixedContext,
       candidates: [
-        candidate({ id: 'a', name: '鸡胸肉', menuItem: { ...candidate().menuItem, id: 'mi-a', price: 16 } }),
-        candidate({ id: 'b', name: '时蔬', ingredients: ['西兰花'], menuItem: { ...candidate().menuItem, id: 'mi-b', price: 8 } }),
-        candidate({ id: 'c', name: '菌菇汤', ingredients: ['菌菇'], menuItem: { ...candidate().menuItem, id: 'mi-c', price: 6 } })
+        candidate({ id: 'a', name: '鸡胸肉', price: 16 }),
+        candidate({ id: 'b', name: '时蔬', ingredients: ['西兰花'], price: 8 }),
+        candidate({ id: 'c', name: '菌菇汤', ingredients: ['菌菇'], price: 6 })
       ]
     });
     assert.equal(result.mealPlan.mode, 'combination');
@@ -473,16 +476,16 @@ describe('meal recommendation workflow', () => {
       query: '高蛋白推荐',
       profile: { goal: 'muscleGain', mealType: 'lunch', budgetMax: 20 },
       context: fixedContext,
-      candidates: [candidate({ menuItem: null })]
+      candidates: [candidate({ reservationEnabled: false, menuItem: null })]
     }, {
       knowledgeSearch: async () => [
         { id: 'health-1', sourceType: 'health', title: '蛋白质摄入建议', content: '按个人情况合理摄入蛋白质。', score: 0.8 },
         { id: 'dish-noise', sourceType: 'dish', title: '不应混入知识证据', score: 1 }
       ]
     });
-    assert.equal(result.meta.source, 'catalog_fallback');
+    assert.equal(result.meta.source, 'stable_catalog');
     assert.equal(result.recommendations[0].availability.orderable, false);
-    assert.ok(result.warnings.some((item) => item.code === 'NO_ORDERABLE_MENU'));
+    assert.ok(result.warnings.some((item) => item.code === 'NO_RESERVABLE_DISH'));
     assert.deepEqual(result.evidence.knowledge.map((item) => item.id), ['health-1']);
     assert.equal(result.evidence.dishes[0].sourceType, 'dish');
   });
@@ -522,7 +525,7 @@ describe('meal recommendation workflow', () => {
 
     assert.deepEqual(result.recommendations, []);
     assert.equal(result.meta.sourceCandidateCount, 0);
-    assert.equal(result.meta.source, 'catalog_fallback');
+    assert.equal(result.meta.source, 'stable_catalog');
   });
 });
 

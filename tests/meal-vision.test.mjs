@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { assessPhotoMeal, matchDishesFromSuggestion, buildStudentMealAnalysis } from '../server/mealVision.js';
-import { dishes as seedDishes, stalls as seedStalls, canteens as seedCanteens } from '../src/domain/seedData.js';
+import { dishes as seedDishes, stalls as seedStalls, canteens as seedCanteens } from './fixtures/seedData.js';
 
 /* ------------------------------------------------------------------ */
 /*  Fixtures                                                           */

@@ -7,8 +7,8 @@ import {
   rankRegionDishes,
   summarizeRegions
 } from '../src/domain/regionRecommendation.js';
-import { dishes } from '../src/domain/seedData.js';
-import { previewDishes } from '../src/domain/previewData.js';
+import { dishes } from './fixtures/seedData.js';
+import { previewDishes } from './fixtures/previewData.js';
 
 function dish(overrides = {}) {
   return {

@@ -67,6 +67,7 @@
         <span class="rating">{{ dishRatingText(dish) }}</span>
       </button>
       <p v-if="!sortedDishes.length" class="muted empty-dishes">暂无有效菜品。</p>
+      <button v-if="!searchResultActive && store.catalogPage.hasMore" class="secondary load-more" type="button" :disabled="catalogLoadingMore" @click="loadMoreCatalog">{{ catalogLoadingMore ? '加载中…' : `加载更多（已加载 ${store.dishes.length} / ${store.catalogPage.total}）` }}</button>
     </div>
 
     <aside v-if="detail" class="card detail-panel">
@@ -176,6 +177,7 @@ const review = reactive({ rating: 5, content: '' });
 const message = ref('');
 const reviewSection = ref(null);
 const preferenceMessage = ref('');
+const catalogLoadingMore = ref(false);
 
 const stallFilterName = computed(() => store.stalls.find((s) => s.id === stallFilter.value)?.name || '');
 const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) => [dish.id, dish])));
@@ -248,8 +250,15 @@ watch(() => route.query.dish, (val) => {
   if (val) selectedId.value = val;
 });
 
-function selectDish(id) {
+async function selectDish(id) {
   selectedId.value = id;
+  try { await store.fetchDishDetail(id); } catch {}
+}
+
+async function loadMoreCatalog() {
+  if (catalogLoadingMore.value || !store.catalogPage.hasMore) return;
+  catalogLoadingMore.value = true;
+  try { await store.loadMoreCatalog({ sort: 'rating_desc' }); } finally { catalogLoadingMore.value = false; }
 }
 
 function clearStallFilter() {
@@ -292,7 +301,7 @@ const ragAnswer = computed(() => {
   const orderable = Number(ragResult.value.availability?.orderableCount ?? ragResult.value.items?.filter((dish) => dish.availability?.orderable).length ?? 0);
   if (!total) return '没有找到满足全部条件的真实菜品，请参考下方建议放宽条件。';
   const interpreted = ragResult.value.interpreted?.summary || ragResult.value.interpreted?.query || ragQuery.value;
-  return `按“${interpreted}”找到 ${total} 道菜，其中 ${orderable} 道当前可点。结果可按综合评分切换排序。`;
+  return `按“${interpreted}”找到 ${total} 道菜，其中 ${orderable} 道当前可预约。结果可按综合评分切换排序。`;
 });
 
 function askPrompt(query) {
@@ -331,7 +340,7 @@ async function submitRagQuery() {
 function dishMatchSnippet(dish) {
   const reasons = Array.isArray(dish.matchReasons) ? dish.matchReasons : [];
   if (reasons.length) return reasons.slice(0, 2).join(' · ');
-  return dish.availability?.reason || '来源于当前租户菜品库与实时供应数据';
+  return dish.availability?.reason || '来源于校园稳定菜品目录';
 }
 
 function formatRetrievalScore(score) {
@@ -410,7 +419,10 @@ function detailLocationFull(detail) {
   return `${canteen.name} · ${stall.name}`;
 }
 
-onMounted(loadMemory);
+onMounted(async () => {
+  await loadMemory();
+  if (selectedId.value) await selectDish(selectedId.value);
+});
 </script>
 
 <style scoped>

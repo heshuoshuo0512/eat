@@ -141,7 +141,7 @@ describe('RAG safety API contract', () => {
       'dataVersion:', 'synthetic:',
     ]) assert.match(spec, new RegExp(expected));
     assert.match(spec, /Local experimental indexes may use 1024 dimensions/);
-    assert.match(spec, /production PostgreSQL contract remains 1536/);
+    assert.match(spec, /production PostgreSQL contract remains 1024/);
   });
 });
 

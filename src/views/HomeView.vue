@@ -13,9 +13,9 @@
         </div>
       </div>
       <div class="metric-grid compact">
-        <article><strong>{{ store.canteens.length }}</strong><span>食堂</span></article>
-        <article><strong>{{ store.stalls.length }}</strong><span>档口</span></article>
-        <article><strong>{{ store.dishes.length }}</strong><span>菜品</span></article>
+        <article><strong>{{ store.state.catalogStats?.venues ?? store.canteens.length }}</strong><span>场所</span></article>
+        <article><strong>{{ store.state.catalogStats?.stalls ?? store.stalls.length }}</strong><span>档口</span></article>
+        <article><strong>{{ store.state.catalogStats?.dishes ?? store.dishes.length }}</strong><span>菜品</span></article>
         <article><strong>{{ topDish ? dishRatingText(topDish) : '暂无评分' }}</strong><span>最高评分</span></article>
       </div>
     </section>
@@ -25,7 +25,7 @@
         <p class="eyebrow">逐张揭晓</p>
         <h2>{{ revealPhase === 'covered' ? '点一下图片，再看看答案' : '这张推荐适合你' }}</h2>
         <p v-if="contextSummary" class="muted">{{ contextSummary }}</p>
-        <p v-else class="muted">推荐会根据健康档案、今日供应和个人记录自动更新。</p>
+        <p v-else class="muted">推荐会根据健康档案、稳定校园菜单和个人记录自动更新。</p>
         <div class="reveal-controls">
           <button class="primary" type="button" :disabled="recLoading || !revealDish" @click="handleRevealAction">{{ revealPhase === 'covered' ? '揭晓这一张' : '看下一张' }}</button>
           <button class="ghost" type="button" :disabled="!revealDish" @click="resetReveal">重置</button>
@@ -35,7 +35,7 @@
       <article v-if="revealDish" :key="revealDish.id" class="reveal-dish">
         <button class="reveal-media reveal-media-button" type="button" :aria-label="revealPhase === 'covered' ? '点击揭晓当前推荐菜品' : '点击查看下一张推荐'" @click="handleRevealAction">
           <img v-if="revealDish.imageUrl" :src="revealDish.imageUrl" :alt="revealPhase === 'covered' ? '' : revealDish.name" />
-          <span v-else class="emoji large">{{ revealDish.image || '🍽️' }}</span>
+          <span v-else class="emoji large">{{ revealDish.name.slice(0, 1) }}</span>
           <span class="rank-badge">{{ revealIndex + 1 }}</span>
           <span v-if="revealPhase === 'covered'" class="reveal-cover"><strong>点击揭晓</strong><small>答案还藏在图片后面</small></span>
           <span v-else class="reveal-next-hint">再点一次看下一张</span>
@@ -43,7 +43,7 @@
         <div v-if="revealPhase === 'revealed'" class="reveal-info">
           <strong>{{ revealDish.name }}</strong>
           <small>{{ dishStallLabel(revealDish) }}</small>
-          <p>{{ formatWhy(revealDish.why) || '结合你的健康档案与当前供应排序。' }}</p>
+          <p>{{ formatWhy(revealDish.why) || '结合你的健康档案与校园菜单排序。' }}</p>
           <div><span class="pill">{{ dishNutritionPresentation(revealDish).label }}</span><span class="pill">{{ dishPriceText(revealDish) }}</span><span class="pill">{{ dishSupplyPresentation(revealDish).label }}</span></div>
         </div>
         <div v-else class="reveal-placeholder" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -193,7 +193,7 @@
       <RouterLink class="card admin-card" to="/admin/input">
         <div class="admin-card-icon">📝</div>
         <h2>数据录入与维护</h2>
-        <p>管理食堂、档口、菜品数据，CSV 批量导入，视觉拍照识别，今日菜单发布。</p>
+        <p>管理场所、档口、菜品目录，CSV 批量导入与视觉拍照识别。</p>
       </RouterLink>
 
       <RouterLink class="card admin-card" to="/admin">
@@ -254,14 +254,14 @@ function featureImage(dishIndex, canteenIndex = 0) {
 
 const studentFeatures = computed(() => [
   { id: 'dishes', to: '/dishes', eyebrow: '智能吃饭', label: '菜品检索', description: '从真实菜品中按综合评分挑选', imageUrl: featureImage(0), icon: '检' },
-  { id: 'recommend', to: '/recommend', eyebrow: '智能吃饭', label: '智能推荐', description: '结合健康档案和今日供应生成建议', imageUrl: featureImage(1), icon: '荐' },
+  { id: 'recommend', to: '/recommend', eyebrow: '智能吃饭', label: '智能推荐', description: '结合健康档案和校园菜单生成建议', imageUrl: featureImage(1), icon: '荐' },
   { id: 'canteens', to: '/canteens', eyebrow: '更多探索', label: '食堂导航', description: '快速找到食堂、楼层与档口', imageUrl: featureImage(2, 0), icon: '导' },
   { id: 'rankings', to: '/rankings', eyebrow: '更多探索', label: '排行榜', description: '查看校园真实评分与热度', imageUrl: featureImage(3), icon: '榜' },
   { id: 'regions', to: '/regions', eyebrow: '更多探索', label: '区域推荐', description: '按风味区域发现下一餐', imageUrl: featureImage(4), icon: '味' },
   { id: 'reviews', to: '/reviews', eyebrow: '校园互动', label: '菜品评价', description: '汇总各食堂审核通过的评价', imageUrl: featureImage(5), icon: '评' },
   { id: 'community', to: '/community', eyebrow: '校园互动', label: '校园帖子', description: '分享菜品体验与校园口碑', imageUrl: featureImage(6), icon: '帖' },
   { id: 'saved', to: '/saved', eyebrow: '个人记录', label: '收藏与吃过', description: '把喜欢和吃过的菜统一收好', imageUrl: featureImage(7), icon: '藏' },
-  { id: 'orders', to: '/orders', eyebrow: '今日菜单', label: '今日点餐', description: '浏览菜单、购物车和历史取餐码', imageUrl: featureImage(8), icon: '餐', badge: '待开发 · 可预览' }
+  { id: 'orders', to: '/orders', eyebrow: '校园菜单', label: '到店预约', description: '同档口预约，到店确认并支付', imageUrl: featureImage(8), icon: '餐' }
 ]);
 
 const contextSummary = computed(() => {

@@ -43,12 +43,10 @@ describe('region recommendation page behavior', () => {
     assert.match(regionVue, /@media\s*\(max-width:\s*680px\)/);
   });
 
-  it('supports a no-backend preview mode for the region page', () => {
+  it('does not restore a fake no-backend preview mode', () => {
     const appVue = readFileSync(resolve('src/App.vue'), 'utf8');
     const storeJs = readFileSync(resolve('src/stores/canteenStore.js'), 'utf8');
-    assert.match(appVue, /previewMode/);
-    assert.match(appVue, /preview=regions|preview === 'regions'/);
-    assert.match(storeJs, /loadPreviewState/);
-    assert.match(storeJs, /页面预览/);
+    assert.doesNotMatch(appVue, /previewMode|preview=regions|preview === 'regions'/);
+    assert.doesNotMatch(storeJs, /loadPreviewState|页面预览/);
   });
 });

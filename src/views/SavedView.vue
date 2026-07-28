@@ -37,6 +37,7 @@
         </div>
       </article>
     </div>
+    <button v-if="store.savedCatalog.favorite.page.hasMore" class="secondary load-more" type="button" :disabled="savedLoading" @click="loadMoreSaved('favorite')">{{ savedLoading ? '加载中…' : '加载更多收藏' }}</button>
     <div v-else class="card empty-state">
       <h2>还没有收藏</h2>
       <p>在菜品检索、区域推荐或智能推荐中点击星标即可加入。</p>
@@ -53,6 +54,7 @@
         <button class="secondary" type="button" @click="markEaten(entry.id)">再记一次</button>
       </article>
     </div>
+    <button v-if="store.savedCatalog.eaten.page.hasMore" class="secondary load-more" type="button" :disabled="savedLoading" @click="loadMoreSaved('eaten')">{{ savedLoading ? '加载中…' : '加载更多记录' }}</button>
     <p v-else class="muted">还没有“吃过”记录。</p>
   </section>
 
@@ -60,7 +62,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
@@ -68,14 +70,12 @@ const store = useCanteenStore();
 const message = ref('');
 const isError = ref(false);
 const activeSavedTab = ref('favorites');
-const preferenceMap = computed(() => new Map(store.dishPreferences.map((item) => [item.dishId, item])));
+const savedLoading = ref(false);
 
-const favoriteEntries = computed(() => store.dishes
-  .filter((dish) => preferenceMap.value.get(dish.id)?.favorite)
-  .map((dish) => ({ ...dish, ...preferenceMap.value.get(dish.id) })));
-const eatenEntries = computed(() => store.dishes
-  .filter((dish) => Number(preferenceMap.value.get(dish.id)?.eatenCount || 0) > 0)
-  .map((dish) => ({ ...dish, ...preferenceMap.value.get(dish.id) }))
+const favoriteEntries = computed(() => store.savedCatalog.favorite.items
+  .map((dish) => ({ ...dish, ...(dish.preference || {}) })));
+const eatenEntries = computed(() => store.savedCatalog.eaten.items
+  .map((dish) => ({ ...dish, ...(dish.preference || {}) }))
   .sort((left, right) => right.eatenCount - left.eatenCount));
 const totalEaten = computed(() => eatenEntries.value.reduce((sum, item) => sum + Number(item.eatenCount || 0), 0));
 
@@ -102,12 +102,21 @@ async function runAction(action, successText) {
 }
 
 function toggleFavorite(dishId) {
-  return runAction(() => store.toggleFavorite(dishId), '收藏状态已更新。');
+  return runAction(async () => { await store.toggleFavorite(dishId); await store.loadSavedCatalog('favorite'); }, '收藏状态已更新。');
 }
 
 function markEaten(dishId) {
-  return runAction(() => store.markDishEaten(dishId), '已记录一次“吃过”。');
+  return runAction(async () => { await store.markDishEaten(dishId); await store.loadSavedCatalog('eaten'); }, '已记录一次“吃过”。');
 }
+
+async function loadMoreSaved(kind) {
+  const page = store.savedCatalog[kind].page;
+  if (savedLoading.value || !page.hasMore) return;
+  savedLoading.value = true;
+  try { await store.loadSavedCatalog(kind, { page: page.page + 1, pageSize: page.pageSize || 20 }); } finally { savedLoading.value = false; }
+}
+
+onMounted(() => Promise.all([store.loadSavedCatalog('favorite'), store.loadSavedCatalog('eaten')]));
 </script>
 
 <style scoped>

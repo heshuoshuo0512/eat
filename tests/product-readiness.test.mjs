@@ -112,7 +112,7 @@ describe('supply status – sold-out exclusion', () => {
     adminToken = await loginAdmin();
   });
 
-  it('published menu with a sold-out item excludes that dish from today bundle', async () => {
+  it('legacy published menus remain invisible to the retired student endpoint', async () => {
     // Create a published menu containing two dishes, one sold-out.
     const menuRes = await post('/api/admin/menus', {
       token: adminToken,
@@ -134,21 +134,18 @@ describe('supply status – sold-out exclusion', () => {
 
     // Today menu bundle now returns ALL published dishes including sold_out items.
     const todayRes = await get('/api/menus/today?mealType=lunch');
-    assert.equal(todayRes.status, 200);
-    assert.equal(todayRes.data.source, 'menu');
-    assert.ok(todayRes.data.dishes.length >= 2, 'at least two dishes in published menu');
-    const available = todayRes.data.dishes.find((d) => d.id === 'dish-available');
-    assert.equal(available.supplyStatus, 'available');
-    const soldOut = todayRes.data.dishes.find((d) => d.id === 'dish-soldout');
-    assert.equal(soldOut.supplyStatus, 'sold_out');
+    assert.equal(adminMenus.status, 200);
+    assert.ok(adminMenus.data.menus.length > 0);
+    assert.equal(todayRes.status, 410);
+    assert.equal(todayRes.data.error.code, 'TODAY_MENU_RETIRED');
   });
 
-  it('recommend endpoint also excludes sold-out dishes from its pool', async () => {
+  it('recommend endpoint uses stable catalog availability instead of sold-out flags', async () => {
     const recRes = await get('/api/recommend?mealType=lunch');
     assert.equal(recRes.status, 200);
     assert.ok(Array.isArray(recRes.data.ranked), 'recommend must return ranked array');
-    const ids = recRes.data.ranked.map((d) => d.id);
-    assert.ok(!ids.includes('dish-soldout'), 'sold-out dish must not be recommended');
+    assert.equal(recRes.data.source, 'stable_catalog');
+    assert.equal(recRes.data.menu, null);
   });
 });
 
@@ -199,7 +196,7 @@ describe('today menu publish contract', () => {
     adminToken = await loginAdmin();
   });
 
-  it('draft menus are invisible to /api/menus/today', async () => {
+  it('draft menus do not reactivate /api/menus/today', async () => {
     // Create a DRAFT menu
     const draftRes = await post('/api/admin/menus', {
       token: adminToken,
@@ -214,14 +211,11 @@ describe('today menu publish contract', () => {
     assert.equal(draftRes.status, 201);
 
     const todayRes = await get(`/api/menus/today?mealType=dinner&date=${today}`);
-    assert.equal(todayRes.status, 200);
-    // The draft menu should not appear; its dishes should not be in the bundle.
-    const ids = todayRes.data.dishes.map((d) => d.id);
-    assert.ok(!ids.includes('dish-available') || todayRes.data.source === 'fallback',
-      'draft menu dishes must not appear via source=menu');
+    assert.equal(todayRes.status, 410);
+    assert.equal(todayRes.data.error.code, 'TODAY_MENU_RETIRED');
   });
 
-  it('batch publish makes menus visible to /api/menus/today', async () => {
+  it('batch publishing legacy menus does not reactivate /api/menus/today', async () => {
     // List menus to find the draft ID.
     const listRes = await get('/api/admin/menus?status=draft', { token: adminToken });
     assert.equal(listRes.status, 200);
@@ -238,20 +232,14 @@ describe('today menu publish contract', () => {
 
     // Now today's dinner bundle should include the dish from the published menu.
     const todayRes = await get(`/api/menus/today?mealType=dinner&date=${today}`);
-    assert.equal(todayRes.status, 200);
-    assert.equal(todayRes.data.source, 'menu');
-    assert.ok(todayRes.data.dishes.length > 0, 'published menu dishes must appear');
-    assert.ok(todayRes.data.dishes.some((d) => d.id === 'dish-available'), 'published dish must be in bundle');
+    assert.equal(todayRes.status, 410);
+    assert.equal(todayRes.data.error.code, 'TODAY_MENU_RETIRED');
   });
 
-  it('/api/menus/today response shape includes date, mealType, menus, dishes, source', async () => {
+  it('/api/menus/today returns the retirement contract', async () => {
     const res = await get(`/api/menus/today?mealType=lunch&date=${today}`);
-    assert.equal(res.status, 200);
-    assert.equal(typeof res.data.date, 'string');
-    assert.equal(typeof res.data.mealType, 'string');
-    assert.ok(Array.isArray(res.data.menus), 'menus must be array');
-    assert.ok(Array.isArray(res.data.dishes), 'dishes must be array');
-    assert.ok(['menu', 'fallback'].includes(res.data.source), 'source must be menu or fallback');
+    assert.equal(res.status, 410);
+    assert.equal(res.data.error.code, 'TODAY_MENU_RETIRED');
   });
 });
 
@@ -337,16 +325,16 @@ describe('AI and recommendation fallback', () => {
     assert.ok(typeof res.data.plan.totals.price === 'number', 'totals.price must be numeric');
     assert.ok(res.data.plan.goalLabel, 'recommend must include goalLabel');
     assert.ok(res.data.plan.reason, 'recommend must include reason');
-    assert.ok(['menu', 'fallback'].includes(res.data.source), 'source must be menu or fallback');
+    assert.equal(res.data.source, 'stable_catalog');
+    assert.equal(res.data.menu, null);
   });
 
-  it('GET /api/recommend returns menu metadata when available', async () => {
+  it('GET /api/recommend returns stable catalog metadata', async () => {
     const res = await get('/api/recommend?mealType=lunch');
     assert.equal(res.status, 200);
-    assert.ok(res.data.menu, 'recommend must include menu metadata');
-    assert.equal(typeof res.data.menu.date, 'string');
-    assert.equal(typeof res.data.menu.mealType, 'string');
-    assert.ok(Array.isArray(res.data.menu.menus));
+    assert.equal(res.data.menu, null);
+    assert.equal(res.data.catalog.source, 'stable_catalog');
+    assert.equal(typeof res.data.catalog.mealType, 'string');
   });
 
   it('POST /api/agent/meal-advisor requires a non-empty query', async () => {

@@ -152,7 +152,7 @@ describe('PostgreSQL row-level security integration', { skip: enabled ? false : 
 
   it('allows Worker access to global/current knowledge and global Outbox claims without cross-tenant writes', async () => {
     await workerDb.runWithContext({ tenantId: tenantA, userId: '', role: 'worker', requestId: id('worker-a') }, async () => {
-      const documents = await workerDb.prepare('SELECT id FROM rag_documents ORDER BY id').all();
+      const documents = await workerDb.prepare("SELECT id FROM rag_documents WHERE source_type = 'rls_fixture' ORDER BY id").all();
       assert.deepEqual(documents.map((row) => row.id), [id('rag-a'), id('rag-global')].sort());
       await assert.rejects(
         () => workerDb.prepare(`

@@ -158,11 +158,11 @@ const groups = [
     baseDatabasePath: sourcePath,
   },
   {
-    id: 'raw-qwen8b', enhanced: false, model: 'qwen3-embedding:8b-fp16', dimension: 4096,
+    id: 'raw-qwen8b', enhanced: false, model: 'qwen3-embedding:8b-fp16', dimension: 1024,
     databasePath: safeExperimentPath(resolve(DATA_ROOT, 'real-catalog-campus-qwen8b-2026-07-27-v2.sqlite')),
   },
   {
-    id: 'enhanced-qwen8b', enhanced: true, model: 'qwen3-embedding:8b-fp16', dimension: 4096,
+    id: 'enhanced-qwen8b', enhanced: true, model: 'qwen3-embedding:8b-fp16', dimension: 1024,
     databasePath: safeExperimentPath(resolve(DATA_ROOT, 'real-catalog-campus-ai-qwen8b-2026-07-28-v2.sqlite')),
     baseDatabasePath: safeExperimentPath(resolve(DATA_ROOT, 'real-catalog-campus-qwen8b-2026-07-27-v2.sqlite')),
   },
@@ -185,6 +185,7 @@ const report = {
 };
 
 for (const group of groups) {
+  const isLargeModel = group.model.includes(':8b');
   const state = {
     ...group,
     status: 'ready',
@@ -254,6 +255,7 @@ for (const group of groups) {
     RETRIEVAL_VECTOR_MODE: 'active',
     RETRIEVAL_QUERY_CACHE_TTL_MS: '3600000',
     RETRIEVAL_QUERY_CACHE_MAX: '512',
+    RETRIEVAL_SQLITE_VECTOR_CACHE_TTL_MS: '3600000',
   };
   try {
     if (!options.skipReindex) {
@@ -263,8 +265,8 @@ for (const group of groups) {
         '--source=dish,stall,campus_policy',
         '--vector-mode=active',
         `--embedding-dimension=${group.dimension}`,
-        `--batch-size=${group.dimension === 4096 ? 1 : 24}`,
-        '--embedding-concurrency=2',
+        `--batch-size=${isLargeModel ? 1 : 24}`,
+        `--embedding-concurrency=${isLargeModel ? 1 : 2}`,
         ...(group.enhanced ? [`--dish-annotation-batch=${options.annotationBatchId}`] : []),
       ], env);
       runNode('scripts/reindex-retrieval.mjs', [
@@ -274,7 +276,7 @@ for (const group of groups) {
         '--vector-mode=active',
         `--embedding-dimension=${group.dimension}`,
         '--batch-size=24',
-        '--embedding-concurrency=2',
+        `--embedding-concurrency=${isLargeModel ? 1 : 2}`,
       ], env);
       runNode('scripts/reindex-retrieval.mjs', [
         `--sqlite=${group.databasePath}`,
@@ -282,14 +284,15 @@ for (const group of groups) {
         '--source=health_knowledge',
         '--vector-mode=active',
         `--embedding-dimension=${group.dimension}`,
-        `--batch-size=${group.dimension === 4096 ? 1 : 10}`,
-        '--embedding-concurrency=2',
+        `--batch-size=${isLargeModel ? 1 : 10}`,
+        `--embedding-concurrency=${isLargeModel ? 1 : 2}`,
       ], env);
     }
     runNode('scripts/evaluate-real-catalog-retrieval.mjs', [
       `--db=${group.databasePath}`,
       `--catalog=${options.catalogPath}`,
       `--output=${state.catalogReportPath}`,
+      '--resume',
     ], env);
     runNode('scripts/evaluate-multi-source-retrieval.mjs', [
       `--database=${group.databasePath}`,
@@ -297,6 +300,7 @@ for (const group of groups) {
       `--dimension=${group.dimension}`,
       '--vector-mode=active',
       `--output=${state.knowledgeReportPath}`,
+      '--resume',
     ], env);
     const catalog = JSON.parse(readFileSync(state.catalogReportPath, 'utf8'));
     const knowledge = JSON.parse(readFileSync(state.knowledgeReportPath, 'utf8'));

@@ -105,7 +105,8 @@ describe('Enterprise agent platform runtime', () => {
     const { status, data } = await proposeOrder(studentToken);
     assert.equal(status, 200);
     assert.ok(Array.isArray(data.toolResults.catalog), 'catalog is array');
-    assert.ok(data.toolResults.catalog.some((entry) => entry.name === 'menu.today'), 'catalog includes menu.today');
+    assert.ok(data.toolResults.catalog.some((entry) => entry.name === 'dish.search'), 'catalog includes dish.search');
+    assert.ok(!data.toolResults.catalog.some((entry) => entry.name === 'menu.today'), 'catalog excludes retired menu.today');
     assert.ok(data.toolResults.catalog.some((entry) => entry.name === 'order.create.propose'), 'catalog includes order.create.propose');
     assert.ok(Array.isArray(data.toolResults.registry), 'registry is array');
     for (const entry of data.toolResults.registry) {

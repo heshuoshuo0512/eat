@@ -56,6 +56,7 @@ function dishBody(overrides) {
     tags: ['检索验收', '高蛋白'],
     halal: true,
     mealTypes: ['lunch'],
+    reservationEnabled: true,
     nutrition: { calories: 420, protein: 36, fat: 8, carbs: 52 },
     description: '双检索接口验收使用的可下单清真菜品。',
     ...overrides
@@ -105,7 +106,8 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
         name: '检索验收售罄牛肉饭',
         price: 15,
         ingredients: ['牛肉', '米饭', '青菜'],
-        nutrition: { calories: 530, protein: 32, fat: 13, carbs: 66 }
+        nutrition: { calories: 530, protein: 32, fat: 13, carbs: 66 },
+        reservationEnabled: false
       })
     ];
 
@@ -116,6 +118,12 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
         body: fixture
       });
       assert.equal(created.status, 201, `failed to create fixture dish ${fixture.id}`);
+      const reservation = await req(`/api/admin/dishes/${fixture.id}/reservation`, {
+        method: 'PATCH',
+        token: adminToken,
+        body: { enabled: fixture.id !== fixtureIds.soldOut },
+      });
+      assert.equal(reservation.status, 200, `failed to set reservation state for ${fixture.id}`);
     }
 
     const menu = await req('/api/admin/menus', {
@@ -153,7 +161,7 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
     db?.close();
   });
 
-  it('POST /api/dishes/search returns the contract and preserves sold-out database truth', async () => {
+  it('POST /api/dishes/search returns stable catalog reservation truth', async () => {
     const { status, data } = await req('/api/dishes/search', {
       method: 'POST',
       token: studentToken,
@@ -167,22 +175,17 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
     });
 
     assertStatus(status, 200, data);
-    assert.ok(data.interpreted && typeof data.interpreted === 'object');
     assert.ok(Array.isArray(data.items));
     assert.ok(data.availability && typeof data.availability.orderableCount === 'number');
-    assert.ok(data.matchReasons && typeof data.matchReasons === 'object');
-    assert.ok(Array.isArray(data.suggestedRelaxations));
-    assert.deepEqual(data.page.limit, 20);
-    assert.deepEqual(data.page.offset, 0);
-    assert.ok(data.meta && data.meta.tenantId === 'default');
+    assert.equal(data.page.page, 1);
+    assert.equal(data.page.pageSize, 20);
+    assert.equal(data.meta.source, 'stable_catalog');
 
-    const soldOut = data.items.find((item) => item.id === fixtureIds.soldOut);
-    assert.ok(soldOut, 'sold-out catalog match remains visible in dish search');
-    assert.equal(soldOut.availability.orderable, false);
-    assert.equal(soldOut.availability.status, 'sold_out');
-    assert.equal(soldOut.availability.price, 12.5, 'published menu price is authoritative');
-    assert.ok(Array.isArray(soldOut.matchReasons));
-    assert.deepEqual(data.matchReasons[soldOut.id], soldOut.matchReasons);
+    const paused = data.items.find((item) => item.id === fixtureIds.soldOut);
+    assert.ok(paused, 'paused catalog match remains visible in dish search');
+    assert.equal(paused.availability.orderable, false);
+    assert.equal(paused.availability.status, 'reservation_paused');
+    assert.equal(paused.availability.price, 15, 'stable catalog price is authoritative');
   });
 
   it('POST /api/recommend enforces hard constraints and builds mealPlan from the same ranking', async () => {
@@ -216,7 +219,7 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
       assert.ok(!foodTerms.includes('花生'), `${item.name} must satisfy the allergen/avoid constraint`);
       assert.ok(item.availability.price <= 16, `${item.name} must satisfy the per-option budget`);
       assert.equal(item.availability.orderable, true, `${item.name} must be currently orderable`);
-      assert.notEqual(item.availability.status, 'sold_out');
+      assert.notEqual(item.availability.status, 'reservation_paused');
     }
 
     const recommendationIds = data.recommendations.map((item) => item.id);
@@ -236,7 +239,8 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
     assert.ok(data.plan.totals && typeof data.plan.totals === 'object', 'legacy plan.totals remains available');
     assert.ok(data.context && data.context.profile, 'legacy context.profile remains available');
     assert.ok(typeof data.source === 'string', 'legacy source remains available');
-    assert.ok(data.menu && Array.isArray(data.menu.menus), 'legacy menu metadata remains available');
+    assert.equal(data.menu, null, 'retired daily-menu metadata stays absent');
+    assert.equal(data.catalog.source, 'stable_catalog');
   });
 
   it('GET /api/rag/search returns dish citations even when health documents coexist', async () => {

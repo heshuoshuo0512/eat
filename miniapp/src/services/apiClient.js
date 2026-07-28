@@ -28,9 +28,10 @@ function queryString(params = {}) {
 
 function apiError(response) {
   const data = response.data || {};
-  const error = new Error(data.error || `请求失败：${response.statusCode}`);
+  const payload = data.error && typeof data.error === 'object' ? data.error : null;
+  const error = new Error(payload?.message || data.error || data.message || `请求失败：${response.statusCode}`);
   error.statusCode = response.statusCode;
-  error.code = data.code || '';
+  error.code = payload?.code || data.code || '';
   return error;
 }
 
@@ -123,6 +124,21 @@ export const apiClient = {
   bootstrap() {
     return request('/api/bootstrap');
   },
+  catalogVenues() {
+    return request('/api/catalog/venues');
+  },
+  catalogStalls(params = {}) {
+    return request(`/api/catalog/stalls${queryString({ page: params.page || 1, pageSize: params.pageSize || 100, venueId: params.venueId || '' })}`);
+  },
+  catalogRankings(params = {}) {
+    return request(`/api/catalog/rankings${queryString({ type: params.type || 'dishes', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
+  },
+  savedCatalog(params = {}) {
+    return request(`/api/catalog/saved${queryString({ kind: params.kind || 'favorite', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
+  },
+  communityDishOptions(params = {}) {
+    return request(`/api/community/dish-options${queryString({ query: params.query || '', venueId: params.venueId || '', stallId: params.stallId || '', page: params.page || 1, pageSize: params.pageSize || 30 })}`);
+  },
   login(payload) {
     return authenticate('/api/auth/login', payload);
   },
@@ -150,11 +166,8 @@ export const apiClient = {
   searchDishes(payload) {
     return request('/api/dishes/search', { method: 'POST', body: payload, timeoutMs: 60000 });
   },
-  todayMenu(mealType) {
-    return request(`/api/menus/today${queryString({ mealType })}`);
-  },
-  loadRankings() {
-    return request('/api/rankings');
+  loadRankings(params = {}) {
+    return request(`/api/catalog/rankings${queryString({ type: params.type || 'dishes', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
   },
   loadRecommendation() {
     return request('/api/recommend', { timeoutMs: 60000 });
@@ -215,6 +228,13 @@ export const apiClient = {
   },
   listOrders() {
     return request('/api/orders');
+  },
+  createOrder(payload) {
+    const idempotencyKey = payload.idempotencyKey || `reservation:${Date.now()}:${Math.random().toString(36).slice(2, 12)}`;
+    return request('/api/orders', { method: 'POST', body: { ...payload, idempotencyKey }, headers: { 'X-Idempotency-Key': idempotencyKey } });
+  },
+  cancelOrder(id) {
+    return request(`/api/orders/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
   },
   analyzeMealImage(payload) {
     return request('/api/vision/meal-analyze', { method: 'POST', body: payload, timeoutMs: 60000 });

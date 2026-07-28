@@ -20,7 +20,7 @@
           <text class="section-label">个人服务</text>
           <view class="list-group">
             <sc-list-row icon-name="safe" title="健康档案" :description="profileSummary" :badge="profileIncomplete?'待完善':''" badge-tone="warning" @tap="open('/pages/health-profile/health-profile')" />
-            <sc-list-row icon-name="store" title="今日点餐" description="菜单、购物车与取餐码预览" badge="联调中" badge-tone="warning" @tap="open('/pages/orders/orders')" />
+            <sc-list-row icon-name="store" title="到店预约" description="同档口预约、预约码与到店支付" @tap="open('/pages/orders/orders')" />
           </view>
         </view>
 

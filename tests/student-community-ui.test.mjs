@@ -59,11 +59,11 @@ describe('student community and workspace UI contracts', () => {
     assert.match(canteens, /@media \(max-width: 640px\)[\s\S]*\.canteen-grid\s*\{\s*grid-template-columns:\s*1fr/);
   });
 
-  it('keeps pickup-code previews while disabling order creation', () => {
+  it('keeps pickup codes and submits real at-stall reservations', () => {
     assert.match(orders, /add-dish-button/);
     assert.match(orders, /copyPickupCode/);
     assert.match(orders, /pickup-code-panel/);
     assert.match(orders, /prefers-reduced-motion/);
-    assert.doesNotMatch(orders, /store\.createOrder/);
+    assert.match(orders, /store\.createOrder/);
   });
 });

@@ -80,7 +80,7 @@ describe('Order flow', () => {
   after(() => server.close());
 
   /* ── Student creates order and receives pickup code ──────────── */
-  it('student creates order from today menu and receives pickup code, total, and items', async () => {
+  it('student creates an at-stall reservation from the stable catalog', async () => {
     const { status, data } = await req('/api/orders', {
       method: 'POST',
       token: studentToken,
@@ -94,44 +94,42 @@ describe('Order flow', () => {
     assert.ok(typeof order.pickupCode === 'string' && order.pickupCode.length > 0, 'pickupCode is a non-empty string');
 
     // Total: 2 × 13 = 26
-    assert.equal(order.totalAmount, 26);
+    assert.equal(order.totalAmount, 32);
+    assert.equal(order.estimatedAmount, 32);
+    assert.equal(order.finalAmount, 32);
+    assert.equal(order.orderType, 'reservation');
+    assert.equal(order.paymentMethod, 'at_stall');
+    assert.equal(order.pricingStatus, 'exact');
 
     // Items shape
     assert.equal(order.items.length, 1);
     assert.equal(order.items[0].dishId, 'd-chicken-bowl');
     assert.equal(order.items[0].quantity, 2);
-    assert.equal(order.items[0].price, 13);
+    assert.equal(order.items[0].price, 16);
+    assert.equal(order.items[0].priceDisplay, '16元');
 
     // Status starts as pending
     assert.equal(order.status, 'pending');
   });
 
   /* ── Supply decrements on order creation ─────────────────────── */
-  it('creating an order increments supplyCount; soldOut flips when supplyLimit is reached', async () => {
+  it('reuses an idempotency key without creating duplicate reservations or changing sales', async () => {
     // supplyLimit for d-egg-tomato is 3; place an order for 3 units
-    const { status, data } = await req('/api/orders', {
+    const beforeSales = db.prepare("SELECT sales FROM dishes WHERE id = 'd-egg-tomato'").get().sales;
+    const body = { idempotencyKey: 'order-flow-idempotency-egg', items: [{ dishId: 'd-egg-tomato', quantity: 3 }] };
+    const first = await req('/api/orders', {
       method: 'POST',
       token: studentToken,
-      body: { items: [{ dishId: 'd-egg-tomato', quantity: 3 }] },
+      body,
     });
-    assert.equal(status, 201);
+    const repeated = await req('/api/orders', { method: 'POST', token: studentToken, body });
+    assert.equal(first.status, 201);
+    assert.equal(repeated.status, 201);
+    assert.equal(repeated.data.order.id, first.data.order.id);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM orders WHERE idempotency_key = 'order-flow-idempotency-egg'").get().count, 1);
+    assert.equal(db.prepare("SELECT sales FROM dishes WHERE id = 'd-egg-tomato'").get().sales, beforeSales);
 
     // Verify supply has decremented via today menu
-    const menu = await req('/api/menus/today?mealType=lunch');
-    assert.equal(menu.status, 200);
-    const eggItem = menu.data.dishes.find((d) => d.id === 'd-egg-tomato');
-    assert.ok(eggItem, 'egg-tomato dish should be in today menu');
-    assert.equal(eggItem.menuItem.supplyCount, 3, 'supplyCount equals ordered quantity');
-    assert.equal(eggItem.supplyStatus, 'sold_out', 'dish is sold out when supplyLimit reached');
-
-    // Attempting to order a sold-out dish should fail
-    const overOrder = await req('/api/orders', {
-      method: 'POST',
-      token: studentToken,
-      body: { items: [{ dishId: 'd-egg-tomato', quantity: 1 }] },
-    });
-    assert.equal(overOrder.status, 400);
-    assert.ok(overOrder.data.error, 'error message present for sold-out item');
   });
 
   /* ── Student lists only own orders ───────────────────────────── */
@@ -218,7 +216,7 @@ describe('Order flow', () => {
   });
 
   /* ── Invalid quantities return 400 ───────────────────────────── */
-  it('invalid quantities (zero, negative, exceeding remaining supply) return 400', async () => {
+  it('invalid quantities and mixed-stall reservations return 400', async () => {
     // Zero quantity
     const zero = await req('/api/orders', {
       method: 'POST',
@@ -236,15 +234,20 @@ describe('Order flow', () => {
     assert.equal(neg.status, 400);
 
     // Exceeding remaining supply (d-chicken-bowl has supplyLimit 5; some already ordered)
-    const menu = await req('/api/menus/today?mealType=lunch');
-    const chickenItem = menu.data.dishes.find((d) => d.id === 'd-chicken-bowl');
-    const remaining = chickenItem.menuItem.supplyLimit - chickenItem.menuItem.supplyCount;
     const over = await req('/api/orders', {
       method: 'POST',
       token: studentToken,
-      body: { items: [{ dishId: 'd-chicken-bowl', quantity: remaining + 1 }] },
+      body: { items: [{ dishId: 'd-chicken-bowl', quantity: 21 }] },
     });
     assert.equal(over.status, 400);
+
+    const mixed = await req('/api/orders', {
+      method: 'POST',
+      token: studentToken,
+      body: { items: [{ dishId: 'd-chicken-bowl', quantity: 1 }, { dishId: 'd-egg-tomato', quantity: 1 }] },
+    });
+    assert.equal(mixed.status, 400);
+    assert.equal(mixed.data.code, 'MIXED_STALL_ORDER');
   });
 
   /* ── Empty items array returns 400 ───────────────────────────── */

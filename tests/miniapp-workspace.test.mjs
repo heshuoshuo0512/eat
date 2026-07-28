@@ -44,7 +44,7 @@ describe('miniapp unified workspaces', () => {
     assert.doesNotMatch(login, /class="login-poster"/);
     assert.match(login, /class="login-card panel-card"/);
     assert.match(login, /loginWithWechat/);
-    assert.match(login, /loginWithDemo/);
+    assert.doesNotMatch(login, /loginWithDemo/);
     assert.match(login, /loginWithAccount/);
     assert.match(login, /requireConsent/);
     assert.match(login, /max-width:440px/);

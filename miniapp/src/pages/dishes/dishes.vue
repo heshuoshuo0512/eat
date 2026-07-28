@@ -1,5 +1,5 @@
 <template>
-  <sc-page-shell title="找菜" subtitle="按真实供应筛选这一餐" tone="discover" tab-id="dishes">
+  <sc-page-shell title="找菜" subtitle="按校园稳定目录筛选" tone="discover" tab-id="dishes">
     <view class="mode-row">
       <sc-segmented-control v-model="mode" :options="modeOptions" block @update:model-value="changeMode" />
       <button v-if="mode === 'search'" class="camera-button" aria-label="拍照识餐" @tap="openVision"><sc-icon name="camera" :size="18" /></button>
@@ -22,7 +22,7 @@
         <view class="result-column">
           <view class="result-head"><view><text class="result-eyebrow">{{ searchResult ? '检索结果' : '全部有效菜品' }}</text><text class="result-title">{{ sortedDishes.length }} 道菜</text></view><sc-segmented-control v-model="sortDirection" :options="sortOptions" density="compact" /></view>
           <sc-state-card v-if="store.loading.value&&!store.loaded.value" type="loading" title="正在加载菜品" />
-          <view v-else class="dish-list"><sc-dish-card v-for="dish in visibleDishes" :key="dish.id" :dish="dish" :location="dishLocation(dish)" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" variant="compact" media="none" @tap="openDish(dish.id)" /><sc-state-card v-if="!sortedDishes.length" type="empty" illustration="empty-search" title="没有匹配菜品" desc="调整描述后重新搜索。" action-text="查看全部" @action="clearSearch" /><button v-if="searchResult && sortedDishes.length > 1" class="result-toggle" type="button" @tap="resultsExpanded = !resultsExpanded">{{ resultsExpanded ? '收起排名菜品' : `查看全部 ${sortedDishes.length} 道排名菜品` }}</button></view>
+          <view v-else class="dish-list"><sc-dish-card v-for="dish in visibleDishes" :key="dish.id" :dish="dish" :location="dishLocation(dish)" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" variant="compact" media="none" @tap="openDish(dish.id)" /><sc-state-card v-if="!sortedDishes.length" type="empty" illustration="empty-search" title="没有匹配菜品" desc="调整描述后重新搜索。" action-text="查看全部" @action="clearSearch" /><button v-if="searchResult && sortedDishes.length > 1" class="result-toggle" type="button" @tap="resultsExpanded = !resultsExpanded">{{ resultsExpanded ? '收起排名菜品' : `查看全部 ${sortedDishes.length} 道排名菜品` }}</button><text v-if="!searchResult&&store.catalogPage.value.hasMore" class="catalog-progress">{{ catalogLoadingMore?'正在加载更多':`已加载 ${store.dishes.value.length} / ${store.catalogPage.value.total}，继续上拉` }}</text></view>
           <sc-citation-list v-if="searchResult" :citations="searchResult.items||[]" :expanded="citationsExpanded" @toggle="citationsExpanded=!citationsExpanded" @select="selectCitation" />
         </view>
       </view>
@@ -31,20 +31,20 @@
     <template v-else>
       <view class="discovery-workspace">
         <view class="control-column">
-          <sc-smart-composer v-model="question" v-model:memory-draft="memoryDraft" title="帮我规划这一餐" subtitle="结合健康档案、今日供应与校园评价。" :prompts="recommendPrompts" :loading="recommendLoading" :memory-open="memoryOpen" :memory-saving="memorySaving" action-text="生成推荐" @submit="runPrompt(question)" @prompt="runPrompt" @toggle-memory="memoryOpen=!memoryOpen" @save-memory="saveMemory" @clear-memory="clearMemory" />
+          <sc-smart-composer v-model="question" v-model:memory-draft="memoryDraft" title="帮我规划这一餐" subtitle="结合健康档案、校园目录与评价。" :prompts="recommendPrompts" :loading="recommendLoading" :memory-open="memoryOpen" :memory-saving="memorySaving" action-text="生成推荐" @submit="runPrompt(question)" @prompt="runPrompt" @toggle-memory="memoryOpen=!memoryOpen" @save-memory="saveMemory" @clear-memory="clearMemory" />
           <sc-trust-bar v-if="recommendationResult" :evaluation="recommendationResult.eval||{}" :confidence="recommendationResult.confidence||{}" />
           <view v-if="recommendationResult?.warnings?.length" class="rag-warnings"><text v-for="warning in recommendationResult.warnings" :key="`${warning.code}-${warning.dishId||''}`">{{ warning.message }}</text></view>
         </view>
         <view class="result-column">
           <view class="conversation-panel">
             <view class="conversation-head"><view><text>智能推荐</text><text class="ui-strong">你的用餐建议</text></view><text class="live"><text class="ui-dot"></text>{{ recommendLoading?'分析中':'数据已连接' }}</text></view>
-            <view class="conversation"><view v-if="!conversation.length&&recommendLoading" class="thinking"><text></text><text></text><text></text><text class="ui-paragraph">正在读取健康档案与今日供应</text></view><view v-for="(item,index) in conversation" :key="`${item.role}-${index}`" class="message" :class="item.role"><text>{{ item.role==='user'?'你':'智能推荐' }}</text><text class="ui-paragraph">{{ item.content }}</text></view></view>
+            <view class="conversation"><view v-if="!conversation.length&&recommendLoading" class="thinking"><text></text><text></text><text></text><text class="ui-paragraph">正在读取健康档案与校园目录</text></view><view v-for="(item,index) in conversation" :key="`${item.role}-${index}`" class="message" :class="item.role"><text>{{ item.role==='user'?'你':'智能推荐' }}</text><text class="ui-paragraph">{{ item.content }}</text></view></view>
             <text v-if="recommendMessage" class="notice" :class="{ error:recommendError }">{{ recommendMessage }}</text>
           </view>
           <view v-if="mealPicks.length" class="recommend-list"><view class="list-head"><text>推荐菜品</text><sc-segmented-control v-model="recommendSort" :options="sortOptions" density="compact" /></view><sc-dish-card v-for="(dish,index) in visibleMealPicks" :key="dish.id" :dish="dish" :location="dishLocation(dish)" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" :variant="index===0?'featured':'compact'" :media="index===0?'auto':'none'" @tap="openDish(dish.id)" /><button v-if="mealPicks.length > 1" class="result-toggle" type="button" @tap="recommendExpanded = !recommendExpanded">{{ recommendExpanded ? '收起排名菜品' : `查看全部 ${mealPicks.length} 道排名菜品` }}</button></view>
           <sc-state-card v-else-if="recommendationResult&&!recommendLoading" type="empty" title="暂无推荐结果" desc="调整健康档案或换一种描述。" />
           <sc-citation-list :citations="recommendCitations" :expanded="recommendCitationsExpanded" @toggle="recommendCitationsExpanded=!recommendCitationsExpanded" @select="openCitation" />
-          <view v-if="pendingActions.length" class="action-panel"><text class="action-title">待确认操作</text><view v-for="action in pendingActions" :key="action.id" class="pending-action"><view><text class="ui-strong">{{ action.label||action.type }}</text><text>{{ action.riskLevel||'low' }} 风险</text></view><view class="action-buttons"><button v-if="isOrderAction(action)" disabled>联调中，暂不可确认</button><button v-else class="primary-btn" @tap="confirmAction(action)">确认</button><button class="ghost-btn" @tap="rejectAction(action)">拒绝</button></view></view></view>
+          <view v-if="pendingActions.length" class="action-panel"><text class="action-title">待确认操作</text><view v-for="action in pendingActions" :key="action.id" class="pending-action"><view><text class="ui-strong">{{ action.label||action.type }}</text><text>{{ action.riskLevel||'low' }} 风险</text></view><view class="action-buttons"><button v-if="isOrderAction(action)" disabled>请在到店预约页提交</button><button v-else class="primary-btn" @tap="confirmAction(action)">确认</button><button class="ghost-btn" @tap="rejectAction(action)">拒绝</button></view></view></view>
         </view>
       </view>
     </template>
@@ -53,7 +53,7 @@
 
 <script setup>
 import { computed, nextTick, ref } from 'vue';
-import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
+import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app';
 import { dishSupplyPresentation } from '../../domain/dishPresentation.js';
 import { buildProfilePrompts, createRatingMap, sortDishesByRating } from '../../domain/studentDiscovery.js';
 import { validateQuestion } from '../../domain/validation.js';
@@ -66,6 +66,7 @@ const modeOptions=[{value:'search',label:'菜品检索'},{value:'recommend',labe
 const sortOptions=[{value:'desc',label:'高分优先'},{value:'asc',label:'低分优先'}];
 const mode=ref(store.discoveryMode.value || 'search');
 const query=ref(''); const searching=ref(false); const searchResult=ref(null); const sortDirection=ref('desc'); const message=ref(''); const isError=ref(false); const citationsExpanded=ref(false); const resultsExpanded=ref(false);
+const catalogLoadingMore=ref(false);
 const question=ref(''); const recommendLoading=ref(false); const recommendationResult=ref(null); const conversation=ref([]); const recommendCitations=ref([]); const pendingActions=ref([]); const sessionId=ref(''); const recommendMessage=ref(''); const recommendError=ref(false); const recommendSort=ref('desc'); const recommendCitationsExpanded=ref(false); const recommendExpanded=ref(false); let recommendationLoaded=false;
 const memoryOpen=ref(false); const memoryDraft=ref(''); const memoryPreferences=ref({}); const memorySaving=ref(false); let memoryLoaded=false;
 const searchPrompts=computed(()=>buildProfilePrompts(store.profile.value,'search'));
@@ -74,12 +75,13 @@ const ratingMap=computed(()=>createRatingMap(store.rankings.value.dishes));
 const sourceDishes=computed(()=>searchResult.value?.items || store.dishes.value.filter((dish)=>dish.status!=='archived'&&dish.status!=='inactive'));
 const sortedDishes=computed(()=>sortDishesByRating(sourceDishes.value,ratingMap.value,sortDirection.value));
 const visibleDishes=computed(()=>!searchResult.value || resultsExpanded.value ? sortedDishes.value : sortedDishes.value.slice(0,1));
-const resultSummary=computed(()=>{ const result=searchResult.value;if(!result)return'';const total=Number(result.availability?.totalCount??result.items?.length??0);const orderable=Number(result.availability?.orderableCount??result.items?.filter((dish)=>dish.availability?.orderable).length??0);return total?`找到 ${total} 道真实菜品，其中 ${orderable} 道当前可点。`:'没有满足全部条件的真实菜品，可参考放宽建议。'; });
+const resultSummary=computed(()=>{ const result=searchResult.value;if(!result)return'';const total=Number(result.availability?.totalCount??result.items?.length??0);const orderable=Number(result.availability?.orderableCount??result.items?.filter((dish)=>dish.availability?.orderable).length??0);return total?`找到 ${total} 道真实菜品，其中 ${orderable} 道当前可预约。`:'没有满足全部条件的真实菜品，可参考放宽建议。'; });
 const mealPicks=computed(()=>{const raw=recommendationResult.value?.recommendations||recommendationResult.value?.mealPlan?.dishes||recommendationResult.value?.mealPlan?.picks||recommendationResult.value?.ranked||[];const catalog=new Map(store.dishes.value.map((dish)=>[String(dish.id),dish]));const hydrated=raw.map((pick)=>{const id=pick.id||pick.dishId;return{...(catalog.get(String(id))||{}),...pick,id};}).filter((dish)=>dish.id);return sortDishesByRating(hydrated,ratingMap.value,recommendSort.value);});
 const visibleMealPicks=computed(()=>recommendExpanded.value ? mealPicks.value : mealPicks.value.slice(0,1));
 
 onShow(async()=>{ try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}mode.value=store.discoveryMode.value||mode.value;if(!memoryLoaded){memoryLoaded=true;await loadMemory();}if(mode.value==='recommend'&&!recommendationLoaded)await loadInitialRecommendation();}catch{} });
 onPullDownRefresh(async()=>{try{await store.load(true);if(mode.value==='recommend'){recommendationLoaded=false;await loadInitialRecommendation();}}catch{}finally{uni.stopPullDownRefresh();}});
+onReachBottom(async()=>{if(mode.value!=='search'||searchResult.value||catalogLoadingMore.value||!store.catalogPage.value.hasMore)return;catalogLoadingMore.value=true;try{await store.loadMoreCatalog({sort:'rating_desc'});}catch(error){message.value=error.message||'加载更多失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}});
 
 function changeMode(value){mode.value=value==='recommend'?'recommend':'search';store.openDiscoveryMode(mode.value);if(mode.value==='recommend'&&!recommendationLoaded)loadInitialRecommendation();}
 function openVision(){uni.navigateTo({url:'/pages/vision/vision'});}
@@ -97,8 +99,8 @@ async function loadMemory(){try{const result=await store.loadAgentMemory();const
 async function saveMemory(){memorySaving.value=true;try{const result=await store.saveAgentMemory({summary:memoryDraft.value.trim(),preferences:memoryPreferences.value});const memory=result.memory||result;memoryDraft.value=memory.summary||'';message.value='饮食记忆已保存。';recommendMessage.value='饮食记忆已保存。';isError.value=false;recommendError.value=false;}catch(error){message.value=error.message;recommendMessage.value=error.message;isError.value=true;recommendError.value=true;}finally{memorySaving.value=false;}}
 async function clearMemory(){memorySaving.value=true;try{await store.clearAgentMemory();memoryDraft.value='';memoryPreferences.value={};message.value='饮食记忆已清除。';recommendMessage.value='饮食记忆已清除。';isError.value=false;recommendError.value=false;}catch(error){message.value=error.message;recommendMessage.value=error.message;isError.value=true;recommendError.value=true;}finally{memorySaving.value=false;}}
 
-function deterministicSummary(data){const picks=data.recommendations||data.ranked||[];if(!picks.length)return'当前没有满足全部条件且可点的菜品，请调整条件。';return`已根据健康档案与今日真实供应找到 ${picks.length} 个选择：${picks.slice(0,3).map((dish)=>dish.name).join('、')}。`;}
-function recommendationCitations(data){const evidence=data.evidence?.dishes||[];if(evidence.length)return evidence;return(data.recommendations||data.ranked||[]).map((dish)=>({id:dish.id,name:dish.name,score:dish.recommendationScore,snippet:Array.isArray(dish.why)?dish.why.slice(0,2).join(' · '):'来源于当前校园菜品库与已发布菜单。'}));}
+function deterministicSummary(data){const picks=data.recommendations||data.ranked||[];if(!picks.length)return'当前没有满足全部条件且可预约的菜品，请调整条件。';return`已根据健康档案与校园稳定目录找到 ${picks.length} 个选择：${picks.slice(0,3).map((dish)=>dish.name).join('、')}。`;}
+function recommendationCitations(data){const evidence=data.evidence?.dishes||[];if(evidence.length)return evidence;return(data.recommendations||data.ranked||[]).map((dish)=>({id:dish.id,name:dish.name,score:dish.recommendationScore,snippet:Array.isArray(dish.why)?dish.why.slice(0,2).join(' · '):'来源于校园稳定菜品目录。'}));}
 async function loadInitialRecommendation(){recommendLoading.value=true;recommendMessage.value='';recommendError.value=false;recommendExpanded.value=false;try{const data=await store.loadRecommendation();recommendationResult.value=data;recommendCitations.value=recommendationCitations(data);conversation.value=[{role:'assistant',content:deterministicSummary(data)}];recommendationLoaded=true;}catch(error){recommendError.value=true;recommendMessage.value=error.message||'推荐加载失败。';}finally{recommendLoading.value=false;}}
 async function runPrompt(raw){const text=String(raw||'').trim();const validation=validateQuestion(text);if(validation){recommendMessage.value=validation;recommendError.value=true;return;}recommendLoading.value=true;recommendMessage.value='';recommendError.value=false;recommendExpanded.value=false;conversation.value.push({role:'user',content:text});question.value='';await nextTick();try{const data=await store.runAgent({query:text,sessionId:sessionId.value||undefined});recommendationResult.value=data;sessionId.value=data.sessionId||sessionId.value;recommendCitations.value=data.citations||recommendationCitations(data);pendingActions.value=(data.actions||[]).filter((item)=>item.requiresConfirmation);conversation.value.push({role:'assistant',content:data.answer||data.summary?.text||'推荐已生成。'});recommendationLoaded=true;}catch(error){recommendError.value=true;recommendMessage.value=error.message||'智能推荐暂时不可用。';conversation.value.push({role:'assistant',content:'本次推荐没有完成，请稍后重试。'});}finally{recommendLoading.value=false;}}
 function openCitation(source){const id=source.sourceId||source.dishId||source.id;if(id)openDish(id);}

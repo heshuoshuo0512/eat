@@ -1,8 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { buildMealPlan, calculateRanking, contextualRankDishes, normalizeProfile } from '../domain/recommendation.js';
-import { previewDishes as previewExtraDishes } from '../domain/previewData.js';
-import { canteens as seedCanteens, dishes as seedDishes, reviews as seedReviews, stalls as seedStalls, userDishPreferences as seedPreferences } from '../domain/seedData.js';
 import { apiClient } from '../services/apiClient.js';
 
 function emptyState() {
@@ -109,6 +107,10 @@ export const useCanteenStore = defineStore('canteen', () => {
   const error = ref('');
   const searchFilters = ref({ keyword: '', maxPrice: 25, taste: '不限', halalOnly: false });
   const todayMenu = ref({ date: '', mealType: 'lunch', menus: [], dishes: [], source: 'fallback' });
+  const catalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
+  const reservationCatalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
+  const remoteRankings = ref({ dishes: [], stalls: [], canteens: [] });
+  const savedCatalog = ref({ favorite: { items: [], page: { page: 0, hasMore: false, total: 0 } }, eaten: { items: [], page: { page: 0, hasMore: false, total: 0 } } });
 
   const orders = ref([]);
   const adminOrders = ref([]);
@@ -135,38 +137,37 @@ export const useCanteenStore = defineStore('canteen', () => {
     loading.value = true;
     error.value = '';
     try {
-      setState(await apiClient.bootstrap());
-      todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
+      const bootstrap = await apiClient.bootstrap();
+      const [venuesResult, firstStalls, dishesResult, dishRanks, stallRanks, venueRanks] = await Promise.all([
+        apiClient.catalogVenues(),
+        apiClient.catalogStalls({ page: 1, pageSize: 100 }),
+        apiClient.dishesSearch({ page: 1, pageSize: 50, sort: 'rating_desc' }),
+        apiClient.catalogRankings({ type: 'dishes', page: 1, pageSize: 20 }),
+        apiClient.catalogRankings({ type: 'stalls', page: 1, pageSize: 20 }),
+        apiClient.catalogRankings({ type: 'venues', page: 1, pageSize: 20 })
+      ]);
+      let allStalls = firstStalls.stalls || [];
+      if (firstStalls.page?.hasMore) {
+        const second = await apiClient.catalogStalls({ page: 2, pageSize: 100 });
+        allStalls = [...allStalls, ...(second.stalls || [])];
+      }
+      const preferences = bootstrap.session?.user ? await apiClient.getDishPreferences().catch(() => ({ preferences: [] })) : { preferences: [] };
+      setState({
+        ...bootstrap,
+        canteens: venuesResult.venues || [],
+        stalls: allStalls,
+        dishes: dishesResult.items || [],
+        reviews: [],
+        dishPreferences: preferences.preferences || []
+      });
+      catalogPage.value = dishesResult.page || { page: 1, pageSize: 50, total: dishesResult.items?.length || 0, hasMore: false };
+      remoteRankings.value = { dishes: dishRanks.items || [], stalls: stallRanks.items || [], canteens: venueRanks.items || [] };
+      todayMenu.value = { date: '', mealType: state.value.profile.mealType, menus: [], dishes: [], source: 'stable_catalog' };
     } catch (err) {
       error.value = err.message;
     } finally {
       loading.value = false;
     }
-  }
-
-  function loadPreviewState() {
-    const previewDishPool = [...seedDishes, ...previewExtraDishes];
-    const previewMenuDishes = previewDishPool
-      .filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive' && dish.mealTypes?.includes('lunch'))
-      .map((dish) => ({ ...dish, supplyStatus: 'available' }));
-    setState({
-      session: { user: { id: 'preview-student', username: 'preview-student', nickname: '页面预览', role: 'student' } },
-      canteens: seedCanteens,
-      stalls: seedStalls,
-      dishes: previewDishPool,
-      reviews: seedReviews,
-      dishPreferences: seedPreferences,
-      profile: normalizeProfile({ goal: 'healthy', budgetMax: 20, mealType: 'lunch' })
-    });
-    todayMenu.value = {
-      date: '2026-07-21',
-      mealType: 'lunch',
-      menus: [],
-      dishes: previewMenuDishes,
-      source: 'preview'
-    };
-    error.value = '';
-    return state.value;
   }
 
   const user = computed(() => state.value.session.user);
@@ -177,6 +178,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const dishPreferences = computed(() => state.value.dishPreferences);
   const searchedDishes = computed(() => filterDishes(state.value.dishes, searchFilters.value));
   const rankings = computed(() => {
+    if (remoteRankings.value.dishes.length || remoteRankings.value.stalls.length || remoteRankings.value.canteens.length) return remoteRankings.value;
     const reviewsByTarget = new Map();
     for (const review of state.value.reviews) {
       reviewsByTarget.set(review.targetId, [...(reviewsByTarget.get(review.targetId) || []), review]);
@@ -250,6 +252,49 @@ export const useCanteenStore = defineStore('canteen', () => {
     }
   }
 
+  async function loadCatalogDishes({ page = 1, pageSize = 50, ...filters } = {}) {
+    const result = await apiClient.dishesSearch({ page, pageSize, ...filters });
+    mergeDishes(result.items || [], { replace: page === 1 });
+    catalogPage.value = result.page || { page, pageSize, total: state.value.dishes.length, hasMore: false };
+    return result;
+  }
+
+  async function loadMoreCatalog(filters = {}) {
+    if (!catalogPage.value.hasMore) return { items: [], page: catalogPage.value };
+    return loadCatalogDishes({ ...filters, page: catalogPage.value.page + 1, pageSize: catalogPage.value.pageSize || 50 });
+  }
+
+  async function fetchDishDetail(id) {
+    const detail = await apiClient.dishDetail(id);
+    mergeDishes([detail]);
+    return detail;
+  }
+
+  async function loadSavedCatalog(kind = 'favorite', { page = 1, pageSize = 20 } = {}) {
+    const result = await apiClient.savedCatalog({ kind, page, pageSize });
+    const previous = page > 1 ? savedCatalog.value[kind]?.items || [] : [];
+    const entities = new Map(previous.map((dish) => [String(dish.id), dish]));
+    for (const dish of result.items || []) entities.set(String(dish.id), dish);
+    savedCatalog.value[kind] = { items: [...entities.values()], page: result.page };
+    mergeDishes(result.items || []);
+    return savedCatalog.value[kind];
+  }
+
+  async function loadCatalogRanking(type = 'dishes', { page = 1, pageSize = 20 } = {}) {
+    const result = await apiClient.catalogRankings({ type, page, pageSize });
+    const key = type === 'venues' ? 'canteens' : type;
+    const previous = page > 1 ? remoteRankings.value[key] || [] : [];
+    const entities = new Map(previous.map((item) => [String(item.id), item]));
+    for (const item of result.items || []) entities.set(String(item.id), item);
+    remoteRankings.value = { ...remoteRankings.value, [key]: [...entities.values()] };
+    if (type === 'dishes') mergeDishes(result.items || []);
+    return result;
+  }
+
+  async function loadCommunityDishOptions(filters = {}) {
+    return apiClient.communityDishOptions(filters);
+  }
+
   function clearDishSearch() {
     dishSearchResult.value = emptyDishSearchResult();
   }
@@ -260,13 +305,20 @@ export const useCanteenStore = defineStore('canteen', () => {
 
   async function login(payload) {
     const result = await apiClient.login(payload);
-    setState(result.state);
+    await load();
     return result.user;
+  }
+
+  function mergeDishes(items = [], { replace = false } = {}) {
+    const entities = new Map((replace ? [] : state.value.dishes).map((dish) => [String(dish.id), dish]));
+    for (const dish of items) entities.set(String(dish.id), { ...(entities.get(String(dish.id)) || {}), ...dish });
+    state.value.dishes = [...entities.values()];
+    return state.value.dishes;
   }
 
   async function register(payload) {
     const result = await apiClient.register(payload);
-    setState(result.state);
+    await load();
     return result.user;
   }
 
@@ -306,8 +358,9 @@ export const useCanteenStore = defineStore('canteen', () => {
 
   async function saveProfile(payload) {
     const result = await apiClient.saveProfile(payload);
-    setState(result.state);
-    todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
+    if (result.state) setState(result.state);
+    else state.value.profile = normalizeProfile(result.profile || payload);
+    await loadTodayMenu(state.value.profile.mealType);
     return result.profile;
   }
 
@@ -485,27 +538,33 @@ export const useCanteenStore = defineStore('canteen', () => {
   }
 
   async function loadTodayMenu(mealType = state.value.profile.mealType) {
-    todayMenu.value = await apiClient.todayMenu(mealType);
+    const result = await apiClient.dishesSearch({ page: 1, pageSize: 50, reservationOnly: true, sort: 'rating_desc' });
+    reservationCatalogPage.value = result.page || { page: 1, pageSize: 50, total: result.items?.length || 0, hasMore: false };
+    todayMenu.value = { date: '', mealType, menus: [], dishes: result.items || [], source: 'stable_catalog' };
+    mergeDishes(result.items || []);
+    return todayMenu.value;
+  }
+
+  async function loadMoreTodayMenu(mealType = state.value.profile.mealType) {
+    if (!reservationCatalogPage.value.hasMore) return todayMenu.value;
+    const result = await apiClient.dishesSearch({ page: reservationCatalogPage.value.page + 1, pageSize: reservationCatalogPage.value.pageSize || 50, reservationOnly: true, sort: 'rating_desc' });
+    const entities = new Map(todayMenu.value.dishes.map((dish) => [String(dish.id), dish]));
+    for (const dish of result.items || []) entities.set(String(dish.id), dish);
+    todayMenu.value = { date: '', mealType, menus: [], dishes: [...entities.values()], source: 'stable_catalog' };
+    reservationCatalogPage.value = result.page;
+    mergeDishes(result.items || []);
     return todayMenu.value;
   }
 
   async function createOrder(payload) {
     const result = await apiClient.createOrder(payload);
     orders.value = [result.order, ...orders.value.filter((order) => order.id !== result.order.id)];
-    todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
-    return result.order;
-  }
-
-  async function payOrder(id) {
-    const result = await apiClient.payOrder(id);
-    orders.value = orders.value.map((order) => order.id === id ? result.order : order);
     return result.order;
   }
 
   async function cancelOrder(id) {
     const result = await apiClient.cancelOrder(id);
     orders.value = orders.value.map((order) => order.id === id ? result.order : order);
-    todayMenu.value = await apiClient.todayMenu(state.value.profile.mealType);
     return result.order;
   }
 
@@ -526,6 +585,25 @@ export const useCanteenStore = defineStore('canteen', () => {
     const result = await apiClient.updateOrderStatus(id, status);
     adminOrders.value = adminOrders.value.map((order) => order.id === id ? result.order : order);
     return result.order;
+  }
+
+  async function confirmReservationPrice(id, finalAmount) {
+    const result = await apiClient.confirmReservationPrice(id, { finalAmount });
+    adminOrders.value = adminOrders.value.map((order) => order.id === id ? result.order : order);
+    return result.order;
+  }
+
+  async function updateStallReservation(id, enabled) {
+    const result = await apiClient.updateStallReservation(id, enabled);
+    state.value.stalls = state.value.stalls.map((stall) => stall.id === id ? { ...stall, reservationEnabled: result.reservation.reservationEnabled } : stall);
+    return result.reservation;
+  }
+
+  async function updateDishReservation(id, enabled) {
+    const result = await apiClient.updateDishReservation(id, enabled);
+    const existing = state.value.dishes.find((dish) => dish.id === id) || {};
+    mergeDishes([{ ...existing, id, reservationEnabled: result.reservation.reservationEnabled }]);
+    return result.reservation;
   }
 
   async function loadOrderAnalytics() {
@@ -805,6 +883,10 @@ export const useCanteenStore = defineStore('canteen', () => {
     dishPreferences,
     searchedDishes,
     rankings,
+    remoteRankings,
+    catalogPage,
+    reservationCatalogPage,
+    savedCatalog,
     recommendation,
     todayMenu,
     orders,
@@ -821,7 +903,6 @@ export const useCanteenStore = defineStore('canteen', () => {
     contextualRecommendation,
     adminEnvironment,
     load,
-    loadPreviewState,
     login,
     register,
     sendVerificationCode,
@@ -862,6 +943,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadAgentStream,
     loadAgentEvents,
     loadTodayMenu,
+    loadMoreTodayMenu,
     loadAgentMemory,
     saveAgentMemory,
     clearAgentMemory,
@@ -873,6 +955,12 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadRetrievalIndexStatus,
     rebuildRetrievalIndex,
     searchDishes,
+    loadCatalogDishes,
+    loadMoreCatalog,
+    fetchDishDetail,
+    loadSavedCatalog,
+    loadCatalogRanking,
+    loadCommunityDishOptions,
     clearDishSearch,
     loadRecommendation,
     requestRecommendation,
@@ -885,11 +973,13 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadEnvironment,
     saveEnvironment,
     createOrder,
-    payOrder,
     cancelOrder,
     loadOrders,
     loadAdminOrders,
     updateOrderStatus,
+    confirmReservationPrice,
+    updateStallReservation,
+    updateDishReservation,
     loadOrderAnalytics,
     adminUsers,
     adminAuditLogs,

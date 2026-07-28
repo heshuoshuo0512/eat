@@ -210,6 +210,7 @@
         </div>
       </article>
     </div>
+    <button v-if="stallDishPage.hasMore" class="secondary stall-load-more" type="button" :disabled="stallDishesLoading" @click="loadStallDishes(Number(stallDishPage.page||1)+1)">{{ stallDishesLoading?'加载中…':'加载更多菜品' }}</button>
     <p v-else class="muted empty-state">该档口暂无菜品。</p>
   </section>
 </template>
@@ -228,6 +229,9 @@ const level = ref('primary'); // primary | sub-canteens | stalls | stall-dishes
 const selectedPrimaryId = ref('');
 const selectedSubCanteenId = ref('');
 const selectedStallId = ref('');
+const stallCatalog = ref([]);
+const stallDishPage = ref({ page: 1, pageSize: 50, total: 0, hasMore: false });
+const stallDishesLoading = ref(false);
 
 /* ── Review form (only for selected sub-canteen) ── */
 const reviewFormObj = reactive({ rating: 5, content: '' });
@@ -282,10 +286,10 @@ const groupedCanteenStalls = computed(() => {
   return map;
 });
 
-const stallDishes = computed(() => store.dishes.filter((d) => d.stallId === selectedStallId.value));
+const stallDishes = computed(() => stallCatalog.value);
 
 function dishCountForStall(stallId) {
-  return store.dishes.filter((d) => d.stallId === stallId).length;
+  return Number(store.stalls.find((stall) => stall.id === stallId)?.dishCount || 0);
 }
 
 /* ── Navigation actions ── */
@@ -309,9 +313,24 @@ function selectSubCanteen(id) {
   level.value = 'stalls';
 }
 
-function selectStall(stallId) {
+async function selectStall(stallId) {
   selectedStallId.value = stallId;
   level.value = 'stall-dishes';
+  await loadStallDishes(1);
+}
+
+async function loadStallDishes(page = 1) {
+  if (!selectedStallId.value || stallDishesLoading.value) return;
+  stallDishesLoading.value = true;
+  try {
+    const result = await store.searchDishes({ stallId: selectedStallId.value, page, pageSize: 50, sort: 'rating_desc' });
+    const entities = new Map((page > 1 ? stallCatalog.value : []).map((dish) => [String(dish.id), dish]));
+    for (const dish of result.items || []) entities.set(String(dish.id), dish);
+    stallCatalog.value = [...entities.values()];
+    stallDishPage.value = result.page || stallDishPage.value;
+  } finally {
+    stallDishesLoading.value = false;
+  }
 }
 
 function goToPrimary() {
@@ -329,6 +348,7 @@ function goToSubCanteens() {
 function goToSubCanteen() {
   level.value = 'stalls';
   selectedStallId.value = '';
+  stallCatalog.value = [];
 }
 
 function goBack() {

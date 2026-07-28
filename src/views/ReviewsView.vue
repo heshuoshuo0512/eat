@@ -67,18 +67,24 @@ const loading = ref(false);
 const error = ref('');
 const filters = reactive({ targetType: 'dish', canteenId: '', stallId: '', dishId: '', sort: 'rating_desc' });
 const availableStalls = computed(() => store.stalls.filter((stall) => !filters.canteenId || stall.canteenId === filters.canteenId));
-const availableDishes = computed(() => store.dishes.filter((dish) => {
-  if (filters.stallId) return dish.stallId === filters.stallId;
-  if (!filters.canteenId) return true;
-  return availableStalls.value.some((stall) => stall.id === dish.stallId);
-}));
+const availableDishes = ref([]);
 
-function setTargetType(value) { filters.targetType = value; filters.stallId = ''; filters.dishId = ''; resetAndLoad(); }
-function onCanteenChange() { filters.stallId = ''; filters.dishId = ''; resetAndLoad(); }
-function onStallChange() { filters.dishId = ''; resetAndLoad(); }
+function setTargetType(value) { filters.targetType = value; filters.stallId = ''; filters.dishId = ''; loadDishOptions(); resetAndLoad(); }
+function onCanteenChange() { filters.stallId = ''; filters.dishId = ''; loadDishOptions(); resetAndLoad(); }
+function onStallChange() { filters.dishId = ''; loadDishOptions(); resetAndLoad(); }
 function resetAndLoad() { page.value = 0; loadReviews(); }
 function resetFilters() { Object.assign(filters, { targetType: filters.targetType, canteenId: '', stallId: '', dishId: '', sort: 'rating_desc' }); resetAndLoad(); }
 function changePage(next) { page.value = next; loadReviews(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+async function loadDishOptions() {
+  if (filters.targetType !== 'dish') { availableDishes.value = []; return; }
+  try {
+    const result = await store.loadCommunityDishOptions({ venueId: filters.canteenId, stallId: filters.stallId, page: 1, pageSize: 100 });
+    availableDishes.value = result.options || [];
+  } catch {
+    availableDishes.value = [];
+  }
+}
 
 async function loadReviews() {
   loading.value = true;
@@ -95,7 +101,7 @@ async function loadReviews() {
 function targetName(review) { return review.dish?.name || review.canteen?.name || '校园评价'; }
 function locationLabel(review) { return [review.canteen?.name, review.stall?.name].filter(Boolean).join(' · ') || review.canteen?.location || '校内食堂'; }
 function formatDate(value) { return String(value || '').slice(0, 10); }
-onMounted(loadReviews);
+onMounted(() => Promise.all([loadDishOptions(), loadReviews()]));
 </script>
 
 <style scoped>

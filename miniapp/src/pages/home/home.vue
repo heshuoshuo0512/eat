@@ -15,7 +15,7 @@
     <view class="home-layout">
       <view class="home-primary">
         <view class="home-section core-section">
-          <view class="section-heading"><view><text>开始用餐</text><text>按真实供应找到这一餐</text></view><text>{{ store.dishes.value.length }} 道菜</text></view>
+          <view class="section-heading"><view><text>开始用餐</text><text>从真实校园目录找到这一餐</text></view><text>{{ store.state.value.catalogStats?.dishes??store.catalogPage.value.total }} 道菜</text></view>
           <view class="core-actions">
             <button v-for="(entry, index) in coreEntries" :key="entry.id" class="core-action" :class="`core-${index}`" @tap="openEntry(entry)">
               <view class="core-icon"><sc-icon :name="entry.iconName" :size="20" /></view>

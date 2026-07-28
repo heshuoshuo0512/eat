@@ -2,7 +2,7 @@ name: smart-canteen
 
 services:
   db-roles:
-    image: postgres:17-alpine
+    image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-smart_canteen}
       POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-postgres}
@@ -47,7 +47,7 @@ services:
     restart: "no"
 
   db-grants:
-    image: postgres:17-alpine
+    image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-smart_canteen}
       POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-postgres}
@@ -159,7 +159,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-smart_canteen}
       POSTGRES_USER: ${POSTGRES_ADMIN_USER:-postgres}

@@ -13,7 +13,7 @@
           <text v-if="stall.description" class="description">{{ stall.description }}</text>
           <view v-if="childStalls.length" class="child-section"><view class="section-head"><text class="ui-strong">子档口</text><text>{{ childStalls.length }} 个窗口</text></view><view class="child-list"><sc-list-row v-for="item in childStalls" :key="item.id" icon-name="store" :title="item.name" :description="`${item.category||'综合档口'} · ${item.floor||stall.floor}`" :badge="`${dishesFor(item.id).length} 道菜`" @tap="openStall(item.id)" /></view></view>
         </view>
-        <view class="dish-section"><view class="section-head"><text class="ui-strong">菜品目录</text><text>{{ displayedDishes.length }} 道菜</text></view><view class="dish-list"><sc-dish-card v-for="dish in displayedDishes" :key="dish.id" :dish="dish" :location="location" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" @tap="openDish(dish.id)" /><sc-state-card v-if="!displayedDishes.length" type="empty" title="暂无菜品" desc="等待该档口补充菜品信息。" /></view></view>
+        <view class="dish-section"><view class="section-head"><text class="ui-strong">菜品目录</text><text>{{ dishPage.total||displayedDishes.length }} 道菜</text></view><view class="dish-list"><sc-dish-card v-for="dish in displayedDishes" :key="dish.id" :dish="dish" :location="location" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" @tap="openDish(dish.id)" /><text v-if="dishPage.hasMore" class="page-progress">{{ loadingMore?'正在加载更多':'继续上拉加载更多' }}</text><sc-state-card v-if="!displayedDishes.length" type="empty" title="暂无菜品" desc="等待该档口补充菜品信息。" /></view></view>
       </view>
     </template>
   </sc-page-shell>
@@ -21,13 +21,14 @@
 
 <script setup>
 import { computed, ref } from 'vue';
-import { onLoad } from '@dcloudio/uni-app';
+import { onLoad, onReachBottom } from '@dcloudio/uni-app';
 import { dishSupplyPresentation } from '../../domain/dishPresentation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
-const store=useCanteenStore();const stallId=ref('');const loading=ref(true);
-const stall=computed(()=>store.stalls.value.find((item)=>String(item.id)===stallId.value)||null);const canteen=computed(()=>store.canteens.value.find((item)=>item.id===stall.value?.canteenId)||null);const parentCanteen=computed(()=>store.canteens.value.find((item)=>item.id===canteen.value?.parentId)||null);const childStalls=computed(()=>store.stalls.value.filter((item)=>String(item.parentId)===stallId.value));const displayedDishes=computed(()=>{const ids=new Set([stallId.value,...childStalls.value.map((item)=>item.id)]);return store.dishes.value.filter((dish)=>ids.has(String(dish.stallId)));});const location=computed(()=>[parentCanteen.value?.name,canteen.value?.name,stall.value?.floor].filter(Boolean).join(' · '));
-onLoad(async(options)=>{stallId.value=String(options?.id||'');try{await store.refreshIfStale();if(!store.user.value)uni.reLaunch({url:'/pages/login/login'});}catch{}finally{loading.value=false;}});
-function dishesFor(id){return store.dishes.value.filter((dish)=>dish.stallId===id);}function supplyState(dish){const menu=store.todayMenu.value.dishes?.find((item)=>String(item.id)===String(dish.id));return dishSupplyPresentation(dish,menu||null);}
+const store=useCanteenStore();const stallId=ref('');const loading=ref(true);const loadingMore=ref(false);const displayedDishes=ref([]);const dishPage=ref({page:1,pageSize:50,total:0,hasMore:false});
+const stall=computed(()=>store.stalls.value.find((item)=>String(item.id)===stallId.value)||null);const canteen=computed(()=>store.canteens.value.find((item)=>item.id===stall.value?.canteenId)||null);const parentCanteen=computed(()=>store.canteens.value.find((item)=>item.id===canteen.value?.parentId)||null);const childStalls=computed(()=>store.stalls.value.filter((item)=>String(item.parentId)===stallId.value));const location=computed(()=>[parentCanteen.value?.name,canteen.value?.name,stall.value?.floor].filter(Boolean).join(' · '));
+onLoad(async(options)=>{stallId.value=String(options?.id||'');try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}await loadDishes(1);}catch{}finally{loading.value=false;}});onReachBottom(()=>{if(dishPage.value.hasMore&&!loadingMore.value)loadDishes(Number(dishPage.value.page||1)+1);});
+function dishesFor(id){return displayedDishes.value.filter((dish)=>String(dish.stallId)===String(id));}function supplyState(dish){return dishSupplyPresentation(dish,null);}
+async function loadDishes(page){loadingMore.value=page>1;try{const stallIds=[stallId.value,...childStalls.value.map((item)=>item.id)];const result=await store.searchDishes({stallIds,page,pageSize:50,sort:'rating_desc'});const entities=new Map((page>1?displayedDishes.value:[]).map((dish)=>[String(dish.id),dish]));for(const dish of result.items||[])entities.set(String(dish.id),dish);displayedDishes.value=[...entities.values()];dishPage.value=result.page||dishPage.value;}finally{loadingMore.value=false;}}
 function openStall(id){uni.navigateTo({url:`/pages/stall-detail/stall-detail?id=${encodeURIComponent(id)}`});}function openDish(id){uni.navigateTo({url:`/pages/dish-detail/dish-detail?id=${encodeURIComponent(id)}`});}
 </script>
 
@@ -52,6 +53,7 @@ function openStall(id){uni.navigateTo({url:`/pages/stall-detail/stall-detail?id=
 .section-head .ui-strong { color:var(--ink); font-size:16px; }
 .child-list { padding:0 12px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); }
 .dish-list { display:grid; gap:0; padding:0 12px; border-radius:var(--radius-large); background:var(--surface); }
+.page-progress { display:block; min-height:44px; color:var(--muted); font-size:12px; line-height:44px; text-align:center; }
 @media (min-width:768px) {
   .detail-workspace { grid-template-columns:320px minmax(0,1fr); align-items:start; }
   .stall-aside { position:sticky; top:72px; }

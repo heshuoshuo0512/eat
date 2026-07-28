@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS rag_documents (
   metadata_json TEXT NOT NULL DEFAULT '{}',
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   embedding_json TEXT,
-  embedding vector(1536),
+  embedding vector(1024),
   embedding_model TEXT,
   content_hash TEXT NOT NULL DEFAULT '',
   chunk_index INTEGER NOT NULL DEFAULT 0,

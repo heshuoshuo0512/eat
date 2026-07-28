@@ -6,7 +6,7 @@
           <sc-illustration class="login-mark" name="brand" size="small" label="智慧食堂品牌标记" />
           <text class="login-brandline">智慧食堂</text>
           <text class="login-title">认真吃好校园里的每一餐</text>
-          <text class="login-subtitle">真实菜单、供应状态与个人饮食限制同步更新</text>
+          <text class="login-subtitle">真实校园目录、到店预约与个人饮食限制同步更新</text>
         </view>
 
         <view class="login-card panel-card">
@@ -21,7 +21,6 @@
             <label><text>手机号或账号</text><input v-model="loginForm.identifier" class="input" maxlength="32" placeholder="请输入手机号或账号" /></label>
             <label><text>密码</text><input v-model="loginForm.password" class="input" password maxlength="72" placeholder="请输入密码" /></label>
             <button class="primary-btn" :loading="loadingMode==='account'" :disabled="Boolean(loadingMode)" @tap="loginWithAccount">登录</button>
-            <button v-if="demoEnabled" class="demo-btn" :disabled="Boolean(loadingMode)" @tap="loginWithDemo">演示账号登录</button>
           </view>
 
           <view v-else-if="mode==='register'" class="auth-form">
@@ -57,13 +56,12 @@
 <script setup>
 import { onShow } from '@dcloudio/uni-app';
 import { reactive, ref } from 'vue';
-import { DEMO_STUDENT, ENABLE_DEMO_LOGIN } from '../../config.js';
 import { validateLoginForm, validatePhoneAuthForm } from '../../domain/validation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 
 const store = useCanteenStore();
 const modes = [{value:'login',label:'登录'},{value:'register',label:'注册'},{value:'reset',label:'找回'}];
-const mode = ref('login'); const demoEnabled = ENABLE_DEMO_LOGIN;
+const mode = ref('login');
 const loginForm = reactive({identifier:'',password:''});
 const registerForm = reactive({phone:'',verificationCode:'',nickname:'',password:'',confirmPassword:''});
 const resetForm = reactive({phone:'',verificationCode:'',password:'',confirmPassword:''});
@@ -75,7 +73,6 @@ function requireConsent(){if(consentAccepted.value)return true;isError.value=tru
 async function runAuth(type,action){if(!requireConsent())return;loadingMode.value=type;message.value='';isError.value=false;try{await action();uni.switchTab({url:'/pages/home/home'});}catch(error){isError.value=true;message.value=error?.message||'操作失败，请稍后重试。';}finally{loadingMode.value='';}}
 function loginWithWechat(event){const phoneCode=event?.detail?.code||'';if(!phoneCode){mode.value='register';isError.value=true;message.value='未授权微信手机号，可改用手机号注册。';return;}return runAuth('wechat',()=>store.wechatLogin({phoneCode,agreementVersion:'2026-07'}));}
 function loginWithAccount(){const error=validateLoginForm(loginForm);if(error){isError.value=true;message.value=error;return;}return runAuth('account',()=>store.login({...loginForm}));}
-function loginWithDemo(){Object.assign(loginForm,{identifier:DEMO_STUDENT.username,password:DEMO_STUDENT.password});return runAuth('demo',()=>store.login({...loginForm}));}
 async function sendCode(purpose){if(!requireConsent())return;const phone=purpose==='register'?registerForm.phone:resetForm.phone;if(!/^1[3-9]\d{9}$/.test(phone)){isError.value=true;message.value='请输入有效的中国大陆手机号。';return;}codeSending.value=true;message.value='';try{await store.sendVerificationCode({phone,purpose});message.value='验证码已发送，请在 5 分钟内使用。';isError.value=false;}catch(error){isError.value=true;message.value=error.message;}finally{codeSending.value=false;}}
 function registerAccount(){const error=validatePhoneAuthForm(registerForm);if(error){isError.value=true;message.value=error;return;}return runAuth('register',()=>store.register({phone:registerForm.phone,verificationCode:registerForm.verificationCode,password:registerForm.password,nickname:registerForm.nickname||undefined,agreementVersion:'2026-07'}));}
 async function resetPassword(){if(!requireConsent())return;const error=validatePhoneAuthForm(resetForm);if(error){isError.value=true;message.value=error;return;}loadingMode.value='reset';try{await store.resetPassword({phone:resetForm.phone,verificationCode:resetForm.verificationCode,newPassword:resetForm.password});Object.assign(loginForm,{identifier:resetForm.phone,password:''});switchMode('login');message.value='密码已重设，请使用新密码登录。';}catch(err){isError.value=true;message.value=err.message;}finally{loadingMode.value='';}}

@@ -16,6 +16,7 @@
             <view><text class="ui-strong">{{ item.name }}</text><text>{{ itemSubtitle(item) }}</text><text class="ui-small">{{ itemMeta(item) }}</text></view>
             <view class="rank-score"><text class="ui-strong">{{ rating(item) }}</text><text>{{ activeType==='dishes'?'口碑':'综合分' }}</text></view><sc-icon name="arrow-right" :size="16" tone="muted" />
           </button>
+          <text v-if="activePage.hasMore" class="page-progress">{{ loadingMore?'正在加载更多':'继续上拉加载更多' }}</text>
           <sc-state-card v-if="!activeItems.length" type="empty" title="暂无排行数据" desc="评价数据积累后会显示在这里。" />
         </view>
       </view>
@@ -24,16 +25,18 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
-import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
+import { computed, reactive, ref, watch } from 'vue';
+import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app';
 import { dishPriceText, dishRatingText, verifiedDishImageUrl } from '../../domain/dishPresentation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
-const store=useCanteenStore();const typeOptions=[{value:'dishes',label:'菜品'},{value:'stalls',label:'档口'},{value:'canteens',label:'食堂'}];const activeType=ref('dishes');const cuisine=ref('全部');
+const store=useCanteenStore();const typeOptions=[{value:'dishes',label:'菜品'},{value:'stalls',label:'档口'},{value:'canteens',label:'场所'}];const activeType=ref('dishes');const cuisine=ref('全部');const loadingMore=ref(false);const rankingPages=reactive({dishes:{page:1,pageSize:20,total:0,hasMore:false},stalls:{page:1,pageSize:20,total:0,hasMore:false},canteens:{page:1,pageSize:20,total:0,hasMore:false}});
 const cuisineOptions=computed(()=>['全部',...new Set((store.rankings.value.dishes||[]).map((item)=>item.cuisine).filter(Boolean))]);
 const activeItems=computed(()=>{const list=store.rankings.value[activeType.value]||[];if(activeType.value!=='dishes'||cuisine.value==='全部')return list;return list.filter((item)=>item.cuisine===cuisine.value);});
 const podiumItems=computed(()=>activeItems.value.slice(0,3).map((item,index)=>({...item,place:index+1})));
 const podiumImageDish=computed(()=>activeType.value==='dishes'&&verifiedDishImageUrl(activeItems.value[0]||{})?activeItems.value[0]:null);
-onShow(async()=>{try{await store.refreshIfStale();if(!store.user.value)uni.reLaunch({url:'/pages/login/login'});}catch{}});onPullDownRefresh(async()=>{try{await store.load(true);}catch{}finally{uni.stopPullDownRefresh();}});
+const activePage=computed(()=>rankingPages[activeType.value]);
+onShow(async()=>{try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}await refreshRankings();}catch{}});onPullDownRefresh(async()=>{try{await store.load(true);await refreshRankings();}catch{}finally{uni.stopPullDownRefresh();}});onReachBottom(loadMore);watch(activeType,()=>{if(!(store.rankings.value[activeType.value]||[]).length)loadRanking(activeType.value,1);});
+function apiType(type){return type==='canteens'?'venues':type;}async function loadRanking(type,page){const result=await store.loadCatalogRanking(apiType(type),{page,pageSize:20});rankingPages[type]=result.page||rankingPages[type];return result;}async function refreshRankings(){await Promise.all(['dishes','stalls','canteens'].map((type)=>loadRanking(type,1)));}async function loadMore(){const page=activePage.value;if(loadingMore.value||!page.hasMore)return;loadingMore.value=true;try{await loadRanking(activeType.value,Number(page.page||1)+1);}finally{loadingMore.value=false;}}
 function rating(item){if(activeType.value==='dishes')return dishRatingText(item);const value=Number(item.rankScore??item.rating);return Number.isFinite(value)&&value>0?value.toFixed(1):'暂无评分';}function stallForDish(item){return store.stalls.value.find((stall)=>stall.id===item.stallId);}function canteenForStall(item){return store.canteens.value.find((canteen)=>canteen.id===item.canteenId);}function itemSubtitle(item){if(activeType.value==='dishes'){const stall=stallForDish(item);return[item.cuisine,stall?.name].filter(Boolean).join(' · ');}if(activeType.value==='stalls'){const canteen=canteenForStall(item);return[canteen?.name,item.floor,item.category].filter(Boolean).join(' · ');}const parent=store.canteens.value.find((canteen)=>canteen.id===item.parentId);return[parent?.name,item.location].filter(Boolean).join(' · ')||'校内食堂';}
 function itemMeta(item){if(activeType.value==='dishes')return`${item.computedReviewCount??item.reviewCount??0} 条评价 · ${dishPriceText(item)}`;if(activeType.value==='stalls')return`${item.dishCount??store.dishes.value.filter((dish)=>dish.stallId===item.id).length} 道菜 · ${item.avgPrice?`${item.avgPrice}元人均`:'人均待核验'}`;return`${item.stallCount??store.stalls.value.filter((stall)=>stall.canteenId===item.id).length} 个档口`;}
 function entryStyle(index){return store.motionReduced.value?{}:{animationDelay:`${Math.min(index,8)*45}ms`};}function openItem(item){if(activeType.value==='dishes')uni.navigateTo({url:`/pages/dish-detail/dish-detail?id=${encodeURIComponent(item.id)}`});else if(activeType.value==='stalls')uni.navigateTo({url:`/pages/stall-detail/stall-detail?id=${encodeURIComponent(item.id)}`});else uni.navigateTo({url:`/pages/canteen-detail/canteen-detail?id=${encodeURIComponent(item.id)}`});}
@@ -72,6 +75,7 @@ function entryStyle(index){return store.motionReduced.value?{}:{animationDelay:`
 .rank-score .ui-strong,.rank-score text { display:block; }
 .rank-score .ui-strong { color:var(--ink); font-size:14px; font-weight:600; }
 .rank-score text { color:var(--muted); font-size:12px; }
+.page-progress { display:block; min-height:44px; color:var(--muted); font-size:12px; line-height:44px; text-align:center; }
 @keyframes rank-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 @media (min-width:768px) {
   .ranking-workspace { grid-template-columns:280px minmax(0,1fr); gap:24px; align-items:start; }

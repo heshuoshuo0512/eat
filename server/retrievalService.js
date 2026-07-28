@@ -320,6 +320,8 @@ function mapCandidate(raw, tenantId) {
     canteenLocation: raw.canteenLocation || raw.canteen_location || raw.location || null,
     crowdLevel: Number(raw.crowdLevel ?? raw.crowd_level ?? 50),
     stallOpen: raw.stallOpen == null && raw.stall_open == null ? true : Boolean(raw.stallOpen ?? raw.stall_open),
+    reservationEnabled: Boolean(raw.reservationEnabled ?? raw.reservation_enabled),
+    stallReservationEnabled: Boolean(raw.stallReservationEnabled ?? raw.stall_reservation_enabled),
     name: String(raw.name || raw.dishName || raw.dish_name || ''),
     price: Number(raw.price ?? pricing.minAmount ?? 0),
     pricingMode: pricing.mode,
@@ -361,36 +363,13 @@ function mapCandidate(raw, tenantId) {
   return candidate;
 }
 
-function mapMenuEntry(row) {
-  return {
-    id: row.id || row.menuItemId || row.menu_item_id,
-    menuId: row.menuId || row.menu_id || row.published_menu_id,
-    dishId: row.dishId || row.dish_id,
-    date: row.date || row.menuDate || row.menu_date,
-    mealType: row.mealType || row.menuMealType || row.menu_meal_type,
-    status: row.status || row.menuStatus || row.menu_status || 'published',
-    price: Number(row.price ?? 0),
-    supplyLimit: Number(row.supplyLimit ?? row.supply_limit ?? 0),
-    supplyCount: Number(row.supplyCount ?? row.supply_count ?? 0),
-    soldOut: Boolean(row.soldOut ?? row.sold_out),
-    servingStart: row.servingStart || row.serving_start || '00:00',
-    servingEnd: row.servingEnd || row.serving_end || '23:59'
-  };
-}
-
 function inferCurrentMeal(hour) {
   if (hour < 10) return 'breakfast';
   if (hour < 16) return 'lunch';
   return 'dinner';
 }
 
-function isWithinServingTime(time, start, end) {
-  if (!start || !end) return true;
-  if (start <= end) return time >= start && time <= end;
-  return time >= start || time <= end;
-}
-
-function deriveAvailability(candidate, { date, mealType, time }) {
+function deriveAvailability(candidate, { date, mealType }) {
   if (!isActiveDish(candidate)) {
     return {
       ...(candidate._explicitAvailability || {}),
@@ -409,40 +388,21 @@ function deriveAvailability(candidate, { date, mealType, time }) {
     };
   }
 
-  const direct = candidate._menuItem ? mapMenuEntry({
-    ...candidate._menuItem,
-    dishId: candidate.id,
-    date: candidate._menuItem.date || date,
-    mealType: candidate._menuItem.mealType || mealType,
-    status: candidate._menuItem.status || 'published'
-  }) : null;
-  const entries = [...candidate._menuEntries.map(mapMenuEntry), ...(direct ? [direct] : [])]
-    .filter((entry) => (!entry.date || entry.date === date) && (!mealType || !entry.mealType || entry.mealType === mealType));
-  const hasStock = (item) => !item.soldOut && (item.supplyLimit <= 0 || item.supplyCount < item.supplyLimit);
-  const entry = entries.find((item) => item.status === 'published' && hasStock(item) && isWithinServingTime(time, item.servingStart, item.servingEnd))
-    || entries.find((item) => item.status === 'published' && hasStock(item))
-    || entries[0];
   const base = {
-    menuItemId: entry?.id || null,
-    menuId: entry?.menuId || null,
+    menuItemId: null,
+    menuId: null,
     date,
     mealType,
-    price: Number(entry?.price ?? candidate.price),
-    priceDisplay: entry ? `${Number(entry.price)}元` : candidate.priceDisplay,
-    budgetComparable: Boolean(entry) || candidate.pricing?.budgetComparable !== false,
-    supplyLimit: Number(entry?.supplyLimit || 0),
-    supplyCount: Number(entry?.supplyCount || 0),
-    remaining: entry?.supplyLimit > 0 ? Math.max(0, entry.supplyLimit - entry.supplyCount) : null,
-    servingStart: entry?.servingStart || null,
-    servingEnd: entry?.servingEnd || null
+    price: Number(candidate.pricing?.minAmount ?? candidate.price ?? 0),
+    priceDisplay: candidate.priceDisplay,
+    budgetComparable: candidate.pricing?.budgetComparable !== false,
+    paymentMethod: 'at_stall',
+    supplyConfirmed: false,
   };
-
-  if (!entry || entry.status !== 'published') return { ...base, orderable: false, status: 'catalog_only', reason: 'supply_unconfirmed' };
-  if (!candidate.stallOpen) return { ...base, orderable: false, status: 'stall_closed', reason: 'stall_closed' };
-  if (entry.soldOut || (entry.supplyLimit > 0 && entry.supplyCount >= entry.supplyLimit)) return { ...base, orderable: false, status: 'sold_out', reason: 'sold_out' };
-  if (!isWithinServingTime(time, entry.servingStart, entry.servingEnd)) return { ...base, orderable: false, status: 'outside_serving_time', reason: 'outside_serving_time' };
-  const limited = entry.supplyLimit > 0 && entry.supplyCount >= entry.supplyLimit * 0.8;
-  return { ...base, orderable: true, status: limited ? 'limited' : 'available', reason: null };
+  const reservable = candidate.reservationEnabled && candidate.stallReservationEnabled;
+  return reservable
+    ? { ...base, orderable: true, status: 'reservable', reason: '可预约，到店支付' }
+    : { ...base, orderable: false, status: 'reservation_paused', reason: '暂停预约' };
 }
 
 function publicCandidate(candidate) {
@@ -452,26 +412,15 @@ function publicCandidate(candidate) {
 
 async function loadCandidatesFromDatabase(db, tenantId, { date, mealType }) {
   if (!db?.prepare) throw Object.assign(new Error('未提供菜品候选或数据库适配器'), { status: 500, code: 'RETRIEVAL_SOURCE_UNAVAILABLE' });
-  const [dishRows, menuRows] = await Promise.all([
-    db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id AS canteen_id, s.open AS stall_open,
+  const dishRows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id AS canteen_id, s.open AS stall_open,
+      s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.location AS canteen_location, c.crowd_level AS crowd_level,
       c.parent_id AS primary_canteen_id
       FROM dishes d
       LEFT JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
       LEFT JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
-      WHERE d.tenant_id = ? AND d.status = 'active'`).all(tenantId),
-    db.prepare(`SELECT mi.*, m.id AS published_menu_id, m.date AS menu_date,
-      m.meal_type AS menu_meal_type, m.status AS menu_status
-      FROM menu_items mi
-      JOIN menus m ON m.id = mi.menu_id AND m.tenant_id = mi.tenant_id
-      WHERE mi.tenant_id = ? AND m.date = ? AND m.status = 'published'`).all(tenantId, date)
-  ]);
-  const menuByDish = new Map();
-  for (const row of menuRows) {
-    if (mealType && row.menu_meal_type !== mealType) continue;
-    menuByDish.set(row.dish_id, [...(menuByDish.get(row.dish_id) || []), mapMenuEntry(row)]);
-  }
-  return dishRows.map((row) => mapCandidate({ ...row, _menuEntries: menuByDish.get(row.id) || [] }, tenantId));
+      WHERE d.tenant_id = ? AND d.status = 'active'`).all(tenantId);
+  return dishRows.map((row) => mapCandidate(row, tenantId));
 }
 
 async function loadCatalogCanteens(db, tenantId) {
@@ -839,20 +788,9 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
       message: `当前区域没有可用于核验${request.filters.allergens.join('、')}过敏风险的菜品记录，不能据此判断可安全食用。`,
     });
   }
-  const supplyWarnings = pageItems
-    .filter((item) => item.availability?.status === 'catalog_only')
-    .map((item) => ({
-      code: 'SUPPLY_UNCONFIRMED',
-      dishId: item.id,
-      message: `${item.name}仅来自菜品目录，今日供应尚未确认。`,
-    }));
-  if (!pageItems.length && request.filters.canteenId && request.filters.allergens?.length) {
-    supplyWarnings.push({
-      code: 'SUPPLY_UNCONFIRMED',
-      canteenId: request.filters.canteenId,
-      message: '当前区域没有可用于确认今日供应的菜品记录，不能据此判断有菜品可购买。',
-    });
-  }
+  const reservationWarnings = pageItems
+    .filter((item) => item.availability?.status === 'reservation_paused')
+    .map((item) => ({ code: 'RESERVATION_PAUSED', dishId: item.id, message: `${item.name}当前暂停预约，可查看目录信息。` }));
   const budgetWarnings = (request.filters.budgetMin != null || request.filters.budgetMax != null)
     ? pageItems.filter((item) => item.availability?.budgetComparable === false).map((item) => ({
         code: 'BUDGET_UNVERIFIED',
@@ -873,7 +811,7 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
     interpreted: request.interpreted,
     items: pageItems,
     confidence: pageItems[0]?.confidence || retrievalConfidence(),
-    warnings: [...interpretationWarnings, ...safetyWarnings, ...supplyWarnings, ...budgetWarnings, ...tasteWarnings],
+    warnings: [...interpretationWarnings, ...safetyWarnings, ...reservationWarnings, ...budgetWarnings, ...tasteWarnings],
     availability: {
       orderableCount: ranked.filter((item) => item.availability.orderable).length,
       totalCount: ranked.length,
@@ -1237,9 +1175,9 @@ function applyCatalogLocationMention(request, candidates, catalogCanteens = []) 
 /** Produce a grounded deterministic knowledge answer; callers may replace only the prose with an LLM. */
 export function buildKnowledgeAnswer({ query = '', results = [] } = {}) {
   const citations = normalizeKnowledgeResults(results);
-  if (!citations.length) return { answer: '当前没有检索到可引用的知识依据，推荐结果仅依据实时菜品数据和用户约束生成。', citations: [] };
+  if (!citations.length) return { answer: '当前没有检索到可引用的知识依据，推荐结果仅依据校园目录和用户约束生成。', citations: [] };
   return {
-    answer: `关于“${String(query).slice(0, 80)}”，已检索到 ${citations.slice(0, 3).map((item) => item.title).join('、')} 等依据；通用知识仅用于解释，不覆盖校内过敏原、价格、库存和供应状态。`,
+    answer: `关于“${String(query).slice(0, 80)}”，已检索到 ${citations.slice(0, 3).map((item) => item.title).join('、')} 等依据；通用知识仅用于解释，不覆盖校内过敏原、目录价格和预约状态。`,
     citations
   };
 }
@@ -1329,7 +1267,7 @@ async function retrieveKnowledge(knowledgeSearch, request, foodCompositionLookup
   });
 }
 
-/** Execute personalized recommendation over current, published and orderable menu candidates. */
+/** Execute personalized recommendation over the stable semester catalog. */
 export async function runMealRecommendationWorkflow(input = {}, dependencies = {}) {
   const parsed = recommendationRequestSchema.safeParse(input || {});
   if (!parsed.success) throw validationError(parsed);
@@ -1382,7 +1320,7 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
   const knowledgePromise = retrieveKnowledge(dependencies.knowledgeSearch, request, dependencies.foodCompositionLookup);
   const [semantic, knowledge] = await Promise.all([semanticPromise, knowledgePromise]);
   const semanticScores = new Map(semantic.results.map((item) => [item.id, item.score]));
-  let source = 'menu';
+  let source = 'stable_catalog';
   let warnings = profile.onboardingStatus === 'pending' || profile.onboardingStatus === 'deferred'
     ? [{ code: 'PROFILE_INCOMPLETE', message: '健康档案尚未完善，当前使用通用推荐，不应用默认预算或辣度偏好。' }]
     : [];
@@ -1398,8 +1336,8 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
     const fallback = applyDishHardConstraints(candidates, filters, { requireOrderable: false });
     pool = fallback.items;
     fallbackRejections = fallback.rejections;
-    source = 'catalog_fallback';
-    warnings.push({ code: 'NO_ORDERABLE_MENU', message: '当前没有满足条件且可下单的菜单菜品，以下仅为菜品库参考。' });
+    source = 'stable_catalog';
+    warnings.push({ code: 'NO_RESERVABLE_DISH', message: '当前没有满足条件且可预约的菜品，以下为校园目录参考。' });
   }
 
   const rankedBase = pool.map((candidate) => scoreRecommendation(candidate, {
@@ -1495,7 +1433,7 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
       tenantId: request.tenantId,
       mode,
       source,
-      orderable: source === 'menu',
+      orderable: recommendations.some((dish) => dish.availability?.orderable),
       semanticUsed: semantic.used,
       retrievalTrace: {
         dish: semantic.trace,

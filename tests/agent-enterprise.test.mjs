@@ -106,12 +106,13 @@ describe('Enterprise agent: session memory, confirmation-gated actions, tool tra
       assert.ok(step.status === 'success' || step.status === 'error', `step status is success or error, got: ${step.status}`);
     }
 
-    // Tool names should be registry-style (dotted names like profile.load, menu.today)
+    // Tool names should be registry-style (dotted names like profile.load, meal.recommend)
     const toolNames = data.steps.map((s) => s.tool);
     assert.ok(toolNames.some((n) => n.includes('.')), 'at least one tool uses dotted registry-style naming');
     assert.ok(toolNames.includes('profile.load'), 'steps include profile.load');
-    assert.ok(toolNames.includes('menu.today'), 'steps include menu.today');
+    assert.ok(toolNames.includes('memory.long_term'), 'steps include memory.long_term');
     assert.ok(toolNames.includes('meal.recommend'), 'steps include meal.recommend');
+    assert.ok(!toolNames.includes('menu.today'), 'retired menu.today is not executed');
 
     // Serialized response must never contain the raw API key
     const serialized = JSON.stringify(data);

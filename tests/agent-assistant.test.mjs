@@ -135,16 +135,18 @@ describe('POST /api/agent/assistant', () => {
   });
 
   /* ── Meal recommendation intent for menu query ───────────────── */
-  it('menu/nutrition query produces meal_recommendation intent with todayMenu tool result', async () => {
+  it('menu/nutrition query produces a stable-catalog meal recommendation', async () => {
     const { data } = await req('/api/agent/assistant', {
       method: 'POST',
       token: studentToken,
       body: { query: '今天午餐有什么好吃的推荐？' },
     });
     assert.equal(data.intent, 'meal_recommendation', 'intent should be meal_recommendation');
-    assert.ok(data.toolResults.todayMenu, 'toolResults includes todayMenu');
-    assert.ok(typeof data.toolResults.todayMenu.dishCount === 'number', 'todayMenu has dishCount');
+    assert.ok(data.toolResults.recommendation, 'toolResults includes recommendation summary');
+    assert.equal(data.toolResults.recommendation.source, 'stable_catalog');
+    assert.ok(typeof data.toolResults.recommendation.pickCount === 'number', 'recommendation has pickCount');
     assert.ok(data.toolResults.profile, 'toolResults includes profile');
+    assert.ok(!data.steps.some((step) => step.tool === 'menu.today'));
   });
 
   /* ── Order status intent returns only the requesting user's orders ── */

@@ -39,7 +39,7 @@ describe('retrieval index contracts', () => {
     assert.notEqual(first, second);
   });
 
-  it('accepts only finite 1536-dimension production embeddings', () => {
+  it('accepts only finite 1024-dimension production embeddings', () => {
     assert.equal(validateEmbedding(vector1536()).length, RETRIEVAL_EMBEDDING_DIM);
     assert.throws(() => validateEmbedding([1, 2, 3]), (error) => error.code === 'EMBEDDING_DIMENSION_MISMATCH');
     const invalid = vector1536();
@@ -136,7 +136,7 @@ describe('retrieval index contracts', () => {
     assert.equal(documents[0].sourceType, 'stall');
     assert.match(documents[0].searchText, /益禾堂/);
     assert.match(documents[0].content, /东区餐饮与服务区 > 东区东大活 > 未标注/);
-    assert.match(documents[0].content, /商品价格、今日供应与营业状态均未确认/);
+    assert.match(documents[0].content, /来源确认店铺与校园目录关系；预约状态由运营端独立维护/);
     assert.equal(documents[0].metadata.orderable, false);
     assert.equal(documents[0].metadata.supplyConfirmed, false);
   });
@@ -318,7 +318,7 @@ describe('PostgreSQL retrieval migration', () => {
         async query(sql, params = []) {
           calls.push({ sql, params });
           if (sql.includes('FROM pg_extension')) {
-            return { rows: [{ has_vector: true, has_trgm: true, embedding_type: 'vector(1536)', has_hnsw: true, has_trigram_index: true }] };
+            return { rows: [{ has_vector: true, has_trgm: true, embedding_type: 'vector(1024)', has_hnsw: true, has_trigram_index: true }] };
           }
           if (sql.includes('COUNT(*) FILTER')) {
             return { rows: [{ candidate_count: '1', embedded_count: '1', compatible_count: '1', model_mismatch_count: '0' }] };
@@ -352,7 +352,7 @@ describe('PostgreSQL retrieval migration', () => {
       pool: {
         async query(sql) {
           if (sql.includes('FROM pg_extension')) {
-            return { rows: [{ has_vector: true, has_trgm: true, embedding_type: 'vector(1536)', has_hnsw: true, has_trigram_index: true }] };
+            return { rows: [{ has_vector: true, has_trgm: true, embedding_type: 'vector(1024)', has_hnsw: true, has_trigram_index: true }] };
           }
           return { rows: [] };
         },
@@ -372,20 +372,20 @@ describe('PostgreSQL retrieval migration', () => {
     assert.equal(status.embeddedCount, 1);
   });
 
-  it('uses fail-fast extensions, vector(1536), tenant uniqueness, trigram and HNSW indexes', () => {
+  it('uses fail-fast extensions, vector(1024), tenant uniqueness, trigram and HNSW indexes', () => {
     const migration = readFileSync(resolve(ROOT, 'migrations/postgres/002_retrieval_pgvector.sql'), 'utf8');
     assert.match(migration, /CREATE EXTENSION IF NOT EXISTS vector/);
     assert.match(migration, /CREATE EXTENSION IF NOT EXISTS pg_trgm/);
-    assert.match(migration, /vector\(1536\)/);
+    assert.match(migration, /vector\(1024\)/);
     assert.match(migration, /tenant_id, source_type, source_id, chunk_index/);
     assert.match(migration, /gin\(search_text gin_trgm_ops\)/);
     assert.match(migration, /USING hnsw\(embedding vector_cosine_ops\)/);
     assert.doesNotMatch(migration, /EXCEPTION WHEN OTHERS THEN\s+NULL/i);
   });
 
-  it('uses the pgvector PostgreSQL 17 image', () => {
+  it('uses the pgvector PostgreSQL 16 image', () => {
     const compose = readFileSync(resolve(ROOT, 'docker-compose.yml'), 'utf8');
-    assert.match(compose, /image:\s*pgvector\/pgvector:pg17/);
+    assert.match(compose, /image:\s*pgvector\/pgvector:pg16/);
   });
 
   it('does not expose a label-only embedding model override in the reindex CLI', () => {

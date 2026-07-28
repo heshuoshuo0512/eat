@@ -1,6 +1,6 @@
 <template>
   <a class="skip-link" href="#main-content">跳到主要内容</a>
-  <div v-if="!store.user && !previewMode" class="login-landing">
+  <div v-if="!store.user" class="login-landing">
     <section class="login-hero">
       <RouterLink class="brand" to="/">
         <img class="brand-mark" :src="appIcon" alt="" aria-hidden="true">
@@ -32,10 +32,6 @@
           <label>密码<input v-model="loginForm.password" type="password" autocomplete="current-password" placeholder="请输入密码"></label>
           <p v-if="authError || store.error" class="form-error">{{ authError || store.error }}</p>
           <button class="submit-btn" type="submit" :disabled="store.loading">{{ store.loading ? '登录中...' : '登录' }}</button>
-          <div v-if="demoEnabled" class="demo-login-row">
-            <button type="button" @click="useDemo('student')">学生演示账号</button>
-            <button type="button" @click="useDemo('admin')">管理员演示账号</button>
-          </div>
         </form>
 
         <form v-else-if="authMode === 'register'" class="auth-form" @submit.prevent="handleRegister">
@@ -84,7 +80,7 @@
       <section v-if="store.user" class="session-card compact">
         <p class="eyebrow">当前身份</p>
         <strong>{{ store.user.nickname }}</strong>
-        <small>{{ previewMode ? '区域推荐预览模式' : (isAdminFamily ? '管理员端已解锁' : '学生端体验') }}</small>
+        <small>{{ isAdminFamily ? '管理员端已解锁' : '学生端' }}</small>
         <button class="ghost" type="button" @click="store.logout">退出登录</button>
       </section>
     </aside>
@@ -134,7 +130,6 @@ import { useCanteenStore } from './stores/canteenStore.js';
 const store = useCanteenStore();
 const route = useRoute();
 const router = useRouter();
-const previewMode = computed(() => route.query.preview === '1' || route.query.preview === 'regions');
 const adminRoleSet = new Set(['operator', 'stall_admin', 'canteen_admin', 'auditor', 'finance', 'tenant_admin', 'admin', 'super_admin']);
 const roleFeatures = {
   student: new Set(['student']),
@@ -157,7 +152,7 @@ const navItems = [
   { to: '/rankings', label: '排行榜', feature: 'student', group: '更多探索' },
   { to: '/regions', label: '区域推荐', feature: 'student', group: '更多探索' },
   { to: '/saved', label: '收藏与吃过', feature: 'student', group: '个人记录' },
-  { to: '/orders', label: '今日点餐', feature: 'student', group: '待开发', badge: '预览' },
+  { to: '/orders', label: '到店预约', feature: 'student', group: '用餐服务', badge: '' },
   { to: '/health-profile', label: '健康档案', feature: 'student', group: '健康档案' },
   { to: '/admin?panel=reviews&tab=reviews', label: '内容审核', feature: 'reviews', group: '数据中心' },
   { to: '/admin/catalog', label: '数据管理', feature: 'data_manage', group: '数据中心' },
@@ -197,10 +192,8 @@ function isNavActive(item) {
   const params = new URLSearchParams(queryString);
   return [...params.entries()].every(([key, value]) => route.query[key] === value);
 }
-const demoAccounts = { student: { identifier: '演示学生', password: 'student123' }, admin: { identifier: 'admin', password: 'admin123' } };
 const authModes = [{ value: 'login', label: '登录' }, { value: 'register', label: '注册' }, { value: 'reset', label: '找回密码' }];
 const authMode = ref('login');
-const demoEnabled = import.meta.env.VITE_ENABLE_DEMO_LOGIN === '1';
 const loginForm = reactive({ identifier: '', password: '' });
 const registerForm = reactive({ phone: '', verificationCode: '', nickname: '', password: '', confirmPassword: '', agreementAccepted: false });
 const resetForm = reactive({ phone: '', verificationCode: '', password: '', confirmPassword: '' });
@@ -215,10 +208,6 @@ const profileIncomplete = computed(() => ['pending', 'deferred'].includes(store.
 const showOnboardingPrompt = computed(() => store.user?.role === 'student' && store.profile?.onboardingStatus === 'pending' && !onboardingPromptDismissed.value);
 
 onMounted(async () => {
-  if (previewMode.value) {
-    store.loadPreviewState();
-    return;
-  }
   await store.load();
   const audience = route.meta.audience;
   const isAdmin = adminRoleSet.has(store.user?.role);
@@ -230,10 +219,6 @@ onMounted(async () => {
     await router.replace(landingPathForRole(store.user?.role));
   }
 });
-function useDemo(role) {
-  Object.assign(loginForm, demoAccounts[role]);
-  authError.value = '';
-}
 function navBadge(item) { return item.to === '/health-profile' && profileIncomplete.value ? '待完善' : (item.badge || (item.featured ? 'NEW' : '')); }
 function handleNavClick(navigate, event) {
   navigate(event);

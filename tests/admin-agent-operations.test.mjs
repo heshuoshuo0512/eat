@@ -38,7 +38,7 @@ test('the default operations task routes to the operations analytics tool', asyn
   }
 });
 
-test('the lunch shortcut loads the menu and recommendation tools', async () => {
+test('the lunch shortcut loads the stable-catalog recommendation tool', async () => {
   const db = openDatabase(':memory:');
   const app = createApp({ db });
   const server = createServer(app.handler);
@@ -65,8 +65,8 @@ test('the lunch shortcut loads the menu and recommendation tools', async () => {
 
     assert.equal(response.status, 200);
     assert.equal(result.intent, 'meal_recommendation');
-    assert.ok(result.steps.some((step) => step.tool === 'menu.today'));
     assert.ok(result.steps.some((step) => step.tool === 'meal.recommend'));
+    assert.ok(!result.steps.some((step) => step.tool === 'menu.today'));
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await db.close();

@@ -1,4 +1,3 @@
-import { createDatabase } from '../server/database.js';
 import {
   getRetrievalIndexStatus,
   listRetrievalTenantIds,
@@ -64,6 +63,7 @@ if (options.sqlitePath) {
 }
 if (options.vectorMode) process.env.RETRIEVAL_VECTOR_MODE = options.vectorMode;
 
+const { createDatabase } = await import('../server/database.js');
 const db = await createDatabase();
 try {
   const scopeCleanup = await pruneInvalidKnowledgeScopes(db);

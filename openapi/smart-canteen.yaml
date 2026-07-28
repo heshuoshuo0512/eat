@@ -946,7 +946,7 @@ components:
         ready: { type: boolean }
         mode: { type: string, enum: [hybrid, lexical_fallback] }
         indexVersion: { type: string }
-        embeddingDimension: { type: integer, minimum: 1, examples: [1024, 1536], description: Local experimental indexes may use 1024 dimensions; the production PostgreSQL contract remains 1536 until an explicit migration. }
+        embeddingDimension: { type: integer, minimum: 1, examples: [1024], description: Local experimental indexes may use 1024 dimensions; the production PostgreSQL contract remains 1024. }
         documentCount: { type: integer }
         embeddedCount: { type: integer }
         sourceCounts: { type: array, items: { type: object } }
@@ -1769,7 +1769,7 @@ paths:
         '200': { description: Usage logs, summary and quota, content: { application/json: { schema: { $ref: '#/components/schemas/AiUsageResponse' } } } }
   /admin/retrieval/status:
     get:
-      description: Tenant-scoped retrieval index health and statistics. Requires audit:read. PostgreSQL reports ready=false unless vector, pg_trgm, vector(1536), HNSW and trigram indexes are all present; SQLite reports lexical_fallback mode.
+      description: Tenant-scoped retrieval index health and statistics. Requires audit:read. PostgreSQL reports ready=false unless vector, pg_trgm, vector(1024), HNSW and trigram indexes are all present; SQLite reports lexical_fallback mode.
       responses:
         '200': { description: Index readiness, counts, latest indexing time and failures, content: { application/json: { schema: { $ref: '#/components/schemas/RetrievalIndexStatus' } } } }
         '403': { description: audit:read permission required }

@@ -1,15 +1,39 @@
 <template>
   <section class="page-heading">
-    <p class="eyebrow">实验性功能 · 模拟数据</p>
-    <h1>档口订单工作台</h1>
-    <p>此页面为实验性功能，当前展示模拟订单数据。订单流程和支付功能尚未正式上线，仅供内部测试使用。</p>
+    <p class="eyebrow">预约运营</p>
+    <h1>档口预约工作台</h1>
+    <p>管理到店预约、确认最终金额，并按档口或菜品临时暂停预约。</p>
+  </section>
+
+  <section class="card reservation-settings">
+    <div class="section-title horizontal">
+      <div><p class="eyebrow">Reservation Settings</p><h2>预约开关</h2></div>
+      <select v-model="managedStallId" aria-label="选择档口" @change="loadManagedDishes">
+        <option value="">选择档口</option>
+        <option v-for="stall in store.stalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option>
+      </select>
+    </div>
+    <template v-if="managedStall">
+      <div class="reservation-master-row">
+        <div><strong>{{ managedStall.name }}</strong><span>{{ managedStall.reservationEnabled===false?'当前暂停预约':'当前可预约' }}</span></div>
+        <button class="secondary" type="button" :disabled="switchingId===managedStall.id" @click="toggleStallReservation">{{ managedStall.reservationEnabled===false?'开启档口预约':'暂停档口预约' }}</button>
+      </div>
+      <div class="reservation-dish-list">
+        <div v-for="dish in managedDishes" :key="dish.id" class="reservation-dish-row">
+          <span><strong>{{ dish.name }}</strong><small>{{ dish.priceDisplay||'价格待核验' }}</small></span>
+          <button class="ghost" type="button" :disabled="switchingId===dish.id" @click="toggleDishReservation(dish)">{{ dish.reservationEnabled===false?'开启':'暂停' }}</button>
+        </div>
+      </div>
+      <p v-if="managedDishPage.hasMore" class="muted">该档口菜品超过 100 道，请在目录管理中继续维护。</p>
+    </template>
+    <p v-else class="muted">选择档口后可维护预约状态。</p>
   </section>
 
   <section class="card">
     <div class="section-title horizontal">
       <div>
-        <p class="eyebrow">Live Orders</p>
-        <h2>订单队列</h2>
+        <p class="eyebrow">Live Reservations</p>
+        <h2>预约队列</h2>
       </div>
       <div class="table-actions">
         <div class="filter-tabs">
@@ -47,7 +71,7 @@
       <article class="metric-highlight"><strong>{{ pendingCount }}</strong><span>待接单</span></article>
       <article class="metric-highlight"><strong>{{ preparingCount }}</strong><span>备餐中</span></article>
       <article class="metric-highlight ready-metric"><strong>{{ readyCount }}</strong><span>待取餐</span></article>
-      <article><strong>¥{{ revenue }}</strong><span>模拟金额</span></article>
+      <article><strong>¥{{ revenue }}</strong><span>已完成金额</span></article>
     </div>
 
     <div v-if="filteredOrders.length" class="order-queue">
@@ -57,9 +81,15 @@
           <span class="status-tag" :class="order.status">{{ statusLabel(order.status) }}</span>
         </div>
         <div class="queue-card-body">
+          <p class="queue-stall">{{ order.stallName||stallName(order.stallId) }}</p>
           <p class="queue-items">{{ order.items.map((item) => `${item.dishName}×${item.quantity}`).join('、') }}</p>
           <p class="queue-note" v-if="order.note">{{ order.note }}</p>
-          <span class="queue-amount">¥{{ order.totalAmount }}</span>
+          <span class="queue-amount">{{ order.pricingStatus==='pending_confirmation'?`预计 ¥${order.estimatedAmount}`:`最终 ¥${order.finalAmount??order.estimatedAmount}` }} · 到店支付</span>
+          <div v-if="order.pricingStatus==='pending_confirmation'&&!['completed','cancelled'].includes(order.status)" class="price-confirmation">
+            <label :for="`final-${order.id}`">最终金额</label>
+            <input :id="`final-${order.id}`" v-model="finalAmounts[order.id]" type="number" min="0" step="0.01" inputmode="decimal" placeholder="到店称重/选规格后填写" />
+            <button class="secondary" type="button" @click="confirmPrice(order)">确认金额</button>
+          </div>
         </div>
         <div class="queue-card-actions">
           <button v-if="order.status === 'pending'" class="primary" type="button" @click="next(order, 'preparing')">接单</button>
@@ -75,12 +105,18 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
 const statusFilter = ref('');
 const message = ref('');
+const finalAmounts = reactive({});
+const managedStallId = ref('');
+const managedDishes = ref([]);
+const managedDishPage = ref({ page: 1, pageSize: 100, total: 0, hasMore: false });
+const switchingId = ref('');
+const managedStall = computed(() => store.stalls.find((stall) => stall.id === managedStallId.value) || null);
 
 const activeStatuses = ['pending', 'preparing', 'ready'];
 
@@ -98,11 +134,15 @@ const pendingCount = computed(() => store.adminOrders.filter((order) => order.st
 const preparingCount = computed(() => store.adminOrders.filter((order) => order.status === 'preparing').length);
 const readyCount = computed(() => store.adminOrders.filter((order) => order.status === 'ready').length);
 const revenue = computed(() => {
-  const active = store.adminOrders.filter((order) => activeStatuses.includes(order.status));
-  return active.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0).toFixed(2);
+  const completed = store.adminOrders.filter((order) => order.status === 'completed');
+  return completed.reduce((sum, order) => sum + Number(order.finalAmount ?? order.estimatedAmount ?? 0), 0).toFixed(2);
 });
 
-onMounted(load);
+onMounted(async () => {
+  await load();
+  managedStallId.value = store.stalls[0]?.id || '';
+  if (managedStallId.value) await loadManagedDishes();
+});
 
 async function load() {
   if (statusFilter.value === 'all') {
@@ -128,6 +168,45 @@ async function next(order, status) {
   }
 }
 
+async function loadManagedDishes() {
+  if (!managedStallId.value) { managedDishes.value = []; return; }
+  try {
+    const result = await store.searchDishes({ stallId: managedStallId.value, page: 1, pageSize: 100, sort: 'name' });
+    managedDishes.value = result.items || [];
+    managedDishPage.value = result.page || managedDishPage.value;
+  } catch (error) { message.value = error.message; }
+}
+
+async function toggleStallReservation() {
+  if (!managedStall.value) return;
+  switchingId.value = managedStall.value.id;
+  try {
+    await store.updateStallReservation(managedStall.value.id, managedStall.value.reservationEnabled === false);
+    message.value = `${managedStall.value.name}预约状态已更新。`;
+  } catch (error) { message.value = error.message; } finally { switchingId.value = ''; }
+}
+
+async function toggleDishReservation(dish) {
+  switchingId.value = dish.id;
+  try {
+    const reservation = await store.updateDishReservation(dish.id, dish.reservationEnabled === false);
+    managedDishes.value = managedDishes.value.map((item) => item.id === dish.id ? { ...item, reservationEnabled: reservation.reservationEnabled } : item);
+    message.value = `${dish.name}预约状态已更新。`;
+  } catch (error) { message.value = error.message; } finally { switchingId.value = ''; }
+}
+
+async function confirmPrice(order) {
+  const amount = Number(finalAmounts[order.id]);
+  if (!Number.isFinite(amount) || amount < 0) { message.value = '请输入有效的最终金额。'; return; }
+  try {
+    await store.confirmReservationPrice(order.id, amount);
+    delete finalAmounts[order.id];
+    message.value = `预约 ${order.pickupCode} 的最终金额已确认。`;
+  } catch (error) { message.value = error.message; }
+}
+
+function stallName(id) { return store.stalls.find((stall) => stall.id === id)?.name || '档口待同步'; }
+
 function statusLabel(status) {
   return { pending: '待接单', preparing: '备餐中', ready: '待取餐', completed: '已完成', cancelled: '已取消' }[status] || status;
 }
@@ -141,6 +220,14 @@ function statusLabel(status) {
   border-radius: 8px;
   overflow: hidden;
 }
+.reservation-settings { margin-bottom: 18px; }
+.reservation-settings select { min-width: min(280px, 100%); }
+.reservation-master-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 0; border-bottom:1px solid var(--border, #eaecf0); }
+.reservation-master-row div,.reservation-master-row span,.reservation-dish-row span,.reservation-dish-row small { display:grid; gap:3px; }
+.reservation-master-row span,.reservation-dish-row small,.queue-stall { color:var(--muted); font-size:12px; }
+.reservation-dish-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 18px; }
+.reservation-dish-row { min-width:0; min-height:56px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--border, #eaecf0); }
+.reservation-dish-row span { min-width:0; }.reservation-dish-row strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tab-btn {
   padding: 6px 12px;
   font-size: 12px;
@@ -236,6 +323,8 @@ function statusLabel(status) {
   margin: 0 0 4px;
   font-style: italic;
 }
+.price-confirmation { display:grid; grid-template-columns:auto minmax(110px,1fr) auto; align-items:center; gap:8px; margin-top:10px; }
+.price-confirmation label { color:var(--muted); font-size:12px; }.price-confirmation input { min-height:40px; }
 .queue-amount {
   font-size: 13px;
   font-weight: 600;
@@ -245,4 +334,5 @@ function statusLabel(status) {
   display: flex;
   gap: 8px;
 }
+@media (max-width:720px) { .reservation-settings .section-title,.reservation-master-row { align-items:stretch; flex-direction:column; }.reservation-settings select { width:100%; }.reservation-dish-list { grid-template-columns:1fr; }.price-confirmation { grid-template-columns:1fr; }.filter-tabs { width:100%; overflow-x:auto; }.table-actions { align-items:stretch; flex-direction:column; } }
 </style>

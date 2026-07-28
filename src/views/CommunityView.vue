@@ -11,7 +11,7 @@
     </div>
     <div class="target-grid">
       <label><span>食堂</span><select v-model="selectedCanteenId" required @change="onCanteenChange"><option value="">请选择食堂</option><option v-for="canteen in store.canteens" :key="canteen.id" :value="canteen.id">{{ canteen.name }}</option></select></label>
-      <label v-if="form.targetType === 'dish'"><span>档口</span><select v-model="selectedStallId" required @change="form.targetId = ''"><option value="">请选择档口</option><option v-for="stall in availableStalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option></select></label>
+      <label v-if="form.targetType === 'dish'"><span>档口</span><select v-model="selectedStallId" required @change="onStallChange"><option value="">请选择档口</option><option v-for="stall in availableStalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option></select></label>
       <label v-if="form.targetType === 'dish'"><span>菜品</span><select v-model="form.targetId" required><option value="">请选择菜品</option><option v-for="dish in availableDishes" :key="dish.id" :value="dish.id">{{ dish.name }}</option></select></label>
     </div>
     <label class="content-field"><span>帖子内容</span><textarea v-model.trim="form.content" minlength="2" maxlength="600" required placeholder="说说味道、份量、排队体验，或者分享你的搭配建议…" /><small>{{ form.content.length }} / 600</small></label>
@@ -59,14 +59,25 @@ const loadError = ref('');
 const feedType = ref('');
 const selectedCanteenId = ref('');
 const selectedStallId = ref('');
+const availableDishes = ref([]);
 const imageFile = ref(null);
 const imagePreview = ref('');
 const form = reactive({ targetType: 'dish', targetId: '', content: '', rating: 0 });
 const availableStalls = computed(() => store.stalls.filter((stall) => stall.canteenId === selectedCanteenId.value));
-const availableDishes = computed(() => store.dishes.filter((dish) => dish.stallId === selectedStallId.value));
 
 function setTargetType(type) { form.targetType = type; form.targetId = type === 'canteen' ? selectedCanteenId.value : ''; form.rating = 0; selectedStallId.value = ''; }
-function onCanteenChange() { selectedStallId.value = ''; form.targetId = form.targetType === 'canteen' ? selectedCanteenId.value : ''; }
+function onCanteenChange() { selectedStallId.value = ''; availableDishes.value = []; form.targetId = form.targetType === 'canteen' ? selectedCanteenId.value : ''; }
+async function onStallChange() {
+  form.targetId = '';
+  if (!selectedStallId.value) { availableDishes.value = []; return; }
+  try {
+    const result = await store.loadCommunityDishOptions({ stallId: selectedStallId.value, page: 1, pageSize: 100 });
+    availableDishes.value = result.options || [];
+  } catch (error) {
+    availableDishes.value = [];
+    message.value = error.message || '菜品目录读取失败。';
+  }
+}
 function changeFeed(type) { feedType.value = type; loadPosts(); }
 
 function selectImage(event) {

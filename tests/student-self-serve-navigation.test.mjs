@@ -98,7 +98,7 @@ describe('App.vue exposes /orders in student navigation', () => {
   it('/orders nav label is a Chinese ordering label, not generic', () => {
     const match = appVue.match(/to:\s*'\/orders'\s*,\s*label:\s*'([^']+)'/);
     assert.ok(match, '/orders nav item has a label');
-    assert.ok(/点餐|下单|订购/.test(match[1]), `label "${match[1]}" should reference ordering`);
+    assert.ok(/点餐|下单|订购|预约/.test(match[1]), `label "${match[1]}" should reference ordering`);
   });
 });
 
@@ -111,7 +111,7 @@ describe('HomeView has /orders entry for students', () => {
       /id:\s*'orders'[^\n]*to:\s*'\/orders'/.test(homeVue),
       'student feature list must contain /orders'
     );
-    assert.match(homeVue, /待开发 · 可预览/);
+    assert.match(homeVue, /到店预约/);
   });
 });
 

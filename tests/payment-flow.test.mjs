@@ -80,7 +80,7 @@ describe('Payment flow', () => {
   after(() => server.close());
 
   /* ── Owner can pay own pending order ──────────────────────────── */
-  it('owner pays own pending order: returns paymentStatus paid and paidAt timestamp', async () => {
+  it('reservation rejects online payment and requires payment at the stall', async () => {
     // Create an order
     const created = await req('/api/orders', {
       method: 'POST',
@@ -96,12 +96,14 @@ describe('Payment flow', () => {
       method: 'POST',
       token: studentToken,
     });
-    assert.equal(status, 200);
-    assert.equal(data.order.paymentStatus, 'paid', 'paymentStatus is paid after paying');
-    assert.ok(data.order.paidAt, 'paidAt is set');
-    assert.ok(typeof data.order.paidAt === 'string' && data.order.paidAt.includes('T'), 'paidAt is an ISO timestamp');
-    assert.equal(data.order.id, orderId, 'order id unchanged');
-    assert.equal(data.order.status, 'pending', 'order status remains pending (payment is separate from fulfillment)');
+    assert.equal(status, 409);
+    assert.equal(data.code, 'PAY_AT_STALL_REQUIRED');
+
+    const current = await req('/api/orders', { token: studentToken });
+    const order = current.data.orders.find((item) => item.id === orderId);
+    assert.equal(order.paymentStatus, 'unpaid');
+    assert.equal(order.paymentMethod, 'at_stall');
+    assert.equal(order.paidAt, null);
   });
 
   /* ── Second student cannot pay another's order ────────────────── */
@@ -125,7 +127,7 @@ describe('Payment flow', () => {
   });
 
   /* ── Paying already-paid order returns 400 ────────────────────── */
-  it('paying an already-paid order returns 400', async () => {
+  it('repeated online payment attempts remain rejected without creating a payment', async () => {
     const created = await req('/api/orders', {
       method: 'POST',
       token: studentToken,
@@ -135,19 +137,23 @@ describe('Payment flow', () => {
     const orderId = created.data.order.id;
 
     // Pay once
-    await req(`/api/orders/${orderId}/pay`, { method: 'POST', token: studentToken });
+    const first = await req(`/api/orders/${orderId}/pay`, { method: 'POST', token: studentToken });
+    assert.equal(first.status, 409);
+    assert.equal(first.data.code, 'PAY_AT_STALL_REQUIRED');
 
     // Pay again
     const { status, data } = await req(`/api/orders/${orderId}/pay`, {
       method: 'POST',
       token: studentToken,
     });
-    assert.equal(status, 400);
-    assert.ok(data.error, 'error message for double payment');
+    assert.equal(status, 409);
+    assert.equal(data.code, 'PAY_AT_STALL_REQUIRED');
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM payments WHERE order_id = ?').get(orderId).count, 0);
   });
 
   /* ── Cancel pending order rolls back supplyCount and soldOut ──── */
-  it('cancelling a pending order rolls back supplyCount and clears soldOut', async () => {
+  it('cancelling a pending reservation leaves catalog sales unchanged', async () => {
+    const beforeSales = db.prepare("SELECT sales FROM dishes WHERE id = 'd-egg-tomato'").get().sales;
     // Order 3 units of egg-tomato (supplyLimit = 3), which will sell it out
     const created = await req('/api/orders', {
       method: 'POST',
@@ -158,12 +164,6 @@ describe('Payment flow', () => {
     const orderId = created.data.order.id;
 
     // Verify dish is sold out
-    const menuBefore = await req('/api/menus/today?mealType=lunch');
-    const eggBefore = menuBefore.data.dishes.find((d) => d.id === 'd-egg-tomato');
-    assert.ok(eggBefore, 'egg-tomato in menu');
-    assert.equal(eggBefore.menuItem.supplyCount, 3, 'supplyCount is 3 after ordering all stock');
-    assert.equal(eggBefore.supplyStatus, 'sold_out', 'dish is sold out');
-
     // Cancel the order
     const { status, data } = await req(`/api/orders/${orderId}/cancel`, {
       method: 'POST',
@@ -173,10 +173,7 @@ describe('Payment flow', () => {
     assert.equal(data.order.status, 'cancelled', 'order status is cancelled');
 
     // Verify supply rolled back
-    const menuAfter = await req('/api/menus/today?mealType=lunch');
-    const eggAfter = menuAfter.data.dishes.find((d) => d.id === 'd-egg-tomato');
-    assert.equal(eggAfter.menuItem.supplyCount, 0, 'supplyCount rolled back to 0');
-    assert.notEqual(eggAfter.supplyStatus, 'sold_out', 'dish is no longer sold out after cancel');
+    assert.equal(db.prepare("SELECT sales FROM dishes WHERE id = 'd-egg-tomato'").get().sales, beforeSales);
 
     // Ordering the same dish again should now succeed
     const reorder = await req('/api/orders', {
@@ -184,7 +181,7 @@ describe('Payment flow', () => {
       token: studentToken,
       body: { items: [{ dishId: 'd-egg-tomato', quantity: 1 }] },
     });
-    assert.equal(reorder.status, 201, 'can reorder after cancel frees supply');
+    assert.equal(reorder.status, 201, 'catalog remains reservable after cancellation');
   });
 
   /* ── Cancelling completed order returns 400 ───────────────────── */
@@ -257,14 +254,19 @@ describe('Payment flow', () => {
 
   /* ── Admin order analytics ────────────────────────────────────── */
   it('admin order analytics returns todayOrders, todayRevenue, statusCounts, topDishes, soldOutItems', async () => {
-    // Pay one of the existing chicken-bowl orders to create revenue
-    const studentOrders = await req('/api/orders', { token: studentToken });
-    assert.equal(studentOrders.status, 200);
-    const unpaidChicken = studentOrders.data.orders.find(
-      (o) => o.status === 'pending' && o.paymentStatus === 'unpaid' && o.items.some((i) => i.dishId === 'd-chicken-bowl'),
-    );
-    if (unpaidChicken) {
-      await req(`/api/orders/${unpaidChicken.id}/pay`, { method: 'POST', token: studentToken });
+    const created = await req('/api/orders', {
+      method: 'POST',
+      token: studentToken,
+      body: { items: [{ dishId: 'd-chicken-bowl', quantity: 1 }] },
+    });
+    assert.equal(created.status, 201);
+    for (const nextStatus of ['preparing', 'ready', 'completed']) {
+      const transition = await req(`/api/admin/orders/${created.data.order.id}/status`, {
+        method: 'PATCH',
+        token: adminToken,
+        body: { status: nextStatus },
+      });
+      assert.equal(transition.status, 200);
     }
 
     const { status, data } = await req('/api/admin/order-analytics', { token: adminToken });

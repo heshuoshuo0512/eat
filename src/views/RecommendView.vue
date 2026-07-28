@@ -3,7 +3,7 @@
     <div>
       <p class="eyebrow">Profile-aware Agent</p>
       <h1>智能推荐</h1>
-      <p>结合健康档案、今日菜单和真实菜品数据生成建议，并明确展示引用与可信度。</p>
+      <p>结合健康档案、稳定校园菜单和真实菜品数据生成建议，并明确展示引用与可信度。</p>
     </div>
     <RouterLink class="secondary button-link" to="/health-profile">调整健康档案</RouterLink>
   </section>
@@ -46,7 +46,7 @@
 
       <div ref="conversationEl" class="conversation" aria-live="polite">
         <div v-if="!conversation.length && loading" class="assistant-thinking">
-          <span></span><span></span><span></span><p>正在读取健康档案与今日供应</p>
+          <span></span><span></span><span></span><p>正在读取健康档案与校园菜单</p>
         </div>
         <article v-for="(messageItem, index) in conversation" :key="`${messageItem.role}-${index}`" :class="['message', messageItem.role]">
           <span class="message-label">{{ messageItem.role === 'user' ? '你' : '智能推荐' }}</span>
@@ -148,7 +148,7 @@ function deterministicSummary(recommendation) {
   if (!picks.length) {
     const relaxation = recommendation.suggestedRelaxations?.[0];
     const suggestion = typeof relaxation === 'string' ? relaxation : relaxation?.label || relaxation?.message;
-    return suggestion ? `当前没有满足全部条件且可点的菜品。可以尝试：${suggestion}` : '当前没有满足全部条件且可点的菜品，请稍后刷新今日供应。';
+    return suggestion ? `当前没有满足全部条件且可预约的菜品。可以尝试：${suggestion}` : '当前没有满足全部条件且可预约的菜品，请调整条件后重试。';
   }
   const names = picks.slice(0, 3).map((dish) => dish.name).join('、');
   const warning = recommendation.warnings?.[0];

@@ -104,6 +104,23 @@ export const apiClient = {
   async bootstrap() {
     return request('/api/bootstrap');
   },
+  async catalogVenues() {
+    return request('/api/catalog/venues');
+  },
+  async catalogStalls({ venueId = '', page = 1, pageSize = 100 } = {}) {
+    const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    if (venueId) query.set('venueId', venueId);
+    return request(`/api/catalog/stalls?${query}`);
+  },
+  async catalogRankings({ type = 'dishes', page = 1, pageSize = 20 } = {}) {
+    return request(`/api/catalog/rankings?${new URLSearchParams({ type, page: String(page), pageSize: String(pageSize) })}`);
+  },
+  async savedCatalog({ kind = 'favorite', page = 1, pageSize = 20 } = {}) {
+    return request(`/api/catalog/saved?${new URLSearchParams({ kind, page: String(page), pageSize: String(pageSize) })}`);
+  },
+  async communityDishOptions({ query = '', venueId = '', stallId = '', page = 1, pageSize = 30 } = {}) {
+    return request(`/api/community/dish-options?${new URLSearchParams({ query, venueId, stallId, page: String(page), pageSize: String(pageSize) })}`);
+  },
   async login(payload) {
     const result = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) });
     saveSession(result);
@@ -187,12 +204,11 @@ export const apiClient = {
   async uploadImage(payload) {
     return request('/api/uploads', { method: 'POST', body: JSON.stringify(payload) });
   },
-  async todayMenu(mealType) {
-    const query = mealType ? `?mealType=${encodeURIComponent(mealType)}` : '';
-    return request(`/api/menus/today${query}`);
-  },
   async dishesSearch(payload) {
     return request('/api/dishes/search', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
+  },
+  async dishDetail(id) {
+    return request(`/api/dishes/${encodeURIComponent(id)}`);
   },
   async recommend(payload = {}) {
     return request('/api/recommend', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
@@ -201,10 +217,8 @@ export const apiClient = {
     return request('/api/recommend/plan', { method: 'POST', body: JSON.stringify({ days }) });
   },
   async createOrder(payload) {
-    return request('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
-  },
-  async payOrder(id, channel = 'mock') {
-    return request(`/api/orders/${encodeURIComponent(id)}/pay`, { method: 'POST', body: JSON.stringify({ channel }) });
+    const idempotencyKey = payload.idempotencyKey || `reservation:${Date.now()}:${crypto.randomUUID()}`;
+    return request('/api/orders', { method: 'POST', headers: { 'X-Idempotency-Key': idempotencyKey }, body: JSON.stringify({ ...payload, idempotencyKey }) });
   },
   async cancelOrder(id) {
     return request(`/api/orders/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
@@ -221,6 +235,15 @@ export const apiClient = {
   },
   async updateOrderStatus(id, status) {
     return request(`/api/admin/orders/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+  },
+  async confirmReservationPrice(id, payload) {
+    return request(`/api/admin/orders/${encodeURIComponent(id)}/price`, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+  async updateStallReservation(id, enabled) {
+    return request(`/api/admin/stalls/${encodeURIComponent(id)}/reservation`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
+  },
+  async updateDishReservation(id, enabled) {
+    return request(`/api/admin/dishes/${encodeURIComponent(id)}/reservation`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
   },
   async ragSearch(query) {
     return request(`/api/rag/search?q=${encodeURIComponent(query)}`);

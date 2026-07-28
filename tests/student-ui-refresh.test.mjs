@@ -13,15 +13,15 @@ const recommend = read('src/views/RecommendView.vue');
 const orders = read('src/views/OrdersView.vue');
 
 describe('student UI refresh contracts', () => {
-  it('keeps the required student navigation order and preview badge', () => {
-    const labels = ['菜品检索', '智能推荐', '菜品评价', '校园帖子', '食堂导航', '排行榜', '区域推荐', '收藏与吃过', '今日点餐', '健康档案'];
+  it('keeps the required student navigation order and production reservation entry', () => {
+    const labels = ['菜品检索', '智能推荐', '菜品评价', '校园帖子', '食堂导航', '排行榜', '区域推荐', '收藏与吃过', '到店预约', '健康档案'];
     let previous = -1;
     for (const label of labels) {
       const index = app.indexOf(`label: '${label}'`);
       assert.ok(index > previous, `${label} should appear after the previous student item`);
       previous = index;
     }
-    assert.match(app, /to:\s*'\/orders'[^\n]*badge:\s*'预览'/);
+    assert.match(app, /to:\s*'\/orders'[^\n]*label:\s*'到店预约'/);
   });
 
   it('implements covered, revealed, and next-card states on the home reveal', () => {
@@ -50,9 +50,10 @@ describe('student UI refresh contracts', () => {
     assert.match(recommend, /visibleRecommendationCitations/);
   });
 
-  it('keeps orders preview-only without a create-order invocation', () => {
-    assert.match(orders, /联调中，暂不可提交/);
-    assert.doesNotMatch(orders, /store\.createOrder/);
+  it('submits real reservations and displays at-stall payment semantics', () => {
+    assert.match(orders, /提交预约/);
+    assert.match(orders, /store\.createOrder/);
+    assert.match(orders, /到店支付/);
   });
 });
 

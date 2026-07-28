@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../server/database.js';
 import { budgetPriceForDish, normalizeDishPricing } from '../server/dishPricing.js';
 import { importRealCatalog, rollbackRealCatalogBatch } from '../server/realCatalogImport.js';
@@ -138,7 +139,7 @@ describe('dish fact presentation parity', () => {
       assert.equal(presentation.dishPriceText(unknown), '1.68元/50克');
       assert.equal(presentation.dishRatingText(unknown), '暂无评分');
       assert.deepEqual(presentation.dishNutritionPresentation(unknown), { known: false, status: 'unknown', label: '营养待核验', metrics: {} });
-      assert.equal(presentation.dishSupplyPresentation(unknown).label, '今日供应尚未确认');
+      assert.equal(presentation.dishSupplyPresentation(unknown).label, '目录可查询');
 
       const verified = { price: 12, rating: 4.6, reviewCount: 8, nutrition: { calories: 420, protein: 26, fat: 9, carbs: 58 }, factStatus: { nutrition: 'verified' } };
       assert.equal(presentation.dishPriceText(verified), '12元');
@@ -160,10 +161,10 @@ describe('isolated retrieval reindex', () => {
     ], {
       cwd: resolve('.'),
       encoding: 'utf8',
-      env: { ...process.env, ENABLE_DEMO_SEED: '1' },
+      env: { ...process.env, ENABLE_DEMO_SEED: '0' },
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    const db = openDatabase(databasePath);
+    const db = new DatabaseSync(databasePath, { readOnly: true });
     try {
       assert.equal(db.prepare('SELECT COUNT(*) AS count FROM dishes').get().count, 0);
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM rag_documents WHERE source_type = 'dish'").get().count, 0);

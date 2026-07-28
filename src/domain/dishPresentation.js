@@ -74,20 +74,22 @@ export function dishSupplyPresentation(dish = {}, menuDish = null) {
   const status = String(availability?.status || menuDish?.supplyStatus || '').trim().toLowerCase();
   const orderable = availability ? availability.orderable === true : Boolean(menuDish && status !== 'sold_out');
   const labels = {
-    available: '今日可点',
-    limited: '库存紧张',
-    sold_out: '今日售罄',
-    catalog_only: '今日供应尚未确认',
-    not_on_menu: '非今日供应',
-    off_menu: '非今日供应',
-    outside_serving_time: '未到供应时段',
-    outside_serving_hours: '未到供应时段',
+    reservable: '可预约',
+    reservation_paused: '暂停预约',
+    available: '可预约',
+    limited: '可预约',
+    sold_out: '暂停预约',
+    catalog_only: '目录可查询',
+    not_on_menu: '暂停预约',
+    off_menu: '暂停预约',
+    outside_serving_time: '暂停预约',
+    outside_serving_hours: '暂停预约',
     stall_closed: '档口暂停营业',
     dish_inactive: '菜品已下架',
     unavailable: '当前不可点',
   };
-  const label = status ? (labels[status] || availability?.reason || '当前不可点') : '今日供应尚未确认';
-  const className = status === 'available'
+  const label = status ? (labels[status] || availability?.reason || '暂停预约') : '目录信息待核验';
+  const className = ['available', 'reservable'].includes(status)
     ? 'available'
     : status === 'limited'
       ? 'limited'

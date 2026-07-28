@@ -19,7 +19,7 @@ function emptyState() {
 }
 
 function emptyMenu() {
-  return { date: '', mealType: 'lunch', menus: [], dishes: [], source: 'fallback' };
+  return { date: '', mealType: 'lunch', menus: [], dishes: [], source: 'stable_catalog' };
 }
 
 function localRankings(source) {
@@ -47,7 +47,10 @@ const error = ref('');
 const loaded = ref(false);
 const lastLoadedAt = ref(0);
 const todayMenu = ref(emptyMenu());
-const remoteRankings = ref(null);
+const catalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
+const reservationCatalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
+const remoteRankings = ref({ dishes: [], stalls: [], canteens: [] });
+const savedCatalog = ref({ favorite: { items: [], page: { page: 0, hasMore: false, total: 0 } }, eaten: { items: [], page: { page: 0, hasMore: false, total: 0 } } });
 const contextualRecommendation = ref(normalizeRecommendationResult());
 const recommendationLoading = ref(false);
 const discoveryMode = ref('search');
@@ -75,11 +78,40 @@ function setPreferences(preferences = []) {
   state.value.dishPreferences = Array.isArray(preferences) ? preferences : [];
 }
 
+function mergeDishes(items = [], { replace = false } = {}) {
+  const entities = new Map((replace ? [] : state.value.dishes).map((dish) => [String(dish.id), dish]));
+  for (const dish of items) entities.set(String(dish.id), { ...(entities.get(String(dish.id)) || {}), ...dish });
+  state.value.dishes = [...entities.values()];
+}
+
 async function hydrateExtras() {
-  const mealType = state.value.profile.mealType;
-  const results = await Promise.allSettled([apiClient.todayMenu(mealType), apiClient.loadRankings()]);
-  if (results[0].status === 'fulfilled') todayMenu.value = results[0].value;
-  if (results[1].status === 'fulfilled') remoteRankings.value = results[1].value;
+  const results = await Promise.allSettled([
+    apiClient.catalogVenues(),
+    apiClient.catalogStalls({ page: 1, pageSize: 100 }),
+    apiClient.searchDishes({ page: 1, pageSize: 50, sort: 'rating_desc' }),
+    apiClient.catalogRankings({ type: 'dishes', page: 1, pageSize: 20 }),
+    apiClient.catalogRankings({ type: 'stalls', page: 1, pageSize: 20 }),
+    apiClient.catalogRankings({ type: 'venues', page: 1, pageSize: 20 }),
+    apiClient.listPreferences()
+  ]);
+  if (results[0].status === 'fulfilled') state.value.canteens = results[0].value.venues || [];
+  if (results[1].status === 'fulfilled') {
+    state.value.stalls = results[1].value.stalls || [];
+    if (results[1].value.page?.hasMore) {
+      const next = await apiClient.catalogStalls({ page: 2, pageSize: 100 });
+      state.value.stalls.push(...(next.stalls || []));
+    }
+  }
+  if (results[2].status === 'fulfilled') {
+    state.value.dishes = results[2].value.items || [];
+    catalogPage.value = results[2].value.page || { page: 1, pageSize: 50, total: state.value.dishes.length, hasMore: false };
+  }
+  remoteRankings.value = {
+    dishes: results[3].status === 'fulfilled' ? results[3].value.items || [] : [],
+    stalls: results[4].status === 'fulfilled' ? results[4].value.items || [] : [],
+    canteens: results[5].status === 'fulfilled' ? results[5].value.items || [] : [],
+  };
+  if (results[6].status === 'fulfilled') setPreferences(results[6].value.preferences || []);
 }
 
 async function load(force = false) {
@@ -136,25 +168,19 @@ const stalls = computed(() => state.value.stalls);
 const dishes = computed(() => state.value.dishes);
 const profile = computed(() => state.value.profile);
 const dishPreferences = computed(() => state.value.dishPreferences);
-const rankings = computed(() => remoteRankings.value || localRankings(state.value));
+const rankings = computed(() => remoteRankings.value.dishes.length || remoteRankings.value.stalls.length || remoteRankings.value.canteens.length ? remoteRankings.value : localRankings(state.value));
 const searchedDishes = computed(() => state.value.dishes.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive'));
 const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes?.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
 
 async function login(payload) {
   const result = await apiClient.login(payload);
-  setState(result.state);
-  loaded.value = true;
-  await hydrateExtras();
-  lastLoadedAt.value = Date.now();
+  await load(true);
   return result.user;
 }
 
 async function register(payload) {
   const result = await apiClient.register(payload);
-  setState(result.state);
-  loaded.value = true;
-  await hydrateExtras();
-  lastLoadedAt.value = Date.now();
+  await load(true);
   return result.user;
 }
 
@@ -163,10 +189,7 @@ async function wechatLogin({ phoneCode = '', agreementVersion = '2026-07', profi
     uni.login({ provider: 'weixin', success: (result) => resolve(result.code), fail: (err) => reject(new Error(err?.errMsg || '微信登录失败。')) });
   });
   const result = await apiClient.wechatLogin({ code, phoneCode, agreementVersion, profile });
-  setState(result.state);
-  loaded.value = true;
-  await hydrateExtras();
-  lastLoadedAt.value = Date.now();
+  await load(true);
   return result.user;
 }
 
@@ -174,7 +197,7 @@ function logout() {
   apiClient.logout();
   setState();
   todayMenu.value = emptyMenu();
-  remoteRankings.value = null;
+  remoteRankings.value = { dishes: [], stalls: [], canteens: [] };
   contextualRecommendation.value = normalizeRecommendationResult();
   loaded.value = false;
   lastLoadedAt.value = 0;
@@ -204,12 +227,26 @@ async function saveProfile(payload) {
 
 async function loadTodayMenu(mealType = state.value.profile.mealType) {
   try {
-    todayMenu.value = await apiClient.todayMenu(mealType);
+    const result = await apiClient.searchDishes({ page: 1, pageSize: 50, reservationOnly: true, sort: 'rating_desc' });
+    reservationCatalogPage.value = result.page || { page: 1, pageSize: 50, total: result.items?.length || 0, hasMore: false };
+    todayMenu.value = { date: '', mealType, menus: [], dishes: result.items || [], source: 'stable_catalog' };
+    mergeDishes(result.items || []);
     return todayMenu.value;
   } catch (err) {
-    error.value = err.message || '今日菜单加载失败';
+    error.value = err.message || '校园菜单加载失败';
     throw err;
   }
+}
+
+async function loadMoreTodayMenu(mealType = state.value.profile.mealType) {
+  if (!reservationCatalogPage.value.hasMore) return todayMenu.value;
+  const result = await apiClient.searchDishes({ page: reservationCatalogPage.value.page + 1, pageSize: reservationCatalogPage.value.pageSize || 50, reservationOnly: true, sort: 'rating_desc' });
+  const entities = new Map(todayMenu.value.dishes.map((dish) => [String(dish.id), dish]));
+  for (const dish of result.items || []) entities.set(String(dish.id), dish);
+  todayMenu.value = { date: '', mealType, menus: [], dishes: [...entities.values()], source: 'stable_catalog' };
+  reservationCatalogPage.value = result.page;
+  mergeDishes(result.items || []);
+  return todayMenu.value;
 }
 
 async function loadRecommendation() {
@@ -238,6 +275,45 @@ async function requestRecommendation(payload) {
 
 async function searchDishes(payload) {
   return apiClient.searchDishes(payload);
+}
+
+async function loadCatalogDishes({ page = 1, pageSize = 50, ...filters } = {}) {
+  const result = await apiClient.searchDishes({ page, pageSize, ...filters });
+  mergeDishes(result.items || [], { replace: page === 1 });
+  catalogPage.value = result.page || { page, pageSize, total: state.value.dishes.length, hasMore: false };
+  return result;
+}
+
+async function loadMoreCatalog(filters = {}) {
+  if (!catalogPage.value.hasMore) return { items: [], page: catalogPage.value };
+  return loadCatalogDishes({ ...filters, page: catalogPage.value.page + 1, pageSize: catalogPage.value.pageSize || 50 });
+}
+
+async function fetchDishDetail(id) {
+  const detail = await apiClient.dishDetail(id);
+  mergeDishes([detail]);
+  return detail;
+}
+
+async function loadSavedCatalog(kind = 'favorite', { page = 1, pageSize = 20 } = {}) {
+  const result = await apiClient.savedCatalog({ kind, page, pageSize });
+  const previous = page > 1 ? savedCatalog.value[kind]?.items || [] : [];
+  const entities = new Map(previous.map((dish) => [String(dish.id), dish]));
+  for (const dish of result.items || []) entities.set(String(dish.id), dish);
+  savedCatalog.value[kind] = { items: [...entities.values()], page: result.page };
+  mergeDishes(result.items || []);
+  return savedCatalog.value[kind];
+}
+
+async function loadCatalogRanking(type = 'dishes', { page = 1, pageSize = 20 } = {}) {
+  const result = await apiClient.catalogRankings({ type, page, pageSize });
+  const key = type === 'venues' ? 'canteens' : type;
+  const previous = page > 1 ? remoteRankings.value[key] || [] : [];
+  const entities = new Map(previous.map((item) => [String(item.id), item]));
+  for (const item of result.items || []) entities.set(String(item.id), item);
+  remoteRankings.value = { ...remoteRankings.value, [key]: [...entities.values()] };
+  if (type === 'dishes') mergeDishes(result.items || []);
+  return result;
 }
 
 async function toggleFavorite(dishId) {
@@ -284,13 +360,13 @@ function setMotionReduced(value) {
 
 export function useCanteenStore() {
   return {
-    state, loading, error, loaded, lastLoadedAt, todayMenu, remoteRankings, contextualRecommendation, recommendationLoading,
+    state, loading, error, loaded, lastLoadedAt, todayMenu, catalogPage, reservationCatalogPage, remoteRankings, savedCatalog, contextualRecommendation, recommendationLoading,
     discoveryMode, communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
     rankings, searchedDishes, recommendation,
     load, ensureLoaded, refreshIfStale, login, register, wechatLogin, logout, getDishDetail, addReview, saveProfile, deferProfileOnboarding,
-    loadTodayMenu, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
+    loadTodayMenu, loadMoreTodayMenu, loadCatalogDishes, loadMoreCatalog, loadSavedCatalog, loadCatalogRanking, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
     markDishDrawn, openDiscoveryMode, openCommunitySection, setMotionReduced,
-    fetchDishDetail: apiClient.dishDetail,
+    fetchDishDetail,
     runAgent: apiClient.runAgent,
     loadAgentMemory: apiClient.loadAgentMemory,
     saveAgentMemory: apiClient.saveAgentMemory,
@@ -299,9 +375,12 @@ export function useCanteenStore() {
     rejectAgentAction: apiClient.rejectAgentAction,
     listReviews: apiClient.listReviews,
     listPosts: apiClient.listPosts,
+    communityDishOptions: apiClient.communityDishOptions,
     createPost: apiClient.createPost,
     uploadImage: apiClient.uploadImage,
     listOrders: apiClient.listOrders,
+    createOrder: apiClient.createOrder,
+    cancelOrder: apiClient.cancelOrder,
     analyzeMealImage: apiClient.analyzeMealImage,
     confirmMealVision: apiClient.confirmMealVision
     ,sendVerificationCode: apiClient.sendVerificationCode

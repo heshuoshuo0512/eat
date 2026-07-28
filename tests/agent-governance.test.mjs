@@ -229,7 +229,7 @@ describe('Agent final upgrade governance', () => {
         name: 'Menu Query',
         query: '今天午餐吃什么',
         expectedIntent: 'meal_recommendation',
-        requiredTools: ['meal.recommend', 'menu.today'],
+        requiredTools: ['meal.recommend', 'profile.load'],
         forbiddenTools: [],
       },
     });

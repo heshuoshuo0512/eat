@@ -2,7 +2,6 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { canteens as seedCanteens, dishes as seedDishes, reviews as seedReviews, stalls as seedStalls, userDishPreferences as seedUserDishPreferences, campusEnvironment as seedCampusEnvironment } from '../src/domain/seedData.js';
 import { hashPassword, resolveUploadReference } from './security.js';
 import { runMigrations } from './migrations.js';
 import { businessDate } from './time.js';
@@ -10,6 +9,23 @@ import { normalizeDishPricing } from './dishPricing.js';
 
 const DEFAULT_DB_PATH = resolve('data/smart-canteen.sqlite');
 const pgRequestContext = new AsyncLocalStorage();
+const DEMO_SEED_ENABLED = ['1', 'true', 'on'].includes(String(process.env.ENABLE_DEMO_SEED || '0').toLowerCase());
+let seedCanteens = [];
+let seedDishes = [];
+let seedReviews = [];
+let seedStalls = [];
+let seedUserDishPreferences = [];
+let seedCampusEnvironment = {};
+if (DEMO_SEED_ENABLED) {
+  ({
+    canteens: seedCanteens,
+    dishes: seedDishes,
+    reviews: seedReviews,
+    stalls: seedStalls,
+    userDishPreferences: seedUserDishPreferences,
+    campusEnvironment: seedCampusEnvironment
+  } = await import('../tests/fixtures/seedData.js'));
+}
 
 /* ── optional pg driver (loaded once at module level) ────────────── */
 let PgPool;
@@ -73,6 +89,7 @@ function migrate(db) {
       crowd_level INTEGER NOT NULL DEFAULT 30 CHECK(crowd_level BETWEEN 0 AND 100),
       tags_json TEXT NOT NULL DEFAULT '[]',
       description TEXT NOT NULL,
+      venue_kind TEXT NOT NULL DEFAULT 'dining_hall',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -88,6 +105,7 @@ function migrate(db) {
       rating REAL NOT NULL DEFAULT 0 CHECK(rating BETWEEN 0 AND 5),
       avg_price REAL NOT NULL DEFAULT 0,
       open INTEGER NOT NULL DEFAULT 1,
+      reservation_enabled INTEGER NOT NULL DEFAULT 0,
       description TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -117,6 +135,7 @@ function migrate(db) {
       image_url TEXT,
       description TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
+      reservation_enabled INTEGER NOT NULL DEFAULT 0,
       regional_taste TEXT NOT NULL DEFAULT '',
       allergens_json TEXT NOT NULL DEFAULT '[]',
       safety_declarations_json TEXT NOT NULL DEFAULT '[]',
@@ -496,6 +515,13 @@ function migrate(db) {
       total_amount REAL NOT NULL CHECK(total_amount >= 0),
       pickup_code TEXT NOT NULL,
       note TEXT,
+      stall_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT,
+      order_type TEXT NOT NULL DEFAULT 'reservation',
+      payment_method TEXT NOT NULL DEFAULT 'at_stall',
+      pricing_status TEXT NOT NULL DEFAULT 'exact',
+      estimated_amount REAL NOT NULL DEFAULT 0,
+      final_amount REAL,
+      idempotency_key TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -510,6 +536,13 @@ function migrate(db) {
       unit_price REAL NOT NULL CHECK(unit_price >= 0),
       quantity INTEGER NOT NULL CHECK(quantity > 0),
       line_total REAL NOT NULL CHECK(line_total >= 0),
+      pricing_mode TEXT NOT NULL DEFAULT 'fixed',
+      price_display TEXT NOT NULL DEFAULT '',
+      pricing_snapshot_json TEXT NOT NULL DEFAULT '{}',
+      pricing_status TEXT NOT NULL DEFAULT 'exact',
+      estimated_unit_price REAL NOT NULL DEFAULT 0,
+      confirmed_unit_price REAL,
+      item_note TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
 
@@ -668,6 +701,9 @@ function migrate(db) {
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN payload_hash TEXT NOT NULL DEFAULT ''"); } catch {}
   try { db.exec('ALTER TABLE stalls ADD COLUMN parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT'); } catch {}
   try { db.exec("ALTER TABLE stalls ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE canteens ADD COLUMN venue_kind TEXT NOT NULL DEFAULT 'dining_hall'"); } catch {}
+  try { db.exec('ALTER TABLE stalls ADD COLUMN reservation_enabled INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { db.exec('ALTER TABLE dishes ADD COLUMN reservation_enabled INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec("ALTER TABLE audit_logs ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
   for (const [table, column] of [
     ['users', "tenant_id TEXT NOT NULL DEFAULT 'default'"],
@@ -687,6 +723,20 @@ function migrate(db) {
   try { db.exec('ALTER TABLE menu_items ADD COLUMN supply_count INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec("ALTER TABLE menu_items ADD COLUMN serving_start TEXT NOT NULL DEFAULT '11:00'"); } catch {}
   try { db.exec("ALTER TABLE menu_items ADD COLUMN serving_end TEXT NOT NULL DEFAULT '13:30'"); } catch {}
+  try { db.exec('ALTER TABLE orders ADD COLUMN stall_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT'); } catch {}
+  try { db.exec("ALTER TABLE orders ADD COLUMN order_type TEXT NOT NULL DEFAULT 'reservation'"); } catch {}
+  try { db.exec("ALTER TABLE orders ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'at_stall'"); } catch {}
+  try { db.exec("ALTER TABLE orders ADD COLUMN pricing_status TEXT NOT NULL DEFAULT 'exact'"); } catch {}
+  try { db.exec('ALTER TABLE orders ADD COLUMN estimated_amount REAL NOT NULL DEFAULT 0'); } catch {}
+  try { db.exec('ALTER TABLE orders ADD COLUMN final_amount REAL'); } catch {}
+  try { db.exec('ALTER TABLE orders ADD COLUMN idempotency_key TEXT'); } catch {}
+  try { db.exec("ALTER TABLE order_items ADD COLUMN pricing_mode TEXT NOT NULL DEFAULT 'fixed'"); } catch {}
+  try { db.exec("ALTER TABLE order_items ADD COLUMN price_display TEXT NOT NULL DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE order_items ADD COLUMN pricing_snapshot_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
+  try { db.exec("ALTER TABLE order_items ADD COLUMN pricing_status TEXT NOT NULL DEFAULT 'exact'"); } catch {}
+  try { db.exec('ALTER TABLE order_items ADD COLUMN estimated_unit_price REAL NOT NULL DEFAULT 0'); } catch {}
+  try { db.exec('ALTER TABLE order_items ADD COLUMN confirmed_unit_price REAL'); } catch {}
+  try { db.exec("ALTER TABLE order_items ADD COLUMN item_note TEXT NOT NULL DEFAULT ''"); } catch {}
   // Dish allergen info
   try { db.exec("ALTER TABLE dishes ADD COLUMN allergens_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN seasonings_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
@@ -822,6 +872,11 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_orders_tenant_user_created ON orders(tenant_id, user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_orders_tenant_status_created ON orders(tenant_id, status, created_at);
     CREATE INDEX IF NOT EXISTS idx_order_items_tenant_order ON order_items(tenant_id, order_id);
+    CREATE INDEX IF NOT EXISTS idx_canteens_tenant_kind ON canteens(tenant_id, venue_kind, parent_id);
+    CREATE INDEX IF NOT EXISTS idx_stalls_catalog_reservations ON stalls(tenant_id, canteen_id, reservation_enabled, id);
+    CREATE INDEX IF NOT EXISTS idx_dishes_catalog_reservations ON dishes(tenant_id, stall_id, status, reservation_enabled, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_tenant_user_idempotency ON orders(tenant_id, user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
+    CREATE INDEX IF NOT EXISTS idx_orders_tenant_stall_created ON orders(tenant_id, stall_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_payments_tenant_order ON payments(tenant_id, order_id);
     CREATE INDEX IF NOT EXISTS idx_payments_tenant_created ON payments(tenant_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_agent_sessions_user_updated ON agent_sessions(tenant_id, user_id, updated_at);
@@ -849,7 +904,7 @@ function seed(db) {
     db.prepare('INSERT INTO tenants (id, name, status, plan, ai_quota, storage_quota_mb, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run('default', '默认校园', 'active', 'enterprise', 1000, 10240, now, now);
   }
-  if (['0', 'false', 'off', 'none'].includes(String(process.env.ENABLE_DEMO_SEED || '1').toLowerCase())) return;
+  if (!DEMO_SEED_ENABLED) return;
   const users = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
   if (users === 0) {
     const insertUser = db.prepare('INSERT INTO users (id, username, password_hash, nickname, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -922,6 +977,9 @@ function seed(db) {
         data_version = CASE WHEN data_version = 'legacy' THEN 'demo-seed-v1' ELSE data_version END
     WHERE id = ? AND nutrition_fact_status = 'unknown'`);
   for (const item of seedDishes) markSeedNutritionEstimated.run(item.id);
+  // Test fixtures opt into reservation behavior explicitly; production never executes this seed block.
+  db.prepare("UPDATE stalls SET reservation_enabled = 1 WHERE tenant_id = 'default'").run();
+  db.prepare("UPDATE dishes SET reservation_enabled = 1 WHERE tenant_id = 'default'").run();
 
   // Backfill expanded nutrition columns on existing dishes
   for (const item of seedDishes) {
@@ -996,6 +1054,7 @@ export function rowToCanteen(row) {
     description: row.description,
     parentId: row.parent_id || null,
     canteenType: row.canteen_type || 'primary',
+    venueKind: row.venue_kind || 'dining_hall',
     image: row.image && !String(row.image).startsWith('http') && !String(row.image).startsWith('upload://') ? row.image : '',
     imageUrl: resolveUploadReference(row.image && (String(row.image).startsWith('http') || String(row.image).startsWith('upload://')) ? row.image : '')
   };
@@ -1013,6 +1072,7 @@ export function rowToStall(row) {
     rating: row.rating,
     avgPrice: row.avg_price,
     open: Boolean(row.open),
+    reservationEnabled: Boolean(row.reservation_enabled),
     description: row.description
   };
 }
@@ -1071,7 +1131,8 @@ export function rowToDish(row) {
     image: row.image,
     imageUrl: resolveUploadReference(row.image_url),
     description: row.description,
-    status: row.status
+    status: row.status,
+    reservationEnabled: Boolean(row.reservation_enabled)
   };
 }
 

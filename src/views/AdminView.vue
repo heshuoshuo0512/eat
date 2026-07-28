@@ -2033,11 +2033,11 @@ async function publishTodayMenu() {
   try {
     const drafts = todayMenus.value.filter((m) => m.status !== 'published');
     if (!drafts.length) {
-      message.value = '今日菜单均已发布。';
+      message.value = '所选菜单均已发布。';
       return;
     }
     await store.batchMenuAction(drafts.map((m) => m.id), 'publish');
-    message.value = `已发布 ${drafts.length} 个今日菜单。`;
+    message.value = `已发布 ${drafts.length} 个菜单。`;
   } catch (error) {
     message.value = error.message;
   }

@@ -1,11 +1,10 @@
 <template>
   <section class="page-heading">
-    <p class="eyebrow">Order Flow</p>
-    <h1>今日点餐预览与取餐码</h1>
-    <p>可浏览今日菜单、体验加购并查看已有订单；新订单提交正在联调。</p>
+    <p class="eyebrow">到店预约</p>
+    <h1>校园菜单与预约码</h1>
+    <p>每张预约单仅包含一个档口；价格以目录预计，到店确认并支付。</p>
   </section>
 
-  <p class="preview-banner"><strong>预览模式</strong><span>菜单与购物车可操作，新订单暂不提交到服务器。</span></p>
   <p v-if="dishNotice" class="form-message dish-notice" :class="dishNoticeType">{{ dishNotice }}</p>
   <p v-if="menuError" class="form-message error">{{ menuError }}</p>
 
@@ -13,16 +12,16 @@
     <article class="card">
       <div class="section-title horizontal">
         <div>
-          <p class="eyebrow">Today Menu</p>
-          <h2>{{ store.todayMenu.date || '今日' }} 可点菜品</h2>
+          <p class="eyebrow">校园菜单</p>
+          <h2>可预约菜品</h2>
         </div>
         <button class="secondary" type="button" :disabled="menuLoading" @click="refreshMenu">{{ menuLoading ? '刷新中…' : '刷新菜单' }}</button>
       </div>
-      <p v-if="menuLoading" class="muted">正在加载今日菜单…</p>
+      <p v-if="menuLoading" class="muted">正在加载校园菜单…</p>
       <div v-else-if="store.todayMenu.dishes.length" class="dish-list">
         <div v-for="dish in store.todayMenu.dishes" :key="dish.id" class="dish-row rich">
           <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb" />
-          <span v-else class="emoji">{{ dish.image }}</span>
+          <span v-else class="emoji">{{ dish.name.slice(0, 1) }}</span>
           <span>
             <strong>{{ dish.name }}</strong>
             <small>
@@ -35,16 +34,17 @@
             class="add-dish-button"
             :class="{ added: cartQuantity(dish.id) > 0 }"
             type="button"
-            :disabled="dish.supplyStatus === 'sold_out'"
-            :aria-label="dish.supplyStatus === 'sold_out' ? `${dish.name} 已售罄` : `加入 ${dish.name}`"
+            :disabled="dish.availability?.orderable === false"
+            :aria-label="dish.availability?.orderable === false ? `${dish.name} 暂停预约` : `加入 ${dish.name}`"
             @click="addToCart(dish)"
           >
             <span>{{ cartQuantity(dish.id) > 0 ? '✓' : '+' }}</span>
-            <strong>{{ dish.supplyStatus === 'sold_out' ? '售罄' : cartQuantity(dish.id) > 0 ? `已加 ${cartQuantity(dish.id)}` : '加入' }}</strong>
+            <strong>{{ dish.availability?.orderable === false ? '暂停' : cartQuantity(dish.id) > 0 ? `已加 ${cartQuantity(dish.id)}` : '加入' }}</strong>
           </button>
         </div>
+        <button v-if="store.reservationCatalogPage.hasMore" class="secondary load-more" type="button" :disabled="loadingMoreMenu" @click="loadMoreMenu">{{ loadingMoreMenu ? '加载中…' : `加载更多（${store.todayMenu.dishes.length} / ${store.reservationCatalogPage.total}）` }}</button>
       </div>
-      <p v-else class="muted">当前餐次暂无可点菜品，可
+      <p v-else class="muted">目录中暂无可预约菜品，可
         <button class="text-link-btn" type="button" @click="refreshMenu">刷新菜单</button>或查看
         <RouterLink class="text-link" to="/dishes">菜品库</RouterLink> /
         <RouterLink class="text-link" to="/recommend">推荐</RouterLink>
@@ -59,7 +59,7 @@
       <div v-if="cart.length" class="dish-list dense">
         <div v-for="item in cart" :key="item.dishId" class="dish-row">
           <img v-if="item.imageUrl" :src="item.imageUrl" :alt="item.name" class="dish-thumb small" />
-          <span v-else class="emoji">{{ item.image }}</span>
+          <span v-else class="emoji">{{ item.name.slice(0, 1) }}</span>
           <span>
             <strong>{{ item.name }}</strong>
             <small v-if="item.stallName">{{ item.stallName }} · ¥{{ item.price }} × {{ item.quantity }}</small>
@@ -72,46 +72,18 @@
           </div>
         </div>
       </div>
-      <p v-else class="muted">购物车为空 — 从左侧今日菜单点击「加入」即可开始点餐。</p>
-
-      <div class="delivery-section">
-        <label class="delivery-label">配送方式</label>
-        <div class="delivery-toggle">
-          <button
-            type="button"
-            :class="['toggle-btn', { active: deliveryMode === 'pickup' }]"
-            @click="deliveryMode = 'pickup'"
-          >到店自取</button>
-          <button
-            type="button"
-            :class="['toggle-btn', { active: deliveryMode === 'dorm' }]"
-            @click="deliveryMode = 'dorm'"
-          >宿舍配送</button>
-        </div>
-        <div v-if="deliveryMode === 'dorm'" class="dorm-fields">
-          <label>
-            宿舍楼栋
-            <input v-model="dormBuilding" type="text" placeholder="如：7号宿舍楼" />
-          </label>
-          <label>
-            房间号
-            <input v-model="dormRoom" type="text" placeholder="如：302" />
-          </label>
-          <p class="muted small">宿舍配送费 ¥{{ DELIVERY_FEE.toFixed(2) }}，将在订单总额中体现。</p>
-        </div>
-      </div>
+      <p v-else class="muted">购物车为空，从左侧校园菜单选择同一档口的菜品。</p>
 
       <label>
         备注
         <textarea v-model="note" placeholder="少辣、不要香菜等"></textarea>
       </label>
       <div class="metric-grid compact">
-        <article><strong>¥{{ subtotalAmount }}</strong><span>菜品小计</span></article>
-        <article v-if="deliveryMode === 'dorm'"><strong>¥{{ DELIVERY_FEE.toFixed(2) }}</strong><span>配送费</span></article>
-        <article><strong>¥{{ totalAmount }}</strong><span>合计</span></article>
+        <article><strong>¥{{ subtotalAmount }}</strong><span>预计金额</span></article>
+        <article><strong>到店</strong><span>确认并支付</span></article>
         <article><strong>{{ cartCount }}</strong><span>份数</span></article>
       </div>
-      <button class="primary submit-preview" type="button" disabled>联调中，暂不可提交</button>
+      <button class="primary submit-preview" type="button" :disabled="!cart.length || submitting" @click="submitReservation">{{ submitting ? '提交中…' : '提交预约' }}</button>
       <p v-if="message" class="form-message" :class="{ error: isError }">{{ message }}</p>
     </article>
   </section>
@@ -130,7 +102,7 @@
       <article v-for="order in store.orders" :key="order.id" class="order-card" :class="'status-' + order.status">
         <div class="order-card-header">
           <div class="pickup-code-panel">
-            <span>取餐码</span>
+            <span>预约码</span>
             <strong>{{ order.pickupCode }}</strong>
             <button class="copy-code-button" type="button" :aria-label="`复制取餐码 ${order.pickupCode}`" :title="copiedOrderId === order.id ? '已复制' : '复制取餐码'" @click="copyPickupCode(order)">{{ copiedOrderId === order.id ? '✓' : '▣' }}</button>
           </div>
@@ -140,18 +112,17 @@
           <p class="order-items">{{ order.items.map((item) => `${item.dishName}×${item.quantity}`).join('、') }}</p>
           <p class="order-note" v-if="order.note">{{ order.note }}</p>
           <div class="order-meta">
-            <span>¥{{ order.totalAmount }}</span>
-            <span>{{ paymentLabel(order.paymentStatus) }}</span>
+            <span>{{ order.pricingStatus === 'pending_confirmation' ? `预计 ¥${order.estimatedAmount}` : `¥${order.finalAmount ?? order.estimatedAmount}` }}</span>
+            <span>到店支付</span>
             <span>{{ order.createdAt?.slice(0, 16).replace('T', ' ') }}</span>
           </div>
         </div>
         <div class="order-card-actions">
-          <button v-if="order.paymentStatus === 'unpaid' && order.status !== 'cancelled'" class="primary" type="button" :disabled="payingOrderId === order.id" @click="pay(order)">{{ payingOrderId === order.id ? '支付中…' : '模拟支付' }}</button>
           <button v-if="order.paymentStatus === 'unpaid' && ['pending','preparing'].includes(order.status)" class="secondary" type="button" :disabled="cancellingOrderId === order.id" @click="cancel(order)">{{ cancellingOrderId === order.id ? '取消中…' : '取消' }}</button>
         </div>
       </article>
     </div>
-    <p v-else class="muted">暂无历史订单。联调完成后，新订单和取餐码会显示在此处。</p>
+    <p v-else class="muted">暂无预约记录。</p>
   </section>
 </template>
 
@@ -168,24 +139,17 @@ const note = ref('');
 const message = ref('');
 const isError = ref(false);
 const menuLoading = ref(false);
+const loadingMoreMenu = ref(false);
 const menuError = ref('');
 const ordersLoading = ref(false);
 const ordersError = ref('');
 const dishNotice = ref('');
 const dishNoticeType = ref('');
-const payingOrderId = ref(null);
 const cancellingOrderId = ref(null);
 const copiedOrderId = ref(null);
-const deliveryMode = ref('pickup');
-const dormBuilding = ref('');
-const dormRoom = ref('');
-const DELIVERY_FEE = 3;
+const submitting = ref(false);
 
 const subtotalAmount = computed(() => cart.value.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2));
-const totalAmount = computed(() => {
-  const sub = cart.value.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  return (sub + (deliveryMode.value === 'dorm' ? DELIVERY_FEE : 0)).toFixed(2);
-});
 const cartCount = computed(() => cart.value.reduce((sum, item) => sum + item.quantity, 0));
 
 onMounted(async () => {
@@ -218,12 +182,12 @@ function handleDishParam() {
 
   const dish = store.todayMenu.dishes.find((d) => String(d.id) === String(dishId));
   if (!dish) {
-    dishNotice.value = `菜品 ${dishId} 不在今日菜单中，请从左侧菜单选择其他菜品，或查看菜品库和推荐。`;
+    dishNotice.value = `菜品 ${dishId} 当前不在可预约目录中，请选择其他菜品。`;
     dishNoticeType.value = 'error';
     return;
   }
-  if (dish.supplyStatus === 'sold_out') {
-    dishNotice.value = `「${dish.name}」今日已售罄，请选择其他菜品。`;
+  if (dish.availability?.orderable === false) {
+    dishNotice.value = `「${dish.name}」当前暂停预约，请选择其他菜品。`;
     dishNoticeType.value = 'error';
     return;
   }
@@ -240,15 +204,16 @@ function stallInfo(stallId) {
 }
 
 function supplyText(dish) {
-  const item = dish.menuItem;
-  if (!item) return '未排入今日菜单';
-  if (dish.supplyStatus === 'sold_out') return '已售罄';
-  if (item.supplyLimit > 0) return `剩余 ${Math.max(0, item.supplyLimit - item.supplyCount)} 份`;
-  return '供应中';
+  return dish.availability?.orderable === false ? '暂停预约' : `可预约 · ${dish.priceDisplay || dishPriceText(dish)} · 到店支付`;
 }
 
 function addToCart(dish) {
   const stall = store.stalls.find((s) => s.id === dish.stallId);
+  if (cart.value.length && cart.value[0].stallId !== dish.stallId) {
+    message.value = '一张预约单只能选择同一档口的菜品，请先提交或清空当前购物车。';
+    isError.value = true;
+    return;
+  }
   const existing = cart.value.find((item) => item.dishId === dish.id);
   if (existing) {
     existing.quantity += 1;
@@ -259,7 +224,6 @@ function addToCart(dish) {
       price: Number(dish.price || 0),
       quantity: 1,
       imageUrl: dish.imageUrl || '',
-      image: dish.image || '🍽️',
       stallId: dish.stallId || '',
       stallName: stall?.name || ''
     });
@@ -312,6 +276,13 @@ async function refreshMenu() {
   }
 }
 
+async function loadMoreMenu() {
+  if (loadingMoreMenu.value || !store.reservationCatalogPage.hasMore) return;
+  loadingMoreMenu.value = true;
+  menuError.value = '';
+  try { await store.loadMoreTodayMenu(); } catch (err) { menuError.value = `加载更多失败：${err.message}`; } finally { loadingMoreMenu.value = false; }
+}
+
 async function refreshOrders() {
   ordersLoading.value = true;
   ordersError.value = '';
@@ -324,18 +295,21 @@ async function refreshOrders() {
   }
 }
 
-async function pay(order) {
-  payingOrderId.value = order.id;
+async function submitReservation() {
+  if (!cart.value.length || submitting.value) return;
+  submitting.value = true;
   message.value = '';
   isError.value = false;
   try {
-    const paid = await store.payOrder(order.id);
-    message.value = `支付成功，取餐码 ${paid.pickupCode}`;
+    const order = await store.createOrder({ items: cart.value.map((item) => ({ dishId: item.dishId, quantity: item.quantity })), note: note.value });
+    message.value = `预约成功，预约码 ${order.pickupCode}，请到档口确认价格并支付。`;
+    cart.value = [];
+    note.value = '';
   } catch (error) {
     message.value = error.message;
     isError.value = true;
   } finally {
-    payingOrderId.value = null;
+    submitting.value = false;
   }
 }
 
@@ -345,17 +319,13 @@ async function cancel(order) {
   isError.value = false;
   try {
     await store.cancelOrder(order.id);
-    message.value = '订单已取消，库存已回滚。';
+    message.value = '预约已取消。';
   } catch (error) {
     message.value = error.message;
     isError.value = true;
   } finally {
     cancellingOrderId.value = null;
   }
-}
-
-function paymentLabel(status) {
-  return { unpaid: '未支付', paid: '已支付', refunded: '已退款' }[status] || status;
 }
 
 function statusLabel(status) {

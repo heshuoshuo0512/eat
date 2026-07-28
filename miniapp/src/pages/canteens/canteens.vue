@@ -3,7 +3,7 @@
     <view class="navigation-summary">
       <view><text class="ui-strong">{{ primaryCanteens.length }}</text><text>主要食堂</text></view>
       <view><text class="ui-strong">{{ store.stalls.value.length }}</text><text>开放档口</text></view>
-      <view><text class="ui-strong">{{ store.dishes.value.length }}</text><text>在库菜品</text></view>
+      <view><text class="ui-strong">{{ store.state.value.catalogStats?.dishes??store.catalogPage.value.total }}</text><text>在库菜品</text></view>
     </view>
     <sc-state-card v-if="store.loading.value&&!store.loaded.value" type="loading" title="正在同步食堂目录" />
     <sc-state-card v-else-if="store.error.value&&!store.loaded.value" type="error" title="食堂目录加载失败" :desc="store.error.value" action-text="重试" @action="reload" />

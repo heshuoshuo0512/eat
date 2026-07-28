@@ -6,7 +6,7 @@
       <view class="detail-layout">
         <view class="detail-summary">
           <view class="dish-hero" :class="{ 'has-media':hasImage }"><sc-dish-media v-if="hasImage" :dish="dish" ratio="wide" /><view class="hero-copy"><text>{{ dish.cuisine||'校园风味' }} · {{ dish.taste||'口味待核验' }}</text><text class="ui-strong">{{ dish.name }}</text><text class="ui-small">{{ dish.description||'菜品介绍待补充。' }}</text><view><text class="ui-bold">{{ priceText }}</text><text class="ui-bold">{{ ratingText }}</text><text class="ui-bold" :class="supply.className">{{ supply.label }}</text></view></view></view>
-          <view class="action-row"><button :class="{active:isFavorite}" :loading="favoriteLoading" @tap="toggleFavorite"><sc-icon name="heart" :size="16" /><text>{{ isFavorite?'已收藏':'收藏' }}</text></button><button :loading="eatenLoading" @tap="markEaten"><sc-icon name="check-circle" :size="16" /><text>吃过</text></button><button class="order-button" :disabled="!supply.canOrder" @tap="openOrder"><sc-icon name="store" :size="16" :tone="supply.canOrder?'inverted':'muted'" /><text>{{ supply.canOrder?'点餐预览':'不可点' }}</text></button></view>
+          <view class="action-row"><button :class="{active:isFavorite}" :loading="favoriteLoading" @tap="toggleFavorite"><sc-icon name="heart" :size="16" /><text>{{ isFavorite?'已收藏':'收藏' }}</text></button><button :loading="eatenLoading" @tap="markEaten"><sc-icon name="check-circle" :size="16" /><text>吃过</text></button><button class="order-button" :disabled="!supply.canOrder" @tap="openOrder"><sc-icon name="store" :size="16" :tone="supply.canOrder?'inverted':'muted'" /><text>{{ supply.canOrder?'到店预约':'暂停预约' }}</text></button></view>
           <text v-if="message" class="message" :class="{error:isError}">{{ message }}</text>
         </view>
 

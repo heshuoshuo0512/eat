@@ -20,18 +20,27 @@ import { buildDishFacts } from './diningFacts.js';
 import { dishAiAnnotationSchema, listDishAiAnnotations } from './dishAiAnnotations.js';
 import { normalizeDishPricing } from './dishPricing.js';
 
-export const RETRIEVAL_EMBEDDING_DIM = 1536;
+export const RETRIEVAL_EMBEDDING_DIM = 1024;
 export const RETRIEVAL_INDEX_VERSION = '008_multi_source_annotations';
 
 const DEFAULT_SOURCE_TYPES = ['dish', 'stall', 'health_knowledge', CAMPUS_POLICY_SOURCE_TYPE];
 const VECTOR_MODES = new Set(['off', 'shadow', 'active']);
 const QUERY_CACHE_TTL_MS = Math.max(1_000, Number(process.env.RETRIEVAL_QUERY_CACHE_TTL_MS || 5 * 60 * 1000));
 const QUERY_CACHE_MAX = Math.max(16, Number(process.env.RETRIEVAL_QUERY_CACHE_MAX || 256));
+const SQLITE_VECTOR_CACHE_TTL_MS = Math.max(1_000, Number(process.env.RETRIEVAL_SQLITE_VECTOR_CACHE_TTL_MS || 15_000));
+const SQLITE_ROWS_CACHE_MAX = Math.max(2, Number(process.env.RETRIEVAL_SQLITE_ROWS_CACHE_MAX || 8));
 const postgresReady = new WeakSet();
 const sqliteReady = new WeakSet();
 const sqliteReadyInflight = new WeakMap();
 const queryEmbeddingCache = new Map();
 const queryEmbeddingInflight = new Map();
+const sqliteRowsCache = new WeakMap();
+const sqliteVectorCache = new WeakMap();
+
+function clearSqliteRetrievalCaches(db) {
+  sqliteRowsCache.delete(db);
+  sqliteVectorCache.delete(db);
+}
 
 function parseJson(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -267,7 +276,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
       nutritionKnown
         ? `营养：${Number(nutrition.calories ?? rowValue(dish, 'calories') ?? 0)} kcal，蛋白质 ${Number(nutrition.protein ?? rowValue(dish, 'protein') ?? 0)}g，脂肪 ${Number(nutrition.fat ?? rowValue(dish, 'fat') ?? 0)}g，碳水 ${Number(nutrition.carbs ?? rowValue(dish, 'carbs') ?? 0)}g`
         : '营养：待核验',
-      '供应：目录菜品，今日供应尚未确认',
+      `预约：${asBoolean(rowValue(dish, 'reservationEnabled', 'reservation_enabled')) ? '菜品支持预约，仍需以档口预约开关为准' : '暂停预约'}`,
       `描述：${rowValue(dish, 'description') || ''}`,
       aiSummary.content,
     ].filter(Boolean);
@@ -302,7 +311,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
         factStatus: facts.factStatus,
         safetyDeclarations: facts.declarations,
         sourceRef,
-        availabilityStatus: 'catalog_only',
+        availabilityStatus: asBoolean(rowValue(dish, 'reservationEnabled', 'reservation_enabled')) ? 'reservation_configured' : 'reservation_paused',
         supplyConfirmed: false,
         semanticLabelVersion: 'campus-dining-2026.07.1',
         evidenceType: 'tenant_dish_fact',
@@ -345,7 +354,7 @@ export function buildStallIndexDocuments(stalls = [], canteens = [], tenantId = 
       `区域：${canteenName || '未标注'}`,
       `楼层：${floor}`,
       `状态：${category}`,
-      '目录说明：来源仅确认店铺存在，商品价格、今日供应与营业状态均未确认',
+      '目录说明：来源确认店铺与校园目录关系；预约状态由运营端独立维护',
       `描述：${rowValue(stall, 'description') || ''}`,
     ].filter(Boolean);
     return {
@@ -739,6 +748,7 @@ export async function upsertRetrievalDocuments(db, documents, options = {}) {
     else await upsertSqliteDocument(db, document, embedding, embeddingModel, indexedAt);
     indexedCount += 1;
   }
+  if (!db.pool && work.length) clearSqliteRetrievalCaches(db);
 
   return {
     documentCount: normalizedDocuments.length,
@@ -858,22 +868,35 @@ async function postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingM
 }
 
 async function sqliteCandidateRows(db, tenantId, sourceTypes) {
-  const rows = await db.prepare('SELECT * FROM rag_documents WHERE tenant_id = ?').all(tenantId);
-  const allowed = new Set(sourceTypes);
-  return rows.filter((row) => allowed.has(row.source_type));
+  const normalizedTypes = [...new Set(sourceTypes)].sort();
+  const cacheKey = `${tenantId}\n${normalizedTypes.join(',')}`;
+  let cache = sqliteRowsCache.get(db);
+  if (!cache) {
+    cache = new Map();
+    sqliteRowsCache.set(db, cache);
+  }
+  const cached = cache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < SQLITE_VECTOR_CACHE_TTL_MS) return cached.rows;
+  const placeholders = normalizedTypes.map(() => '?').join(', ');
+  const rows = await db.prepare(
+    `SELECT * FROM rag_documents WHERE tenant_id = ? AND source_type IN (${placeholders})`,
+  ).all(tenantId, ...normalizedTypes);
+  if (cache.size >= SQLITE_ROWS_CACHE_MAX) cache.delete(cache.keys().next().value);
+  cache.set(cacheKey, { rows, createdAt: Date.now() });
+  return rows;
 }
 
-function dotSimilarity(left, right) {
-  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length || !left.length) return 0;
+function vectorNorm(vector) {
+  let squared = 0;
+  for (let index = 0; index < vector.length; index += 1) squared += vector[index] * vector[index];
+  return Math.sqrt(squared);
+}
+
+function dotSimilarity(left, right, leftNorm = null, rightNorm = null) {
+  if (!left?.length || !right?.length || left.length !== right.length) return 0;
   let dot = 0;
-  let leftNorm = 0;
-  let rightNorm = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    dot += left[index] * right[index];
-    leftNorm += left[index] * left[index];
-    rightNorm += right[index] * right[index];
-  }
-  return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm) || 1);
+  for (let index = 0; index < left.length; index += 1) dot += left[index] * right[index];
+  return dot / ((leftNorm || vectorNorm(left)) * (rightNorm || vectorNorm(right)) || 1);
 }
 
 function sqliteLexicalSearch(rows, query, limit) {
@@ -897,8 +920,13 @@ function sqliteLexicalSearch(rows, query, limit) {
     .slice(0, limit);
 }
 
-function inspectSqliteVectorRows(rows, embeddingModel, embeddingDimension) {
+function inspectSqliteVectorRows(db, rows, embeddingModel, embeddingDimension) {
   const compatibleRows = [];
+  let cache = sqliteVectorCache.get(db);
+  if (!cache) {
+    cache = new Map();
+    sqliteVectorCache.set(db, cache);
+  }
   const stats = {
     candidateCount: rows.length,
     embeddedCount: 0,
@@ -914,11 +942,25 @@ function inspectSqliteVectorRows(rows, embeddingModel, embeddingDimension) {
       stats.modelMismatchCount += 1;
       continue;
     }
+    const signature = `${row.content_hash || ''}\n${embeddingModel}\n${embeddingDimension}`;
+    const cached = cache.get(row.id);
+    if (cached?.signature === signature && Date.now() - cached.createdAt < SQLITE_VECTOR_CACHE_TTL_MS) {
+      if (cached.errorCode === 'EMBEDDING_DIMENSION_MISMATCH') stats.invalidDimensionCount += 1;
+      else if (cached?.errorCode) stats.invalidEmbeddingCount += 1;
+      else {
+        compatibleRows.push({ ...row, retrieval_embedding: cached.embedding, retrieval_embedding_norm: cached.norm });
+        stats.compatibleCount += 1;
+      }
+      continue;
+    }
     try {
-      const storedEmbedding = validateEmbedding(parseJson(row.embedding_json, []), embeddingDimension);
-      compatibleRows.push({ ...row, retrieval_embedding: storedEmbedding });
+      const storedEmbedding = Float32Array.from(validateEmbedding(parseJson(row.embedding_json, []), embeddingDimension));
+      const norm = vectorNorm(storedEmbedding);
+      cache.set(row.id, { signature, embedding: storedEmbedding, norm, createdAt: Date.now() });
+      compatibleRows.push({ ...row, retrieval_embedding: storedEmbedding, retrieval_embedding_norm: norm });
       stats.compatibleCount += 1;
     } catch (error) {
+      cache.set(row.id, { signature, errorCode: error.code || 'INVALID_EMBEDDING', createdAt: Date.now() });
       if (error.code === 'EMBEDDING_DIMENSION_MISMATCH') stats.invalidDimensionCount += 1;
       else stats.invalidEmbeddingCount += 1;
     }
@@ -927,8 +969,9 @@ function inspectSqliteVectorRows(rows, embeddingModel, embeddingDimension) {
 }
 
 function sqliteVectorSearch(rows, embedding, limit, minimumSimilarity) {
+  const queryNorm = vectorNorm(embedding);
   return rows.map((row) => {
-    return mapSearchRow({ ...row, vector_score: dotSimilarity(embedding, row.retrieval_embedding) });
+    return mapSearchRow({ ...row, vector_score: dotSimilarity(embedding, row.retrieval_embedding, queryNorm, row.retrieval_embedding_norm) });
   }).filter((row) => row.vectorScore >= minimumSimilarity)
     .sort((left, right) => right.vectorScore - left.vectorScore)
     .slice(0, limit);
@@ -1117,7 +1160,7 @@ export async function searchRetrievalIndex(db, query, options = {}) {
     const rows = await sqliteCandidateRows(db, tenantId, sourceTypes);
     lexicalResults = wantsLexical ? sqliteLexicalSearch(rows, normalized, candidateLimit) : [];
     if (embedding) {
-      const inspected = inspectSqliteVectorRows(rows, embeddingModel, embeddingDimension);
+      const inspected = inspectSqliteVectorRows(db, rows, embeddingModel, embeddingDimension);
       vectorStats = inspected.stats;
       vectorResults = sqliteVectorSearch(inspected.compatibleRows, embedding, candidateLimit, Number(options.minimumSimilarity ?? 0.1));
     }
@@ -1195,6 +1238,7 @@ export async function deleteRetrievalSource(db, { tenantId = 'default', sourceTy
   }
   const result = await db.prepare('DELETE FROM rag_documents WHERE tenant_id = ? AND source_type = ? AND source_id = ?')
     .run(tenant, type, source);
+  if (result.changes) clearSqliteRetrievalCaches(db);
   return { deletedCount: result.changes || 0 };
 }
 
@@ -1301,6 +1345,7 @@ async function pruneDocuments(db, tenantId, sourceType, keepIds) {
   for (const row of rows) {
     if (!keep.has(row.id)) deletedCount += (await db.prepare('DELETE FROM rag_documents WHERE id = ?').run(row.id)).changes || 0;
   }
+  if (deletedCount) clearSqliteRetrievalCaches(db);
   return deletedCount;
 }
 
@@ -1424,6 +1469,7 @@ export async function pruneInvalidKnowledgeScopes(db) {
      WHERE (source_type IN ('health_knowledge', 'campus_dining_knowledge') AND tenant_id <> ?)
         OR (source_type = ? AND tenant_id = ?)`,
   ).run(GLOBAL_KNOWLEDGE_TENANT_ID, CAMPUS_POLICY_SOURCE_TYPE, GLOBAL_KNOWLEDGE_TENANT_ID);
+  if (!db.pool && result?.changes) clearSqliteRetrievalCaches(db);
   return { deletedCount: Number(result?.changes || 0) };
 }
 

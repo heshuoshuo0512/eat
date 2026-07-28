@@ -5,8 +5,13 @@ import uniPlugin from '@dcloudio/vite-plugin-uni';
 const uni = typeof uniPlugin === 'function' ? uniPlugin : uniPlugin.default;
 const uniVueBase = fileURLToPath(new URL('./node_modules/@dcloudio/uni-cli-shared/lib/vapor/@vue/', import.meta.url));
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
   const isH5 = process.env.UNI_PLATFORM === 'h5';
+  const isMiniappBuild = command === 'build' && process.env.UNI_PLATFORM === 'mp-weixin';
+  const apiBaseUrl = String(process.env.VITE_API_BASE_URL || '');
+  if (isMiniappBuild && !/^https:\/\//i.test(apiBaseUrl) && process.env.ALLOW_INSECURE_MINIAPP_BUILD !== '1') {
+    throw new Error('Production miniapp build requires an HTTPS VITE_API_BASE_URL. Use ALLOW_INSECURE_MINIAPP_BUILD=1 only for WeChat DevTools testing.');
+  }
   const uiTestProxy = process.env.VITE_UI_TEST_PROXY === '1';
   return {
     resolve: isH5 ? undefined : {
@@ -26,7 +31,7 @@ export default defineConfig(() => {
     preview: uiTestProxy ? {
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:8787',
+          target: process.env.VITE_UI_TEST_API_BASE_URL || 'http://127.0.0.1:8787',
           changeOrigin: true
         }
       }

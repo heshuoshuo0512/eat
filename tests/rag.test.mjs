@@ -11,7 +11,7 @@ import {
   answerMealQuestion,
 } from '../server/rag.js';
 import { openDatabase } from '../server/database.js';
-import { dishes, stalls, canteens } from '../src/domain/seedData.js';
+import { dishes, stalls, canteens } from './fixtures/seedData.js';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */

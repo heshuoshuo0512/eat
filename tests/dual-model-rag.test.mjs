@@ -313,7 +313,7 @@ describe('local 1024-compatible SQLite experiment contracts', () => {
     }
   });
 
-  it('does not allow an experiment dimension to be written into vector(1536)', async () => {
+  it('does not allow an experiment dimension to be written into vector(1024)', async () => {
     const db = {
       async query(sql) {
         return this.pool.query(sql);
@@ -321,7 +321,7 @@ describe('local 1024-compatible SQLite experiment contracts', () => {
       pool: {
         async query(sql) {
           if (sql.includes('FROM pg_extension')) {
-            return { rows: [{ has_vector: true, has_trgm: true, embedding_type: 'vector(1536)', has_hnsw: true, has_trigram_index: true }] };
+            return { rows: [{ has_vector: true, has_trgm: true, embedding_type: 'vector(1024)', has_hnsw: true, has_trigram_index: true }] };
           }
           return { rows: [] };
         },

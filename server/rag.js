@@ -58,9 +58,9 @@ export function buildDishDocuments(dishes, stalls = [], canteens = []) {
         `过敏原：${facts.declarations.some((item) => item.status === 'unknown') ? '数据库尚未确认' : (dish.allergens || []).join('、') || '未标注'}`,
         `食堂层级：${locationParts || '未知'}`,
         `价格：${pricing.display}`,
-        '供应：目录菜品，今日供应尚未确认',
+        `预约：${dish.reservationEnabled ? '菜品支持预约，仍需以档口预约开关为准' : '暂停预约'}`,
       ].join('。'),
-      metadata: { dishId: dish.id, stallId: dish.stallId, canteenId: canteen?.id, parentCanteenId: canteen?.parentId || null, canteenType: canteen?.canteenType || 'primary', price: dish.price, priceDisplay: pricing.display, pricing, halal: dish.halal, fiber, sodium, sugar, calcium, iron, factStatus: facts.factStatus, availabilityStatus: 'catalog_only' }
+      metadata: { dishId: dish.id, stallId: dish.stallId, canteenId: canteen?.id, parentCanteenId: canteen?.parentId || null, canteenType: canteen?.canteenType || 'primary', price: dish.price, priceDisplay: pricing.display, pricing, halal: dish.halal, fiber, sodium, sugar, calcium, iron, factStatus: facts.factStatus, availabilityStatus: dish.reservationEnabled ? 'reservation_configured' : 'reservation_paused' }
     };
   });
 }
