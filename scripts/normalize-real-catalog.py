@@ -46,6 +46,9 @@ class VenueSpec:
     name: str
     location: str
     description: str
+    display_name: str = ""
+    display_order: int = 999
+    operating_status: str = "open"
 
 
 @dataclass(frozen=True)
@@ -74,10 +77,12 @@ EAST_SOURCES = (
     SourceSpec("广源超市(1).docx", "east-guangyuan", "广源超市", "未标注", "docx", "east-guangyuan", "guangyuan"),
 )
 
-WEST_VENUE = VenueSpec("campus-main", "西区大食堂", "西区", "西区大食堂真实目录，包含六个次级餐厅。")
-YANMINGHU_VENUE = VenueSpec("east-zone", "东区燕鸣湖", "东区", "东区燕鸣湖真实目录，包含一楼与二楼。")
-DONGDAHUO_VENUE = VenueSpec("east-dongdahuo", "东大活", "东区", "东大活真实档口目录。")
-GUANGYUAN_VENUE = VenueSpec("east-guangyuan", "广源超市", "东区", "广源超市真实档口与商品目录。")
+WEST_VENUE = VenueSpec("campus-main", "西区大食堂", "西区", "西区大食堂真实目录，包含六个次级餐厅。", "大食堂", 1)
+YANMINGHU_VENUE = VenueSpec("east-zone", "东区燕鸣湖", "东区", "东区燕鸣湖真实目录，包含一楼与二楼。", "燕鸣湖", 2)
+YANYUAN_VENUE = VenueSpec("west-yanyuan", "西区燕园", "西区", "西区燕园正在装修，开放后将提供正式校园餐饮目录。", "燕园", 3, "renovating")
+SHANSHUIYUAN_VENUE = VenueSpec("east-shanshuiyuan", "东区山水园", "东区", "东区山水园正在装修，开放后将提供正式校园餐饮目录。", "山水园", 4, "renovating")
+GUANGYUAN_VENUE = VenueSpec("east-guangyuan", "西区广源超市", "西区", "广源超市真实档口与商品目录。", "广源超市", 5)
+DONGDAHUO_VENUE = VenueSpec("east-dongdahuo", "东区东大活", "东区", "东大活真实档口目录。", "东大活", 6)
 
 CATALOGS = {
     "west-main": CatalogSpec(
@@ -93,7 +98,7 @@ CATALOGS = {
         "校园联合真实目录清洗报告",
         "real-catalog-campus-2026-07-27-v2",
         "campus-catalog-2026-07-27-v2",
-        (WEST_VENUE, YANMINGHU_VENUE, DONGDAHUO_VENUE, GUANGYUAN_VENUE),
+        (WEST_VENUE, YANMINGHU_VENUE, YANYUAN_VENUE, SHANSHUIYUAN_VENUE, GUANGYUAN_VENUE, DONGDAHUO_VENUE),
         WEST_SOURCES + EAST_SOURCES,
     ),
 }
@@ -813,6 +818,8 @@ def build_canteens(catalog: CatalogSpec) -> list[dict[str, Any]]:
             "id": venue.id, "name": venue.name, "location": venue.location, "hours": "待核验",
             "crowdLevel": 0, "tags": ["真实目录", "供应待确认"], "description": venue.description,
             "parentId": None, "canteenType": "primary", "imageUrl": "",
+            "displayName": venue.display_name or venue.name, "displayOrder": venue.display_order,
+            "operatingStatus": venue.operating_status,
         })
     for spec in catalog.sources:
         if spec.area_id in venue_by_id:
@@ -827,6 +834,13 @@ def build_canteens(catalog: CatalogSpec) -> list[dict[str, Any]]:
             "crowdLevel": 0, "tags": tags,
             "description": "目录来自2026-07-27提供的原始资料快照，营业、实时供应与菜单时效均待核验。",
             "parentId": spec.parent_id, "canteenType": "sub", "imageUrl": "",
+            "displayName": "一楼" if spec.area_id == "east-yanminghu-1f" else "二楼" if spec.area_id == "east-yanminghu-2f" else spec.area_name,
+            "displayOrder": {
+                "west-minzu": 1, "west-xinyi": 2, "west-xijinjia": 3,
+                "west-floor2-east": 4, "west-darongshu": 5, "west-floor3-east": 6,
+                "east-yanminghu-1f": 1, "east-yanminghu-2f": 2,
+            }.get(spec.area_id, 999),
+            "operatingStatus": "open",
         })
     return canteens
 

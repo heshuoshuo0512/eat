@@ -239,7 +239,8 @@ function resetForm() {
   if (entityType.value === 'venue' || entityType.value === 'area') {
     Object.assign(form, {
       id: mode.value === 'edit' ? value.id || '' : props.descriptor?.fixedId || '',
-      name: value.name || '', location: value.location || '', hours: value.hours || '07:00 - 21:00',
+      name: value.name || '', displayName: value.displayName || value.name || '', displayOrder: value.displayOrder ?? 999,
+      operatingStatus: value.operatingStatus || 'open', location: value.location || '', hours: value.hours || '07:00 - 21:00',
       crowdLevel: value.crowdLevel ?? 30, tags: listText(value.tags), description: value.description || '', imageUrl: value.imageUrl || ''
     });
   } else if (entityType.value === 'stall') {
@@ -478,7 +479,8 @@ async function save() {
     let saved = null;
     if (entityType.value === 'venue' || entityType.value === 'area') {
       const payload = {
-        id: form.id || undefined, name: text(form.name, '名称', 2), location: text(form.location, '位置', 2),
+        id: form.id || undefined, name: text(form.name, '名称', 2), displayName: text(form.displayName, '展示名称', 1),
+        displayOrder: number(form.displayOrder, '展示顺序', 1, 9999), operatingStatus: form.operatingStatus || 'open', location: text(form.location, '位置', 2),
         hours: text(form.hours, '营业时间', 5), crowdLevel: number(form.crowdLevel, '拥挤度', 0, 100),
         tags: splitList(form.tags), description: text(form.description, '简介', 5), imageUrl: form.imageUrl || undefined,
         canteenType: entityType.value === 'venue' ? 'primary' : 'sub', parentId: entityType.value === 'area' ? venue.value?.id : null

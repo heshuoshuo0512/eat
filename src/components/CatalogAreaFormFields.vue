@@ -4,9 +4,20 @@
     <p class="field-intro">名称、位置、营业时间和展示信息</p>
     <label>名称<input v-model.trim="form.name" name="name" required maxlength="40" /></label>
     <div class="area-field-grid two">
+      <label>展示名称<input v-model.trim="form.displayName" name="displayName" required maxlength="40" /></label>
+      <label>展示顺序<input v-model.number="form.displayOrder" name="displayOrder" type="number" min="1" max="9999" required /></label>
+    </div>
+    <div class="area-field-grid two">
       <label>位置<input v-model.trim="form.location" name="location" required maxlength="80" /></label>
       <label>营业时间<input v-model.trim="form.hours" name="hours" required placeholder="07:00 - 21:00" /></label>
     </div>
+    <label>营业状态
+      <select v-model="form.operatingStatus" name="operatingStatus">
+        <option value="open">开放</option>
+        <option value="renovating">装修中</option>
+        <option value="closed">关闭</option>
+      </select>
+    </label>
     <label>标签<input v-model="form.tags" name="tags" placeholder="早餐, 清真, 夜宵" /></label>
     <label>简介<textarea v-model.trim="form.description" name="description" rows="4" required maxlength="300"></textarea></label>
     <details class="area-advanced-fields">
@@ -34,8 +45,8 @@ defineProps({
 .catalog-area-fields legend { padding: 0; color: #173f2a; font-size: .96rem; font-weight: 750; }
 .field-intro { margin: -.55rem 0 0; color: #6b776e; font-size: .78rem; }
 .catalog-area-fields label { display: grid; gap: .38rem; color: #344a3b; font-size: .82rem; font-weight: 650; }
-.catalog-area-fields input, .catalog-area-fields textarea { width: 100%; border: 1px solid rgba(31,122,77,.18); border-radius: .42rem; background: #fff; color: #183f2a; padding: .72rem .76rem; }
-.catalog-area-fields input:focus, .catalog-area-fields textarea:focus { border-color: rgba(31,122,77,.68); box-shadow: 0 0 0 3px rgba(31,122,77,.1); outline: 0; }
+.catalog-area-fields input, .catalog-area-fields textarea, .catalog-area-fields select { width: 100%; border: 1px solid rgba(31,122,77,.18); border-radius: .42rem; background: #fff; color: #183f2a; padding: .72rem .76rem; }
+.catalog-area-fields input:focus, .catalog-area-fields textarea:focus, .catalog-area-fields select:focus { border-color: rgba(31,122,77,.68); box-shadow: 0 0 0 3px rgba(31,122,77,.1); outline: 0; }
 .catalog-area-fields textarea { resize: vertical; }
 .area-field-grid { display: grid; gap: .75rem; }
 .area-field-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }

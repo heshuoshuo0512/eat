@@ -1,7 +1,7 @@
 <template>
   <sc-page-shell back title="食堂导航" subtitle="食堂 · 楼层 · 档口" tone="explore">
     <view class="navigation-summary">
-      <view><text class="ui-strong">{{ primaryCanteens.length }}</text><text>主要食堂</text></view>
+      <view><text class="ui-strong">{{ primaryCanteens.length }}</text><text>校园场所</text></view>
       <view><text class="ui-strong">{{ store.stalls.value.length }}</text><text>开放档口</text></view>
       <view><text class="ui-strong">{{ store.state.value.catalogStats?.dishes??store.catalogPage.value.total }}</text><text>在库菜品</text></view>
     </view>
@@ -13,10 +13,11 @@
         :key="canteen.id"
         class="canteen-card"
         icon-name="location"
-        :title="canteen.name"
-        :description="`${canteen.location||'校内食堂'} · ${stallCount(canteen.id)} 个档口 · ${canteen.hours||'营业时间待更新'}`"
-        :badge="crowdState(canteen.crowdLevel).label"
-        :badge-tone="crowdState(canteen.crowdLevel).tone"
+        :class="{ unavailable: canteen.operatingStatus!=='open' }"
+        :title="canteen.displayName||canteen.name"
+        :description="canteen.operatingStatus==='open'?`${canteen.location||'校内'} · ${stallCount(canteen.id)} 个档口 · ${canteen.hours||'营业时间待更新'}`:`${canteen.location||'校内'} · 开放时间待通知`"
+        :badge="canteen.operatingStatus==='renovating'?'装修中':canteen.operatingStatus==='closed'?'已关闭':crowdState(canteen.crowdLevel).label"
+        :badge-tone="canteen.operatingStatus==='open'?crowdState(canteen.crowdLevel).tone:'warning'"
         :style="entryStyle(index)"
         @tap="openCanteen(canteen.id)"
       />
@@ -30,12 +31,13 @@ import { computed } from 'vue';
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 const store=useCanteenStore();
-const primaryCanteens=computed(()=>{const list=store.canteens.value;if(list.some((item)=>item.canteenType))return list.filter((item)=>item.canteenType==='primary');if(list.some((item)=>item.parentId))return list.filter((item)=>!item.parentId);return list;});
+function byDisplayOrder(left,right){return Number(left.displayOrder??999)-Number(right.displayOrder??999)||String(left.name).localeCompare(String(right.name),'zh-CN');}
+const primaryCanteens=computed(()=>{const list=store.canteens.value;const roots=list.some((item)=>item.canteenType)?list.filter((item)=>item.canteenType==='primary'):list.some((item)=>item.parentId)?list.filter((item)=>!item.parentId):[...list];return roots.sort(byDisplayOrder);});
 onShow(async()=>{try{await store.refreshIfStale();if(!store.user.value)uni.reLaunch({url:'/pages/login/login'});}catch{}});onPullDownRefresh(async()=>{await reload();uni.stopPullDownRefresh();});
 async function reload(){try{await store.load(true);}catch{}}
 function childCanteens(id){return store.canteens.value.filter((item)=>item.parentId===id);}function stallCount(id){const childIds=childCanteens(id).map((item)=>item.id);const ids=new Set(childIds.length?childIds:[id]);return store.stalls.value.filter((item)=>ids.has(item.canteenId)&&!item.parentId).length;}
 function crowdState(value){const crowd=Number(value||0);if(crowd>=70)return{label:'人流较高',tone:'danger'};if(crowd>=45)return{label:'人流适中',tone:'warning'};return{label:'相对空闲',tone:'default'};}
-function entryStyle(index){return store.motionReduced.value?{}:{animationDelay:`${Math.min(index,5)*70}ms`};}function openCanteen(id){uni.navigateTo({url:`/pages/canteen-detail/canteen-detail?id=${encodeURIComponent(id)}`});}
+function entryStyle(index){return store.motionReduced.value?{}:{animationDelay:`${Math.min(index,5)*70}ms`};}function openCanteen(id){const venue=store.canteens.value.find((item)=>String(item.id)===String(id));if(!venue||venue.operatingStatus!=='open')return;uni.navigateTo({url:`/pages/canteen-detail/canteen-detail?id=${encodeURIComponent(id)}`});}
 </script>
 
 <style scoped>
@@ -47,6 +49,7 @@ function entryStyle(index){return store.motionReduced.value?{}:{animationDelay:`
 .navigation-summary text { margin-top:3px; color:var(--muted); font-size:12px; }
 .canteen-grid { padding:0 12px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); }
 .canteen-card { animation:canteen-in 200ms ease both; }
+.canteen-card.unavailable { opacity:.72; }
 @keyframes canteen-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 @media (min-width:768px) {
   .canteen-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:24px; }

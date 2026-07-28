@@ -409,6 +409,13 @@ export const apiClient = {
     }
     return request(`/api/admin/catalog/tree?${query}`);
   },
+  async getAdminStallDishes(stallId, params = {}) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== '' && value != null) query.set(key, value);
+    }
+    return request(`/api/admin/catalog/stalls/${encodeURIComponent(stallId)}/dishes?${query}`);
+  },
   async listDatabaseEntities() {
     return request('/api/admin/database/entities');
   },

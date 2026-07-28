@@ -19,7 +19,9 @@ describe('administrator catalog workspace UI contracts', () => {
     assert.match(view, /scrollbar-gutter:\s*stable/);
     assert.match(view, /position:\s*sticky/);
     assert.match(view, /include:\s*searchTerm\.value\.trim\(\)\s*\?\s*'dishes'\s*:\s*'summary'/);
-    assert.match(view, /loadAdminCatalogArea/);
+    assert.match(view, /loadAdminStallDishes/);
+    assert.match(view, /pageSize:\s*30/);
+    assert.match(view, /expandedStallByScope/);
   });
 
   it('renders the missing-venue state before the statistics branch', () => {

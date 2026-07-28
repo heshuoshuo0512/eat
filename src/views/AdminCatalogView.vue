@@ -64,12 +64,12 @@
             <button class="venue-identity" type="button" @click="openVenue(venue, 'view')">
               <span class="venue-index" aria-hidden="true">{{ venueIndex(venue.id) }}</span>
               <span>
-                <strong><HighlightText :text="venue.name" :query="searchTerm" /></strong>
+                <strong><HighlightText :text="venue.displayName || venue.name" :query="searchTerm" /></strong>
                 <small>{{ venueTypeLabel(venue) }} · {{ venue.region?.location || venue.defaultName || '待配置' }}</small>
               </span>
             </button>
             <div class="venue-header-actions">
-              <span :class="['venue-status', venue.missing ? 'inactive' : 'active']">{{ venue.missing ? '未配置' : '已启用' }}</span>
+              <span :class="['venue-status', venue.missing ? 'inactive' : venue.operatingStatus === 'renovating' ? 'renovating' : venue.operatingStatus === 'closed' ? 'inactive' : 'active']">{{ venue.missing ? '未配置' : venue.operatingStatus === 'renovating' ? '装修中' : venue.operatingStatus === 'closed' ? '已关闭' : '已启用' }}</span>
               <button v-if="canWriteCanteens && !venue.missing" class="icon-action" type="button" title="编辑餐饮场所" aria-label="编辑餐饮场所" @click="openVenue(venue, 'edit')">编辑</button>
               <button v-else-if="canWriteCanteens" class="icon-action" type="button" title="配置餐饮场所" @click="openVenue(venue, 'create')">配置</button>
             </div>
@@ -185,7 +185,7 @@
                   @click="toggleArea(venue, areaNode.canteen.id)"
                 ><span :class="{ expanded: isAreaExpanded(areaNode.canteen.id) }" aria-hidden="true">›</span></button>
                 <button class="area-title" type="button" @click="openArea(venue, areaNode, 'view')">
-                  <strong><HighlightText :text="areaNode.canteen.name" :query="searchTerm" /></strong>
+                  <strong><HighlightText :text="areaNode.displayName || areaNode.canteen.displayName || areaNode.canteen.name" :query="searchTerm" /></strong>
                   <small>{{ areaNode.stallCount || 0 }} 档口 · {{ areaNode.dishCount || 0 }} 菜品 · {{ areaNode.openStallCount || 0 }} 营业</small>
                 </button>
                 <span :class="['operation-state', areaOperating(areaNode) ? 'open' : 'closed']">{{ areaOperating(areaNode) ? '营业' : '暂停' }}</span>
@@ -211,7 +211,14 @@
                     :class="nodeClasses('stall', row.node.stall.id)"
                     :data-node-key="`stall:${row.node.stall.id}`"
                   >
-                    <div class="stall-table-row" role="row" :class="{ legacy: row.depth > 0 }">
+                    <div class="stall-table-row" role="row" :class="{ legacy: row.depth > 0, expanded: isStallExpanded(areaNode.canteen.id, row.node.stall.id) }">
+                      <button
+                        class="stall-disclosure"
+                        type="button"
+                        :aria-expanded="isStallExpanded(areaNode.canteen.id, row.node.stall.id)"
+                        :aria-label="`${isStallExpanded(areaNode.canteen.id, row.node.stall.id) ? '收起' : '展开'}${row.node.stall.name}菜品`"
+                        @click="toggleStall(areaNode.canteen.id, row.node, { venueId: venue.id, areaId: areaNode.canteen.id })"
+                      ><span :class="{ expanded: isStallExpanded(areaNode.canteen.id, row.node.stall.id) }" aria-hidden="true">›</span></button>
                       <button class="stall-name-cell" type="button" role="cell" @click="openStall(venue, areaNode, row.node, 'view')">
                         <span v-if="row.depth" class="tree-branch" aria-hidden="true">└</span>
                         <span><strong><HighlightText :text="row.node.stall.name" :query="searchTerm" /></strong><small>{{ row.node.stall.floor || '楼层未设置' }}<em v-if="row.node.legacyHierarchy">历史层级</em></small></span>
@@ -226,9 +233,12 @@
                       </span>
                     </div>
 
-                    <div v-if="visibleDishes(row, areaNode).length" class="dish-rows">
+                    <div v-if="isStallExpanded(areaNode.canteen.id, row.node.stall.id)" class="dish-rows">
+                      <div v-if="isStallLoading(row.node.stall.id) && !stallDishes(row.node.stall.id).length" class="catalog-loading stall-loading" aria-label="正在加载档口菜品">
+                        <span v-for="index in 3" :key="index"></span>
+                      </div>
                       <div
-                        v-for="dish in visibleDishes(row, areaNode)"
+                        v-for="dish in stallDishes(row.node.stall.id)"
                         :key="dish.id"
                         class="dish-table-row"
                         :class="nodeClasses('dish', dish.id)"
@@ -252,10 +262,17 @@
                           <button v-if="canWriteDishes" type="button" @click="openDish(venue, areaNode, row.node, dish, 'edit')">编辑</button>
                         </span>
                       </div>
-                    </div>
-                    <div v-else-if="!searchTerm" class="inline-empty">
-                      <span>暂无菜品</span>
-                      <button v-if="canWriteDishes && !row.node.legacyHierarchy" type="button" @click="openNewDish(venue, areaNode, row.node)">＋ 添加菜品</button>
+                      <button
+                        v-if="stallDishPage(row.node.stall.id).hasMore"
+                        class="stall-load-more"
+                        type="button"
+                        :disabled="isStallLoading(row.node.stall.id)"
+                        @click="loadMoreStallDishes(row.node)"
+                      >{{ isStallLoading(row.node.stall.id) ? '加载中…' : `加载更多（已显示 ${stallDishes(row.node.stall.id).length}/${stallDishPage(row.node.stall.id).total}）` }}</button>
+                      <div v-if="!isStallLoading(row.node.stall.id) && !stallDishes(row.node.stall.id).length" class="inline-empty">
+                        <span>{{ searchTerm ? '该档口没有匹配菜品' : '暂无菜品' }}</span>
+                        <button v-if="canWriteDishes && !row.node.legacyHierarchy && !searchTerm" type="button" @click="openNewDish(venue, areaNode, row.node)">＋ 添加菜品</button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -281,7 +298,14 @@
                     :class="nodeClasses('stall', row.node.stall.id)"
                     :data-node-key="`stall:${row.node.stall.id}`"
                   >
-                    <div class="stall-table-row" role="row">
+                    <div class="stall-table-row" role="row" :class="{ expanded: isStallExpanded(`venue:${venue.id}`, row.node.stall.id) }">
+                      <button
+                        class="stall-disclosure"
+                        type="button"
+                        :aria-expanded="isStallExpanded(`venue:${venue.id}`, row.node.stall.id)"
+                        :aria-label="`${isStallExpanded(`venue:${venue.id}`, row.node.stall.id) ? '收起' : '展开'}${row.node.stall.name}菜品`"
+                        @click="toggleStall(`venue:${venue.id}`, row.node, { venueId: venue.id })"
+                      ><span :class="{ expanded: isStallExpanded(`venue:${venue.id}`, row.node.stall.id) }" aria-hidden="true">›</span></button>
                       <button class="stall-name-cell" type="button" role="cell" @click="openDirectStall(venue, row.node, 'view')">
                         <span><strong><HighlightText :text="row.node.stall.name" :query="searchTerm" /></strong><small>{{ row.node.stall.category || '未分类' }}</small></span>
                       </button>
@@ -293,9 +317,12 @@
                         <button v-if="canWriteStalls" type="button" @click="openDirectStall(venue, row.node, 'edit')">编辑</button>
                       </span>
                     </div>
-                    <div v-if="visibleDishes(row).length" class="dish-rows">
+                    <div v-if="isStallExpanded(`venue:${venue.id}`, row.node.stall.id)" class="dish-rows">
+                      <div v-if="isStallLoading(row.node.stall.id) && !stallDishes(row.node.stall.id).length" class="catalog-loading stall-loading" aria-label="正在加载档口菜品">
+                        <span v-for="index in 3" :key="index"></span>
+                      </div>
                       <div
-                        v-for="dish in visibleDishes(row)"
+                        v-for="dish in stallDishes(row.node.stall.id)"
                         :key="dish.id"
                         class="dish-table-row"
                         :class="nodeClasses('dish', dish.id)"
@@ -319,6 +346,8 @@
                           <button v-if="canWriteDishes" type="button" @click="openDirectDish(venue, row.node, dish, 'edit')">编辑</button>
                         </span>
                       </div>
+                      <button v-if="stallDishPage(row.node.stall.id).hasMore" class="stall-load-more" type="button" :disabled="isStallLoading(row.node.stall.id)" @click="loadMoreStallDishes(row.node)">{{ isStallLoading(row.node.stall.id) ? '加载中…' : `加载更多（已显示 ${stallDishes(row.node.stall.id).length}/${stallDishPage(row.node.stall.id).total}）` }}</button>
+                      <div v-if="!isStallLoading(row.node.stall.id) && !stallDishes(row.node.stall.id).length" class="inline-empty"><span>{{ searchTerm ? '该档口没有匹配菜品' : '暂无菜品' }}</span></div>
                     </div>
                   </div>
                 </div>
@@ -383,6 +412,9 @@ const successMessage = ref('');
 const searchTerm = ref(String(route.query.q || ''));
 const expandedAreas = ref(new Set());
 const loadingAreas = ref(new Set());
+const expandedStallByScope = reactive({});
+const stallDishPages = reactive({});
+const loadingStalls = ref(new Set());
 const scrollElements = new Map();
 const areaElements = new Map();
 const modeByVenue = reactive({});
@@ -420,6 +452,7 @@ const tenantLabel = computed(() => store.user?.tenantName || store.user?.tenantI
 const venues = computed(() => (store.adminCatalogTree?.regions || []).map((current) => ({
   ...current,
   name: current.region?.name || current.name,
+  displayName: current.displayName || current.region?.displayName || current.region?.name || current.name,
   areaLabel: current.areaLabel || current.labels?.area || '下属场所',
   counts: current.counts || {},
   canteens: current.canteens || [],
@@ -451,6 +484,11 @@ function loadWorkspaceMemory() {
   try {
     const expanded = JSON.parse(sessionStorage.getItem(storageKey('expanded')) || '[]');
     expandedAreas.value = new Set(Array.isArray(expanded) ? expanded : []);
+    const expandedStalls = JSON.parse(sessionStorage.getItem(storageKey('expanded-stalls')) || '{}');
+    for (const key of Object.keys(expandedStallByScope)) delete expandedStallByScope[key];
+    if (expandedStalls && typeof expandedStalls === 'object' && !Array.isArray(expandedStalls)) {
+      for (const [scope, stallId] of Object.entries(expandedStalls)) if (stallId) expandedStallByScope[scope] = String(stallId);
+    }
     for (const venueId of venueIds.value) {
       const mode = sessionStorage.getItem(storageKey(`mode:${venueId}`));
       if (mode === 'stats' || mode === 'directory') modeByVenue[venueId] = mode;
@@ -461,7 +499,10 @@ function loadWorkspaceMemory() {
 }
 
 function persistExpanded() {
-  if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey('expanded'), JSON.stringify([...expandedAreas.value]));
+  if (typeof sessionStorage !== 'undefined') {
+    sessionStorage.setItem(storageKey('expanded'), JSON.stringify([...expandedAreas.value]));
+    sessionStorage.setItem(storageKey('expanded-stalls'), JSON.stringify(expandedStallByScope));
+  }
 }
 
 function registerScrollElement(venueId, element) {
@@ -505,6 +546,7 @@ async function refreshTree() {
     const selectedArea = String(route.query.areaId || '');
     if (selectedArea) setAreaExpanded(selectedArea, true, false);
     await normalizeDeepLink();
+    await restoreExpandedStalls();
     return true;
   } catch (error) {
     errorMessage.value = formatCatalogError(error, '目录加载失败，请稍后重试。');
@@ -537,17 +579,7 @@ function setAreaExpanded(areaId, expanded, persist = true) {
 function isAreaLoading(areaId) { return loadingAreas.value.has(areaId); }
 async function ensureAreaDetails(venue, areaId) {
   const area = venue?.canteens?.find((node) => node.canteen?.id === areaId);
-  if (!area || area.detailsLoaded || normalizedQuery() || isAreaLoading(areaId)) return;
-  loadingAreas.value = new Set([...loadingAreas.value, areaId]);
-  try {
-    await store.loadAdminCatalogArea({ venueId: venue.id, areaId, limit: 20, offset: 0 });
-  } catch (error) {
-    errorMessage.value = formatCatalogError(error, '菜品加载失败，请稍后重试。');
-  } finally {
-    const next = new Set(loadingAreas.value);
-    next.delete(areaId);
-    loadingAreas.value = next;
-  }
+  if (!area) return;
 }
 async function toggleArea(venue, areaId) {
   const expanding = !isAreaExpanded(areaId);
@@ -618,10 +650,89 @@ function visibleDishes(row, areaNode) {
   return dishes.filter(dishMatches);
 }
 
+function isStallExpanded(scope, stallId) { return expandedStallByScope[scope] === String(stallId); }
+function isStallLoading(stallId) { return loadingStalls.value.has(String(stallId)); }
+function stallDishPage(stallId) { return stallDishPages[String(stallId)] || { items: [], page: 0, pageSize: 30, total: 0, hasMore: false }; }
+function stallDishes(stallId) { return stallDishPage(stallId).items || []; }
+
+async function loadStallDishes(node, page = 1) {
+  const stallId = String(node?.stall?.id || node?.id || '');
+  if (!stallId || isStallLoading(stallId)) return;
+  loadingStalls.value = new Set([...loadingStalls.value, stallId]);
+  try {
+    const result = await store.loadAdminStallDishes(stallId, { page, pageSize: 30, q: normalizedQuery() });
+    const previous = page > 1 ? stallDishes(stallId) : [];
+    const itemsById = new Map(previous.map((dish) => [String(dish.id), dish]));
+    for (const dish of result.items || []) itemsById.set(String(dish.id), dish);
+    stallDishPages[stallId] = { ...result, items: [...itemsById.values()] };
+  } catch (error) {
+    errorMessage.value = formatCatalogError(error, '档口菜品加载失败，请稍后重试。');
+  } finally {
+    const next = new Set(loadingStalls.value);
+    next.delete(stallId);
+    loadingStalls.value = next;
+  }
+}
+
+async function toggleStall(scope, node, selection = {}) {
+  const stallId = String(node?.stall?.id || '');
+  if (!stallId) return;
+  if (isStallExpanded(scope, stallId)) delete expandedStallByScope[scope];
+  else {
+    expandedStallByScope[scope] = stallId;
+    await loadStallDishes(node, 1);
+    await setRouteSelection({ ...selection, stallId });
+  }
+  persistExpanded();
+}
+
+async function loadMoreStallDishes(node) {
+  const current = stallDishPage(node?.stall?.id);
+  if (!current.hasMore) return;
+  await loadStallDishes(node, Number(current.page || 1) + 1);
+}
+
+function locateStall(stallId) {
+  for (const venue of venues.value) {
+    for (const areaNode of venue.canteens || []) {
+      const node = (areaNode.stalls || []).find((candidate) => String(candidate.stall?.id) === String(stallId));
+      if (node) return { venue, areaNode, node, scope: areaNode.canteen.id };
+    }
+    const node = (venue.directStalls || []).find((candidate) => String(candidate.stall?.id) === String(stallId));
+    if (node) return { venue, areaNode: null, node, scope: `venue:${venue.id}` };
+  }
+  return null;
+}
+
+async function restoreExpandedStalls() {
+  const requestedStallId = String(route.query.stallId || '');
+  if (requestedStallId) {
+    const located = locateStall(requestedStallId);
+    if (located) {
+      if (located.areaNode) setAreaExpanded(located.areaNode.canteen.id, true, false);
+      expandedStallByScope[located.scope] = requestedStallId;
+    }
+  }
+  for (const [scope, stallId] of Object.entries(expandedStallByScope)) {
+    const located = locateStall(stallId);
+    if (!located || located.scope !== scope) { delete expandedStallByScope[scope]; continue; }
+    await loadStallDishes(located.node, 1);
+  }
+  persistExpanded();
+}
+
 function expandSearchPaths() {
   if (!normalizedQuery()) return;
   const next = new Set(expandedAreas.value);
-  for (const venue of venues.value) for (const area of visibleAreas(venue)) next.add(area.canteen.id);
+  for (const venue of venues.value) {
+    for (const area of visibleAreas(venue)) {
+      next.add(area.canteen.id);
+      const match = displayedStalls(area).find((row) => (row.node.directDishes || []).some(dishMatches) || stallSelfMatches(row.node.stall));
+      if (match) expandedStallByScope[area.canteen.id] = match.node.stall.id;
+    }
+    const directMatch = displayedDirectStalls(venue).find((row) => (row.node.directDishes || []).some(dishMatches) || stallSelfMatches(row.node.stall));
+    if (directMatch) expandedStallByScope[`venue:${venue.id}`] = directMatch.node.stall.id;
+  }
   expandedAreas.value = next;
   persistExpanded();
 }
@@ -1004,6 +1115,7 @@ onBeforeUnmount(() => {
 .venue-status, .operation-state, .dish-state { display: inline-flex; align-items: center; border-radius: .28rem; padding: .15rem .36rem; font-size: .63rem; font-weight: 750; white-space: nowrap; }
 .venue-status.active, .operation-state.open, .dish-state.active { background: #e7f5ea; color: #1d7042; }
 .venue-status.inactive, .operation-state.closed, .dish-state.hidden { background: #f0f1ef; color: #6d756f; }
+.venue-status.renovating { background: #fff3d7; color: #8b5d0d; }
 .operation-state.warning { background: #fff3d7; color: #8b5d0d; }
 .icon-action, .area-actions button, .stall-actions button, .dish-actions button, .inline-empty button { min-height: 1.9rem; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #cfdfd2; border-radius: .3rem; padding: .28rem .5rem; background: #fff; color: #245c3b; font-size: .66rem; font-weight: 730; box-shadow: 0 .16rem .38rem rgba(25,68,42,.06); }
 .icon-action:hover, .area-actions button:hover, .stall-actions button:hover, .dish-actions button:hover, .inline-empty button:hover { border-color: #4b8c64; background: #e8f3ea; color: #164b2e; transform: none; }
@@ -1036,12 +1148,18 @@ onBeforeUnmount(() => {
 .area-actions { display: flex; align-items: center; gap: .24rem; opacity: .72; transition: opacity .15s ease; }
 .area-header:hover .area-actions, .area-header:focus-within .area-actions { opacity: 1; }
 .area-content { background: #f8faf7; }
-.stall-table-heading, .stall-table-row { display: grid; grid-template-columns: minmax(8rem, 1.35fr) minmax(5rem, .8fr) 4.5rem minmax(6rem, .75fr) minmax(8rem, auto); align-items: center; gap: .5rem; }
+.stall-table-heading, .stall-table-row { display: grid; align-items: center; gap: .5rem; }
+.stall-table-heading { grid-template-columns: minmax(8rem, 1.35fr) minmax(5rem, .8fr) 4.5rem minmax(6rem, .75fr) minmax(8rem, auto); }
+.stall-table-row { grid-template-columns: 1.5rem minmax(8rem, 1.35fr) minmax(5rem, .8fr) 4.5rem minmax(6rem, .75fr) minmax(8rem, auto); }
 .stall-table-heading { min-height: 1.8rem; padding: .25rem .7rem; border-bottom: 1px solid #e8eee8; color: #7b877f; font-size: .59rem; font-weight: 720; }
 .stall-block { border-bottom: 1px solid #e8eee8; }
 .stall-block:last-child { border-bottom: 0; }
 .stall-block.is-selected > .stall-table-row { background: #edf6ee; box-shadow: inset 3px 0 #1f7a4d; }
 .stall-table-row { min-height: 3rem; padding: .38rem .7rem; background: #fff; color: #4d5f53; font-size: .67rem; }
+.stall-table-row.expanded { background: #f8fbf7; }
+.stall-disclosure { display: inline-grid; width: 1.5rem; height: 1.5rem; place-items: center; border: 1px solid #d8e4da; border-radius: .28rem; background: #fff; color: #45644f; }
+.stall-disclosure span { font-size: 1rem; line-height: 1; transition: transform .18s ease; }
+.stall-disclosure span.expanded { transform: rotate(90deg); }
 .stall-table-row.legacy { padding-left: 1.25rem; background: #fffaf0; }
 .stall-name-cell { min-width: 0; display: flex; align-items: center; gap: .35rem; padding: 0; background: transparent; text-align: left; }
 .stall-name-cell > span:last-child { min-width: 0; }
@@ -1056,6 +1174,7 @@ onBeforeUnmount(() => {
 .stall-actions, .dish-actions { display: flex; justify-content: flex-end; gap: .22rem; opacity: .68; transition: opacity .15s ease; }
 .stall-table-row:hover .stall-actions, .stall-table-row:focus-within .stall-actions, .dish-table-row:hover .dish-actions, .dish-table-row:focus-within .dish-actions { opacity: 1; }
 .dish-rows { border-top: 1px dashed #dce7dd; background: #f8fbf7; }
+.stall-load-more { display: flex; width: calc(100% - 1.4rem); min-height: 2.5rem; margin: .45rem .7rem .7rem; align-items: center; justify-content: center; border: 1px solid #cfdfd2; border-radius: .35rem; background: #fff; color: #245c3b; font-size: .67rem; font-weight: 700; }
 .dish-table-row { min-height: 2.8rem; display: grid; grid-template-columns: minmax(10rem, 1fr) 4rem 4rem minmax(5.8rem, auto); align-items: center; gap: .45rem; padding: .35rem .7rem .35rem 2rem; border-bottom: 1px solid #eaf0ea; color: #526258; font-size: .66rem; }
 .dish-table-row:last-child { border-bottom: 0; }
 .dish-table-row.is-selected { background: #edf6ee; box-shadow: inset 3px 0 #1f7a4d; }
@@ -1115,7 +1234,7 @@ mark { border-radius: .12rem; padding: 0 .08rem; background: #ffe19a; color: inh
   .catalog-toolbar { grid-template-columns: minmax(13rem, auto) minmax(14rem, 1fr); }
   .catalog-toolbar-actions { grid-column: 1 / -1; justify-content: flex-end; margin-top: -.35rem; }
   .stall-table-heading { display: none; }
-  .stall-table-row { grid-template-columns: minmax(8rem, 1fr) 4rem minmax(6rem, auto); }
+  .stall-table-row { grid-template-columns: 1.5rem minmax(8rem, 1fr) 4rem minmax(6rem, auto); }
   .stall-category { display: none; }
   .stall-table-row > span:nth-of-type(2) { display: none; }
 }
@@ -1151,7 +1270,7 @@ mark { border-radius: .12rem; padding: 0 .08rem; background: #ffe19a; color: inh
   .area-header { grid-template-columns: 1.7rem minmax(0, 1fr) auto; }
   .area-header > .operation-state { display: none; }
   .area-actions { grid-column: 2 / -1; justify-content: flex-end; }
-  .stall-table-row { grid-template-columns: minmax(8rem, 1fr) auto; row-gap: .25rem; padding-block: .5rem; }
+  .stall-table-row { grid-template-columns: 1.5rem minmax(8rem, 1fr) auto; row-gap: .25rem; padding-block: .5rem; }
   .stall-table-row > span:nth-of-type(1), .stall-table-row > span:nth-of-type(2) { display: none; }
   .stall-actions { justify-content: flex-end; }
   .dish-table-row { grid-template-columns: minmax(8rem, 1fr) auto; padding-left: 1rem; }

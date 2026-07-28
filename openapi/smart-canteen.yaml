@@ -39,14 +39,16 @@ components:
         include: { type: string, enum: [summary, dishes] }
     AdminCatalogRegion:
       type: object
-      required: [id, name, defaultName, displayName, position, venueType, areaType, areaLabel, labels, missing, counts, canteens, unassignedStalls]
+      required: [id, name, defaultName, displayName, displayOrder, operatingStatus, position, venueType, areaType, areaLabel, labels, missing, counts, canteens]
       properties:
-        id: { type: string, enum: [campus-main, north-zone, south-zone, east-zone] }
+        id: { type: string, enum: [campus-main, east-zone, west-yanyuan, east-shanshuiyuan, east-guangyuan, east-dongdahuo] }
         name: { type: string, description: Current tenant-owned venue name from the database, or the default name when the fixed venue record is missing. }
         defaultName: { type: string, description: Stable fallback name for the fixed venue slot. }
         displayName: { type: string, description: Context-ready venue display name. }
-        position: { type: string, enum: [top-left, top-right, bottom-left, bottom-right] }
-        venueType: { type: string, enum: [dining_complex, multi_floor_canteen] }
+        displayOrder: { type: integer, minimum: 1 }
+        operatingStatus: { type: string, enum: [open, renovating, closed] }
+        position: { type: string, pattern: '^venue-[0-9]{2}$' }
+        venueType: { type: string, enum: [dining_hall, service_building, supermarket] }
         areaType: { type: string, enum: [restaurant, floor_area] }
         areaLabel: { type: string, enum: [餐厅, 楼层, 档口, 下属场所] }
         hierarchyMode: { type: string, enum: [grouped, direct] }
@@ -81,8 +83,8 @@ components:
       properties:
         canteen: { type: object }
         displayName: { type: string }
-        areaType: { type: string, enum: [restaurant, floor_area] }
-        areaLabel: { type: string, enum: [餐厅, 楼层餐区] }
+        areaType: { type: string }
+        areaLabel: { type: string, enum: [餐厅, 楼层, 档口, 下属场所] }
         primaryStallCount: { type: integer, minimum: 0 }
         stallCount: { type: integer, minimum: 0 }
         openStallCount: { type: integer, minimum: 0 }
@@ -1697,13 +1699,13 @@ paths:
     get:
       description: >-
         Tenant-scoped hierarchical catalog read for the administrator catalog workspace.
-        Requires any one of audit:read, canteen:write, stall:write or dish:write. The response always preserves the four fixed region order;
-        missing regions are returned with missing=true. Search keeps matching parent paths.
+        Requires any one of audit:read, canteen:write, stall:write or dish:write. The response preserves the six configured venue order and operating status.
+        Search keeps matching parent paths and returns at most 100 matching dishes.
         venueId/areaId are aliases for regionId/canteenId. Stall and dish fields use
         camelCase, including parentId.
       parameters:
-        - { name: regionId, in: query, schema: { type: string, enum: [campus-main, north-zone, south-zone, east-zone] } }
-        - { name: venueId, in: query, schema: { type: string, enum: [campus-main, north-zone, south-zone, east-zone] }, description: Alias for regionId used by the four-venue workspace. }
+        - { name: regionId, in: query, schema: { type: string } }
+        - { name: venueId, in: query, schema: { type: string }, description: Alias for regionId. }
         - { name: canteenId, in: query, schema: { type: string } }
         - { name: areaId, in: query, schema: { type: string }, description: Alias for canteenId used by the unified dining-area terminology. }
         - { name: stallId, in: query, schema: { type: string } }
@@ -1723,6 +1725,17 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /admin/catalog/stalls/{stallId}/dishes:
+    get:
+      description: Paginated dishes for one tenant-owned stall. Requires any catalog read or write capability.
+      parameters:
+        - { name: stallId, in: path, required: true, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+        - { name: q, in: query, schema: { type: string, maxLength: 80 } }
+      responses:
+        '200': { description: items, total, page, pageSize, hasMore and stall summary }
+        '404': { description: Stall does not exist in the active tenant }
   /admin/users:
     get:
       description: Requires user:read.

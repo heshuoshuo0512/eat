@@ -256,11 +256,11 @@ export function importRealCatalog(db, bundle, options = {}) {
       );
 
     const insertCanteen = db.prepare(`INSERT INTO canteens
-      (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (id, tenant_id, name, display_name, display_order, operating_status, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const canteen of bundle.canteens) {
       insertCanteen.run(
-        canteen.id, tenantId, canteen.name, canteen.location || '', canteen.hours || '待核验',
+        canteen.id, tenantId, canteen.name, canteen.displayName || canteen.name, Number(canteen.displayOrder ?? 999), canteen.operatingStatus || 'open', canteen.location || '', canteen.hours || '待核验',
         Number(canteen.crowdLevel || 0), json(canteen.tags || []), canteen.description || '',
         canteen.parentId || null, canteen.canteenType || (canteen.parentId ? 'sub' : 'primary'),
         canteen.imageUrl || '', now, now,

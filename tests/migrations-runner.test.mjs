@@ -37,6 +37,8 @@ const trustworthyMealVisionUpgrade = readFileSync(join(root, 'server', 'migratio
 const trustworthyMealVisionVersion = '017_trustworthy_meal_vision';
 const stableCatalogReservationVersion = '018_stable_catalog_reservations';
 const realCatalogVenueHierarchyVersion = '019_real_catalog_venue_hierarchy';
+const campusVenueCatalogVersion = '020_campus_venue_catalog';
+const postHierarchyMigrationVersions = migrationVersions.filter((version) => version >= campusVenueCatalogVersion);
 const roleBootstrap = readFileSync(join(root, 'scripts', 'create-postgres-roles.sql'), 'utf8');
 const roleProvisioning = readFileSync(join(root, 'scripts', 'provision-postgres-roles.sql'), 'utf8');
 const ownerReassignment = readFileSync(join(root, 'scripts', 'reassign-postgres-owner.sql'), 'utf8');
@@ -389,7 +391,7 @@ describe('PostgreSQL migration runner', () => {
 
     const applied = await runMigrations(db);
 
-    assert.deepEqual(applied, ['004_database_workbench', '005_campus_posts', runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion, stableCatalogReservationVersion, realCatalogVenueHierarchyVersion]);
+    assert.deepEqual(applied, ['004_database_workbench', '005_campus_posts', runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion, stableCatalogReservationVersion, realCatalogVenueHierarchyVersion, ...postHierarchyMigrationVersions]);
     assert.ok(db.versions.has('001_enterprise_foundation'));
     assert.ok(db.versions.has('008_retrieval_pgvector'));
     assert.ok(!db.executed.includes('002_generic_review_targets'));
@@ -406,8 +408,8 @@ describe('PostgreSQL migration runner', () => {
 
     const applied = await runMigrations(db);
 
-    assert.deepEqual(applied, [runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion, stableCatalogReservationVersion, realCatalogVenueHierarchyVersion]);
-    assert.deepEqual(db.executed, [runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion, stableCatalogReservationVersion, realCatalogVenueHierarchyVersion]);
+    assert.deepEqual(applied, [runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion, stableCatalogReservationVersion, realCatalogVenueHierarchyVersion, ...postHierarchyMigrationVersions]);
+    assert.deepEqual(db.executed, [runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion, stableCatalogReservationVersion, realCatalogVenueHierarchyVersion, ...postHierarchyMigrationVersions]);
     for (const version of migrationVersions.filter((item) => /^00[2-7]_/.test(item))) {
       assert.ok(db.versions.has(version), `${version} should be backfilled`);
     }

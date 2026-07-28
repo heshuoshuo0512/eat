@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
 
 const { Pool } = pg;
-const EXPECTED = Object.freeze({
+const SOURCE_EXPECTED = Object.freeze({
   canteens: 12,
   stalls: 138,
   dishes: 2563,
@@ -17,6 +17,7 @@ const EXPECTED = Object.freeze({
   rag_documents: 3213,
   dish_ai_annotations: 200,
 });
+const TARGET_CANTEEN_COUNT = 14;
 const DEFAULT_SOURCE = 'data/real-catalog-campus-2026-07-27-v2.sqlite';
 
 function option(name, fallback = '') {
@@ -54,7 +55,7 @@ function inspectSource(path) {
       rag_documents: scalar(db, 'SELECT COUNT(*) AS count FROM rag_documents'),
       dish_ai_annotations: scalar(db, 'SELECT COUNT(*) AS count FROM dish_ai_annotations'),
     };
-    for (const [key, expected] of Object.entries(EXPECTED)) {
+    for (const [key, expected] of Object.entries(SOURCE_EXPECTED)) {
       if (counts[key] !== expected) throw new Error(`Source count mismatch for ${key}: expected ${expected}, received ${counts[key]}`);
     }
     const annotationStatuses = db.prepare('SELECT status, COUNT(*) AS count FROM dish_ai_annotations GROUP BY status').all();
@@ -104,7 +105,20 @@ function venueKind(row) {
 function valueForColumn(table, column, row, checksum) {
   if (table === 'canteens' && column === 'venue_kind') return venueKind(row);
   if (table === 'canteens' && column === 'name' && row.id === 'east-zone') return '东区燕鸣湖';
-  if (table === 'canteens' && column === 'name' && row.id === 'east-dongdahuo') return '东大活';
+  if (table === 'canteens' && column === 'name' && row.id === 'east-dongdahuo') return '东区东大活';
+  if (table === 'canteens' && column === 'name' && row.id === 'east-guangyuan') return '西区广源超市';
+  if (table === 'canteens' && column === 'location' && row.id === 'east-guangyuan') return '西区';
+  if (table === 'canteens' && column === 'display_name') return ({
+    'campus-main': '大食堂', 'east-zone': '燕鸣湖', 'east-guangyuan': '广源超市', 'east-dongdahuo': '东大活',
+    'west-minzu': '民族餐厅', 'west-xinyi': '心怡餐厅', 'west-xijinjia': '禧进甲餐厅', 'west-floor2-east': '二楼东厅',
+    'west-darongshu': '大榕树餐厅', 'west-floor3-east': '三楼东厅', 'east-yanminghu-1f': '一楼', 'east-yanminghu-2f': '二楼',
+  })[row.id] || row.name;
+  if (table === 'canteens' && column === 'display_order') return ({
+    'campus-main': 1, 'east-zone': 2, 'east-guangyuan': 5, 'east-dongdahuo': 6,
+    'west-minzu': 1, 'west-xinyi': 2, 'west-xijinjia': 3, 'west-floor2-east': 4,
+    'west-darongshu': 5, 'west-floor3-east': 6, 'east-yanminghu-1f': 1, 'east-yanminghu-2f': 2,
+  })[row.id] || 999;
+  if (table === 'canteens' && column === 'operating_status') return 'open';
   if (table === 'canteens' && column === 'parent_id' && ['east-dongdahuo', 'east-guangyuan'].includes(row.id)) return null;
   if ((table === 'stalls' || table === 'dishes') && column === 'reservation_enabled') return true;
   if (table === 'stalls' && column === 'open') return 1;
@@ -116,6 +130,24 @@ function valueForColumn(table, column, row, checksum) {
   if (table === 'rag_documents' && column === 'metadata') return JSON.parse(cleanJsonText(row.metadata_json) || '{}');
   if (table === 'rag_documents' && column === 'embedding') return null;
   return row[column] ?? null;
+}
+
+async function insertRenovatingVenues(client, tenantId) {
+  const rows = [
+    ['west-yanyuan', '西区燕园', '燕园', 3, '西区', '西区燕园正在装修，开放后将提供正式校园餐饮目录。'],
+    ['east-shanshuiyuan', '东区山水园', '山水园', 4, '东区', '东区山水园正在装修，开放后将提供正式校园餐饮目录。'],
+  ];
+  for (const [id, name, displayName, displayOrder, location, description] of rows) {
+    await client.query(`INSERT INTO canteens
+      (id, tenant_id, name, display_name, display_order, operating_status, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, venue_kind, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, 'renovating', $6, '装修中', 0, '["装修中"]', $7, NULL, 'primary', '', 'dining_hall', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, display_name = EXCLUDED.display_name,
+        display_order = EXCLUDED.display_order, operating_status = 'renovating', location = EXCLUDED.location,
+        hours = '装修中', description = EXCLUDED.description, parent_id = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE canteens.tenant_id = EXCLUDED.tenant_id`,
+      [id, tenantId, name, displayName, displayOrder, location, description]);
+  }
+  return rows.length;
 }
 
 async function targetColumns(client, table) {
@@ -208,7 +240,8 @@ try {
       VALUES ($1, $2, 'active', 'enterprise', 1000, 10240, $3, $3) ON CONFLICT (id) DO NOTHING`, [tenantId, '燕山大学校园', new Date().toISOString()]);
     const inserted = {};
     inserted.data_import_batches = await insertRows(client, sourceDb, 'data_import_batches', inspection.checksum);
-    inserted.canteens = await insertRows(client, sourceDb, 'canteens', inspection.checksum, ['venue_kind']);
+    inserted.canteens = await insertRows(client, sourceDb, 'canteens', inspection.checksum, ['venue_kind', 'display_name', 'display_order', 'operating_status']);
+    inserted.renovating_venues = await insertRenovatingVenues(client, tenantId);
     inserted.stalls = await insertRows(client, sourceDb, 'stalls', inspection.checksum, ['reservation_enabled']);
     inserted.dishes = await insertRows(client, sourceDb, 'dishes', inspection.checksum, ['reservation_enabled']);
     inserted.catalog_import_rows = await insertRows(client, sourceDb, 'catalog_import_rows', inspection.checksum);
@@ -216,7 +249,8 @@ try {
     inserted.dish_ai_annotations = await insertRows(client, sourceDb, 'dish_ai_annotations', inspection.checksum);
     const counts = await targetCounts(client, tenantId);
     for (const key of ['canteens', 'stalls', 'dishes', 'catalog_import_rows', 'rag_documents', 'dish_ai_annotations']) {
-      if (counts[key] !== EXPECTED[key]) throw new Error(`Post-import count mismatch for ${key}: ${counts[key]}`);
+      const expected = key === 'canteens' ? TARGET_CANTEEN_COUNT : SOURCE_EXPECTED[key];
+      if (counts[key] !== expected) throw new Error(`Post-import count mismatch for ${key}: ${counts[key]}`);
     }
     if (counts.users || counts.reviews || counts.menus || counts.menu_items) throw new Error('Production catalog import introduced runtime demo data');
     const audit = await client.query('SELECT status, COUNT(*)::integer AS count FROM catalog_import_rows WHERE tenant_id = $1 GROUP BY status', [tenantId]);

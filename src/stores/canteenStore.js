@@ -763,6 +763,9 @@ export const useCanteenStore = defineStore('canteen', () => {
     };
     return result;
   }
+  async function loadAdminStallDishes(stallId, params = {}) {
+    return apiClient.getAdminStallDishes(stallId, params);
+  }
   const databaseEntities = ref([]);
   const databaseRows = ref([]);
   const databaseEntityMeta = ref(null);
@@ -1057,6 +1060,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     adminCatalogTree,
     loadAdminCatalogTree,
     loadAdminCatalogArea,
+    loadAdminStallDishes,
     loadReviewsAdmin,
     deleteReviewAdmin,
     updateReviewStatusAdmin,

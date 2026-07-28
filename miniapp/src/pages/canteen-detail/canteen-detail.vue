@@ -2,6 +2,7 @@
   <sc-page-shell back :title="canteen?.name||'食堂详情'" subtitle="楼层与档口" tone="explore">
     <sc-state-card v-if="loading" type="loading" title="正在读取食堂信息" />
     <sc-state-card v-else-if="!canteen" type="error" title="食堂不存在" desc="该食堂可能已下线或目录尚未同步。" action-text="返回导航" @action="backToCanteens" />
+    <sc-state-card v-else-if="canteen.operatingStatus!=='open'" type="empty" :title="canteen.operatingStatus==='renovating'?'场所装修中':'场所暂未开放'" :desc="`${canteen.displayName||canteen.name}暂不可进入，开放时间以学校通知为准。`" action-text="返回导航" @action="backToCanteens" />
     <template v-else>
       <view class="detail-workspace">
         <view class="canteen-aside">
@@ -35,12 +36,13 @@ import { computed, ref } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 const store=useCanteenStore();const canteenId=ref('');const loading=ref(true);
-const canteen=computed(()=>store.canteens.value.find((item)=>String(item.id)===canteenId.value)||null);const children=computed(()=>store.canteens.value.filter((item)=>String(item.parentId)===canteenId.value));const directStalls=computed(()=>store.stalls.value.filter((item)=>String(item.canteenId)===canteenId.value&&!item.parentId));
+function byDisplayOrder(left,right){return Number(left.displayOrder??999)-Number(right.displayOrder??999)||String(left.name).localeCompare(String(right.name),'zh-CN');}
+const canteen=computed(()=>store.canteens.value.find((item)=>String(item.id)===canteenId.value)||null);const children=computed(()=>store.canteens.value.filter((item)=>String(item.parentId)===canteenId.value).sort(byDisplayOrder));const directStalls=computed(()=>store.stalls.value.filter((item)=>String(item.canteenId)===canteenId.value&&!item.parentId));
 const floorGroups=computed(()=>{const map=new Map();for(const stall of directStalls.value){const floor=stall.floor||'其他';map.set(floor,[...(map.get(floor)||[]),stall]);}return[...map.entries()].map(([floor,stalls])=>({floor,stalls}));});
 const crowdState=computed(()=>{const value=Number(canteen.value?.crowdLevel||0);if(value>=70)return{label:'当前人流较高',className:'hot'};if(value>=45)return{label:'当前人流适中',className:'medium'};return{label:'当前相对空闲',className:'calm'};});
 onLoad(async(options)=>{canteenId.value=String(options?.id||'');try{await store.refreshIfStale();if(!store.user.value)uni.reLaunch({url:'/pages/login/login'});}catch{}finally{loading.value=false;}});
 function stallCount(id){return store.stalls.value.filter((item)=>item.canteenId===id&&!item.parentId).length;}function dishCount(stallId){const stalls=[store.stalls.value.find((item)=>String(item.id)===String(stallId)),...store.stalls.value.filter((item)=>String(item.parentId)===String(stallId))].filter(Boolean);return stalls.reduce((sum,item)=>sum+Number(item.dishCount||0),0);}
-function openCanteen(id){uni.navigateTo({url:`/pages/canteen-detail/canteen-detail?id=${encodeURIComponent(id)}`});}function openStall(id){uni.navigateTo({url:`/pages/stall-detail/stall-detail?id=${encodeURIComponent(id)}`});}function backToCanteens(){uni.redirectTo({url:'/pages/canteens/canteens'});}function openReviews(){store.openCommunitySection('reviews');uni.switchTab({url:'/pages/community/community'});}
+function openCanteen(id){const target=store.canteens.value.find((item)=>String(item.id)===String(id));if(!target||target.operatingStatus!=='open')return;uni.navigateTo({url:`/pages/canteen-detail/canteen-detail?id=${encodeURIComponent(id)}`});}function openStall(id){uni.navigateTo({url:`/pages/stall-detail/stall-detail?id=${encodeURIComponent(id)}`});}function backToCanteens(){uni.redirectTo({url:'/pages/canteens/canteens'});}function openReviews(){store.openCommunitySection('reviews');uni.switchTab({url:'/pages/community/community'});}
 </script>
 
 <style scoped>

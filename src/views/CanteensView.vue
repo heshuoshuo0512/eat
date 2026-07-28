@@ -6,7 +6,7 @@
   </section>
 
   <nav v-if="level !== 'primary'" class="breadcrumb">
-    <button class="text-link crumb" type="button" @click="goToPrimary">四大食堂</button>
+    <button class="text-link crumb" type="button" @click="goToPrimary">校园场所</button>
     <template v-if="selectedPrimary">
       <span class="crumb-sep">›</span>
       <button v-if="level !== 'sub-canteens'" class="text-link crumb" type="button" @click="goToSubCanteens">{{ selectedPrimary.name }}</button>
@@ -32,8 +32,9 @@
       v-for="canteen in primaryCanteens"
       :key="canteen.id"
       class="card canteen-card"
+      :class="{ unavailable: canteen.operatingStatus !== 'open' }"
       role="button"
-      tabindex="0"
+      :tabindex="canteen.operatingStatus === 'open' ? 0 : -1"
       @click="selectPrimary(canteen.id)"
       @keydown.enter="selectPrimary(canteen.id)"
     >
@@ -44,9 +45,11 @@
       <div class="section-title horizontal">
         <div>
           <p class="eyebrow">{{ canteen.location }}</p>
-          <h2>{{ canteen.name }}</h2>
+          <h2>{{ canteen.displayName || canteen.name }}</h2>
         </div>
-        <span class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
+        <span v-if="canteen.operatingStatus === 'renovating'" class="venue-availability renovating">装修中</span>
+        <span v-else-if="canteen.operatingStatus === 'closed'" class="venue-availability closed">已关闭</span>
+        <span v-else class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
       </div>
       <p class="muted">{{ canteen.description }}</p>
       <div class="meta-row">
@@ -58,7 +61,7 @@
         <span class="pill">{{ subCanteensOf(canteen.id).length }} 个分区</span>
         <span class="pill">{{ stallCountOf(canteen.id) }} 个档口</span>
       </div>
-      <p class="muted enter-hint">点击进入 →</p>
+      <p class="muted enter-hint">{{ canteen.operatingStatus === 'open' ? '点击进入 →' : '暂不可进入' }}</p>
     </article>
 
     <p v-if="!primaryCanteens.length" class="muted empty-state">暂无食堂数据，请等待管理员添加。</p>
@@ -86,7 +89,7 @@
           <div v-else class="canteen-fallback-hero"><span class="emoji hero-emoji">🏫</span></div>
         </div>
         <div class="section-title horizontal">
-          <div><p class="eyebrow">{{ canteen.location }}</p><h2>{{ canteen.name }}</h2></div>
+          <div><p class="eyebrow">{{ canteen.location }}</p><h2>{{ canteen.displayName || canteen.name }}</h2></div>
           <span class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
         </div>
         <p class="muted">{{ canteen.description }}</p>
@@ -243,20 +246,22 @@ const primaryCanteens = computed(() => {
   // If canteens have canteenType, filter by it; otherwise group by parentId
   const all = store.canteens;
   const hasType = all.some((c) => c.canteenType);
-  if (hasType) return all.filter((c) => c.canteenType === 'primary');
+  if (hasType) return all.filter((c) => c.canteenType === 'primary').sort(canteenOrder);
   // No explicit hierarchy: treat canteens with no parentId as primary
   const hasParent = all.some((c) => c.parentId);
-  if (hasParent) return all.filter((c) => !c.parentId);
+  if (hasParent) return all.filter((c) => !c.parentId).sort(canteenOrder);
   // Flat list: all are primary
-  return all;
+  return [...all].sort(canteenOrder);
 });
+
+function canteenOrder(left, right) { return Number(left.displayOrder ?? 999) - Number(right.displayOrder ?? 999) || String(left.name).localeCompare(String(right.name), 'zh-CN'); }
 
 function subCanteensOf(primaryId) {
   const all = store.canteens;
   const hasType = all.some((c) => c.canteenType);
-  if (hasType) return all.filter((c) => c.parentId === primaryId && c.canteenType === 'sub');
+  if (hasType) return all.filter((c) => c.parentId === primaryId && c.canteenType === 'sub').sort(canteenOrder);
   const hasParent = all.some((c) => c.parentId);
-  if (hasParent) return all.filter((c) => c.parentId === primaryId);
+  if (hasParent) return all.filter((c) => c.parentId === primaryId).sort(canteenOrder);
   // Flat: no children
   return [];
 }
@@ -295,6 +300,8 @@ function dishCountForStall(stallId) {
 /* ── Navigation actions ── */
 
 function selectPrimary(id) {
+  const venue = store.canteens.find((canteen) => canteen.id === id);
+  if (!venue || venue.operatingStatus !== 'open') return;
   const subs = subCanteensOf(id);
   selectedPrimaryId.value = id;
   selectedSubCanteenId.value = '';
@@ -423,6 +430,10 @@ function crowdClass(value) {
 .canteen-card { cursor: pointer; padding: 18px; animation: canteen-enter .42s ease both; transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
 .canteen-card:nth-child(2) { animation-delay: 70ms; }.canteen-card:nth-child(3) { animation-delay: 140ms; }.canteen-card:nth-child(4) { animation-delay: 210ms; }
 .canteen-card:hover { transform: translateY(-4px); border-color: rgba(31,122,77,.2); box-shadow: 0 14px 30px rgba(21,95,59,.1); }.canteen-card:active { transform: scale(.985); }
+.canteen-card.unavailable { cursor: default; border-style: dashed; background: #f7f7f8; }
+.canteen-card.unavailable:hover, .canteen-card.unavailable:active { transform: none; box-shadow: none; }
+.venue-availability { display: inline-flex; min-height: 28px; padding: 0 9px; align-items: center; border-radius: 6px; font-size: 12px; font-weight: 600; }
+.venue-availability.renovating { color: #8b5d0d; background: #fff3d7; }.venue-availability.closed { color: #6d756f; background: #eceeed; }
 
 .canteen-visual { overflow: hidden; border-radius: 8px; margin-bottom: 13px; background: linear-gradient(135deg, rgba(235,247,229,.52), rgba(255,255,255,.42)); border: 1px solid rgba(255,255,255,.6); }
 .canteen-hero-img { display: block; width: 100%; height: 126px; object-fit: cover; transition: transform .45s ease; }.canteen-card:hover .canteen-hero-img { transform: scale(1.035); }

@@ -106,9 +106,9 @@ describe('admin catalog tree', () => {
   it('derives root venues from the tenant database with lightweight summary counts', async () => {
     const result = await request('/api/admin/catalog/tree?include=summary&limit=20&offset=0', { token: adminToken });
     assert.equal(result.status, 200);
-    const rows = (await db.prepare('SELECT id, parent_id FROM canteens WHERE tenant_id = ? ORDER BY name ASC, id ASC').all('default'));
+    const rows = (await db.prepare('SELECT id, parent_id, display_order FROM canteens WHERE tenant_id = ? ORDER BY COALESCE(parent_id, id), display_order, name, id').all('default'));
     const ids = new Set(rows.map((row) => row.id));
-    const expectedRoots = rows.filter((row) => !row.parent_id || !ids.has(row.parent_id)).map((row) => row.id);
+    const expectedRoots = rows.filter((row) => !row.parent_id || !ids.has(row.parent_id)).sort((left, right) => left.display_order - right.display_order).map((row) => row.id);
     assert.deepEqual(result.data.regions.map((region) => region.id), expectedRoots);
     assert.equal(result.data.total, expectedRoots.length);
     assert.ok(result.data.regions.every((region) => region.counts && region.missing === false));
@@ -329,6 +329,26 @@ describe('admin catalog tree', () => {
       assert.ok(region?.canteens?.length, `${field} search should retain the dining-area parent`);
       assert.ok(region.canteens.some((area) => area.stalls?.length), `${field} search should retain the stall parent`);
     }
+  });
+
+  it('paginates one stall dishes without expanding an entire dining area', async () => {
+    const tree = await request('/api/admin/catalog/tree?include=summary', { token: adminToken });
+    assert.equal(tree.status, 200);
+    const nodes = tree.data.regions.flatMap((region) => [
+      ...region.canteens.flatMap((area) => area.stalls),
+      ...(region.directStalls || []),
+    ]);
+    const node = nodes.find((item) => Number(item.dishCount || 0) > 0);
+    assert.ok(node, 'fixture should expose a stall with dishes');
+    const page = await request(`/api/admin/catalog/stalls/${encodeURIComponent(node.stall.id)}/dishes?page=1&pageSize=1`, { token: adminToken });
+    assert.equal(page.status, 200);
+    assert.equal(page.data.page, 1);
+    assert.equal(page.data.pageSize, 1);
+    assert.equal(page.data.items.length, 1);
+    assert.equal(page.data.total, node.dishCount);
+    assert.equal(page.data.hasMore, node.dishCount > 1);
+    const forbidden = await request(`/api/admin/catalog/stalls/${encodeURIComponent(node.stall.id)}/dishes`, { token: studentToken });
+    assert.equal(forbidden.status, 403);
   });
 
   it('allows catalog operators, rejects students and exposes parentId in nested nodes', async () => {

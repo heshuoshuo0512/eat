@@ -60,7 +60,43 @@ export function openDatabase(path = process.env.SMART_CANTEEN_DB || DEFAULT_DB_P
   db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
   migrate(db);
   seed(db);
+  alignRealCampusVenueCatalog(db);
   return db;
+}
+
+function alignRealCampusVenueCatalog(db) {
+  const approved = Number(db.prepare("SELECT COUNT(*) AS count FROM data_import_batches WHERE tenant_id = 'default' AND entity_type = 'real_catalog' AND status IN ('validated', 'approved')").get()?.count || 0);
+  if (!approved) return;
+  const now = new Date().toISOString();
+  const metadata = [
+    ['campus-main', '西区大食堂', '大食堂', 1, 'open', '西区'],
+    ['east-zone', '东区燕鸣湖', '燕鸣湖', 2, 'open', '东区'],
+    ['east-guangyuan', '西区广源超市', '广源超市', 5, 'open', '西区'],
+    ['east-dongdahuo', '东区东大活', '东大活', 6, 'open', '东区'],
+    ['west-minzu', '民族餐厅', '民族餐厅', 1, 'open', null],
+    ['west-xinyi', '心怡餐厅', '心怡餐厅', 2, 'open', null],
+    ['west-xijinjia', '禧进甲餐厅', '禧进甲餐厅', 3, 'open', null],
+    ['west-floor2-east', '二楼东厅', '二楼东厅', 4, 'open', null],
+    ['west-darongshu', '大榕树餐厅', '大榕树餐厅', 5, 'open', '西区大食堂 · 三楼西'],
+    ['west-floor3-east', '三楼东厅', '三楼东厅', 6, 'open', null],
+    ['east-yanminghu-1f', null, '一楼', 1, 'open', null],
+    ['east-yanminghu-2f', null, '二楼', 2, 'open', null],
+  ];
+  const update = db.prepare(`UPDATE canteens SET name = COALESCE(?, name), display_name = ?, display_order = ?, operating_status = ?,
+    location = COALESCE(?, location), updated_at = ? WHERE tenant_id = 'default' AND id = ?`);
+  for (const [id, name, displayName, displayOrder, operatingStatus, location] of metadata) {
+    update.run(name, displayName, displayOrder, operatingStatus, location, now, id);
+  }
+  db.prepare("UPDATE canteens SET parent_id = NULL, canteen_type = 'primary', venue_kind = 'supermarket', updated_at = ? WHERE tenant_id = 'default' AND id = 'east-guangyuan'").run(now);
+  db.prepare("UPDATE canteens SET parent_id = NULL, canteen_type = 'primary', venue_kind = 'service_building', updated_at = ? WHERE tenant_id = 'default' AND id = 'east-dongdahuo'").run(now);
+  const insert = db.prepare(`INSERT INTO canteens
+    (id, tenant_id, name, display_name, display_order, operating_status, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, venue_kind, created_at, updated_at)
+    VALUES (?, 'default', ?, ?, ?, 'renovating', ?, '装修中', 0, '["装修中"]', ?, NULL, 'primary', '', 'dining_hall', ?, ?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name, display_name=excluded.display_name, display_order=excluded.display_order,
+      operating_status='renovating', location=excluded.location, hours='装修中', description=excluded.description, parent_id=NULL, updated_at=excluded.updated_at
+      WHERE canteens.tenant_id=excluded.tenant_id`);
+  insert.run('west-yanyuan', '西区燕园', '燕园', 3, '西区', '西区燕园正在装修，开放后将提供正式校园餐饮目录。', now, now);
+  insert.run('east-shanshuiyuan', '东区山水园', '山水园', 4, '东区', '东区山水园正在装修，开放后将提供正式校园餐饮目录。', now, now);
 }
 
 function migrate(db) {
@@ -90,6 +126,9 @@ function migrate(db) {
       tags_json TEXT NOT NULL DEFAULT '[]',
       description TEXT NOT NULL,
       venue_kind TEXT NOT NULL DEFAULT 'dining_hall',
+      display_name TEXT NOT NULL DEFAULT '',
+      display_order INTEGER NOT NULL DEFAULT 999,
+      operating_status TEXT NOT NULL DEFAULT 'open' CHECK(operating_status IN ('open','renovating','closed')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -702,6 +741,9 @@ function migrate(db) {
   try { db.exec('ALTER TABLE stalls ADD COLUMN parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT'); } catch {}
   try { db.exec("ALTER TABLE stalls ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE canteens ADD COLUMN venue_kind TEXT NOT NULL DEFAULT 'dining_hall'"); } catch {}
+  try { db.exec("ALTER TABLE canteens ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"); } catch {}
+  try { db.exec('ALTER TABLE canteens ADD COLUMN display_order INTEGER NOT NULL DEFAULT 999'); } catch {}
+  try { db.exec("ALTER TABLE canteens ADD COLUMN operating_status TEXT NOT NULL DEFAULT 'open'"); } catch {}
   try { db.exec('ALTER TABLE stalls ADD COLUMN reservation_enabled INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec('ALTER TABLE dishes ADD COLUMN reservation_enabled INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec("ALTER TABLE audit_logs ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
@@ -873,6 +915,8 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_orders_tenant_status_created ON orders(tenant_id, status, created_at);
     CREATE INDEX IF NOT EXISTS idx_order_items_tenant_order ON order_items(tenant_id, order_id);
     CREATE INDEX IF NOT EXISTS idx_canteens_tenant_kind ON canteens(tenant_id, venue_kind, parent_id);
+    CREATE INDEX IF NOT EXISTS idx_canteens_tenant_catalog_order ON canteens(tenant_id, parent_id, display_order, name, id);
+    CREATE INDEX IF NOT EXISTS idx_canteens_tenant_operating_status ON canteens(tenant_id, operating_status, id);
     CREATE INDEX IF NOT EXISTS idx_stalls_catalog_reservations ON stalls(tenant_id, canteen_id, reservation_enabled, id);
     CREATE INDEX IF NOT EXISTS idx_dishes_catalog_reservations ON dishes(tenant_id, stall_id, status, reservation_enabled, id);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_tenant_user_idempotency ON orders(tenant_id, user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
@@ -1055,6 +1099,9 @@ export function rowToCanteen(row) {
     parentId: row.parent_id || null,
     canteenType: row.canteen_type || 'primary',
     venueKind: row.venue_kind || 'dining_hall',
+    displayName: row.display_name || row.name,
+    displayOrder: Number(row.display_order ?? 999),
+    operatingStatus: row.operating_status || 'open',
     image: row.image && !String(row.image).startsWith('http') && !String(row.image).startsWith('upload://') ? row.image : '',
     imageUrl: resolveUploadReference(row.image && (String(row.image).startsWith('http') || String(row.image).startsWith('upload://')) ? row.image : '')
   };
