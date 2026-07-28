@@ -173,9 +173,10 @@ describe('split chat and embedding providers', () => {
       assert.equal(input.task, 'repair_grounded_answer_once');
       assert.equal(input.failureReason, 'UNSUPPORTED_SAFETY_CLAIM');
       assert.deepEqual(input.requirements.allowedCitationIds, ['dish-unknown']);
+      const allergenWarning = input.requirements.evidenceRules[0].requiredStatements[0];
       return {
         choices: [{ message: { content: JSON.stringify({
-          answer: input.requirements.exactStatements.allergenUnknown,
+          answer: allergenWarning,
           citationIds: ['dish-unknown'],
         }) } }],
       };
