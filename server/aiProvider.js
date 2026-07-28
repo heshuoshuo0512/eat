@@ -541,7 +541,8 @@ export async function createEmbeddings(inputs) {
   if (!values.length) return [];
   const data = await postJson(`${config.baseUrl}/embeddings`, {
     model: config.model,
-    input: values
+    input: values,
+    dimensions: config.dimension
   }, config);
   const rows = Array.isArray(data.data) ? [...data.data].sort((left, right) => Number(left.index || 0) - Number(right.index || 0)) : [];
   const embeddings = rows.map((row) => row.embedding).filter((embedding) => Array.isArray(embedding) && embedding.length);

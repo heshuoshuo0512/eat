@@ -55,6 +55,10 @@ describe('grounded answer 3x30 evaluation plan', () => {
     const script = readFileSync('scripts/evaluate-grounded-agent-answers.mjs', 'utf8');
     assert.match(script, /Runtime database cannot be used/);
     assert.match(script, /argument === '--run-chat'/);
+    assert.match(script, /argument === '--resume'/);
+    assert.match(script, /argument === '--retry-blocked-chat'/);
+    assert.match(script, /generation\?\.status !== 'provider_failed'/);
+    assert.match(script, /checkpointEvery/);
     assert.match(script, /CHAT_EVALUATION_NOT_REQUESTED/);
     assert.doesNotMatch(script, /sk-[A-Za-z0-9_-]{20,}/);
   });

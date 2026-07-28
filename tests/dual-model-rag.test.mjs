@@ -116,6 +116,7 @@ describe('split chat and embedding providers', () => {
     assert.deepEqual(groundedPrompt.evidence[0].evidenceClasses, ['tenant_fact']);
     assert.equal(embeddingRequests.at(-1).authorization, 'Bearer embedding-secret');
     assert.equal(embeddingRequests.at(-1).payload.model, 'qwen-test');
+    assert.equal(embeddingRequests.at(-1).payload.dimensions, 4);
   });
 
   it('hoists repeated annotation health evidence while retaining per-dish allowed ids', async () => {
@@ -218,6 +219,13 @@ describe('local 1024-compatible SQLite experiment contracts', () => {
       assert.deepEqual(calls.map((items) => items.length), [2, 2, 1]);
       assert.equal(second.skippedCount, 5);
       assert.equal(calls.length, 3);
+
+      db.prepare("UPDATE rag_documents SET embedding_json = '[1,0,0]' WHERE source_id = 'concept-0'").run();
+      const repaired = await upsertRetrievalDocuments(db, documents, options);
+      assert.equal(repaired.embeddedCount, 1);
+      assert.equal(repaired.skippedCount, 4);
+      assert.equal(calls.length, 4);
+      assert.equal(JSON.parse(db.prepare("SELECT embedding_json FROM rag_documents WHERE source_id = 'concept-0'").get().embedding_json).length, 4);
 
       const status = await getRetrievalIndexStatus(db, { tenantId: '__global__' });
       assert.equal(status.embeddedCount, 5);

@@ -30,6 +30,8 @@ describe('embedding A/B experiment plan', () => {
     assert.match(evaluator, /--resume/);
     assert.match(evaluator, /checkpointEvery/);
     assert.match(evaluator, /status = 'partial'/);
+    assert.match(evaluator, /--embedding-batch-size/);
+    assert.match(evaluator, /createEmbeddings/);
   });
 
   it('supports resumable real-catalog evaluation checkpoints', () => {

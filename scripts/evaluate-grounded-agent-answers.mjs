@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -14,6 +14,9 @@ function parseArguments(argv) {
     dimension: Number(process.env.AI_EMBEDDING_DIMENSION || 1024),
     vectorMode: process.env.RETRIEVAL_VECTOR_MODE || 'active',
     runChat: false,
+    checkpointEvery: 5,
+    resume: false,
+    retryBlockedChat: false,
   };
   for (const argument of argv) {
     if (argument.startsWith('--database=')) options.databasePath = resolve(argument.slice(11));
@@ -22,7 +25,10 @@ function parseArguments(argv) {
     else if (argument.startsWith('--model=')) options.model = argument.slice(8).trim();
     else if (argument.startsWith('--dimension=')) options.dimension = Number(argument.slice(12));
     else if (argument.startsWith('--vector-mode=')) options.vectorMode = argument.slice(14).trim();
+    else if (argument.startsWith('--checkpoint-every=')) options.checkpointEvery = Math.max(1, Number(argument.slice(19)) || 5);
     else if (argument === '--run-chat') options.runChat = true;
+    else if (argument === '--resume') options.resume = true;
+    else if (argument === '--retry-blocked-chat') options.retryBlockedChat = true;
     else if (argument === '--help') options.help = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
@@ -75,7 +81,10 @@ if (options.help) {
   --vector-mode=active|off  Retrieval mode
   --label=<name>            Experiment label
   --output=<json>           Ignored detailed report path
-  --run-chat                Call the configured AI_CHAT provider; otherwise only retrieval and fallback contracts run`);
+  --run-chat                Call the configured AI_CHAT provider; otherwise only retrieval and fallback contracts run
+  --checkpoint-every=N      Save partial progress every N questions (default: 5)
+  --resume                  Continue a compatible partial report
+  --retry-blocked-chat      With --resume, retry provider_failed and evidence-backed blocked rows`);
   process.exit(0);
 }
 
@@ -190,9 +199,42 @@ try {
   let chatBlocker = options.runChat
     ? (provider.chat.enabled ? null : 'AI_CHAT_PROVIDER_NOT_CONFIGURED')
     : 'CHAT_EVALUATION_NOT_REQUESTED';
-  const rows = [];
+  let rows = [];
+  if (options.resume) {
+    try {
+      const existing = JSON.parse(readFileSync(options.outputPath, 'utf8'));
+      const compatible = existing.databasePath === options.databasePath
+        && existing.embedding?.model === options.model
+        && Number(existing.embedding?.dimension) === options.dimension
+        && existing.embedding?.vectorMode === options.vectorMode
+        && Boolean(existing.chat?.requested) === options.runChat
+        && (!options.runChat || existing.chat?.model === provider.chat.model);
+      if (compatible && Array.isArray(existing.rows)) {
+        rows = options.retryBlockedChat
+          ? existing.rows.filter((item) => item.generation?.status !== 'provider_failed'
+            && !(item.generation?.status === 'blocked' && item.citations?.length))
+          : existing.rows;
+      }
+    } catch {}
+  }
+  const writeCheckpoint = () => {
+    mkdirSync(dirname(options.outputPath), { recursive: true });
+    writeFileSync(options.outputPath, `${JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      status: 'partial',
+      label: options.label,
+      databasePath: options.databasePath,
+      embedding: { model: options.model, dimension: options.dimension, vectorMode: options.vectorMode },
+      chat: { requested: options.runChat, configured: provider.chat.enabled, model: provider.chat.model, blocker: chatBlocker },
+      processedCount: rows.length,
+      queryCount: evaluations.length,
+      rows,
+    }, null, 2)}\n`, 'utf8');
+  };
+  const completedIds = new Set(rows.map((item) => item.id));
 
   for (const evaluation of evaluations) {
+    if (completedIds.has(evaluation.id)) continue;
     const startedAt = performance.now();
     const evidenceStartedAt = performance.now();
     const { citations, traces } = await evidenceForCase(db, evaluation, references);
@@ -285,6 +327,7 @@ try {
       retrievalLatencyMs,
       totalLatencyMs: Number((performance.now() - startedAt).toFixed(2)),
     });
+    if (rows.length % options.checkpointEvery === 0 && rows.length < evaluations.length) writeCheckpoint();
   }
 
   const attempted = rows.filter((item) => ['completed', 'fallback', 'provider_failed'].includes(item.generation.status));

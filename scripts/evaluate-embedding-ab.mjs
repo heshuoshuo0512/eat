@@ -300,6 +300,7 @@ for (const group of groups) {
       `--dimension=${group.dimension}`,
       '--vector-mode=active',
       `--output=${state.knowledgeReportPath}`,
+      `--embedding-batch-size=${isLargeModel ? 8 : 1}`,
       '--resume',
     ], env);
     const catalog = JSON.parse(readFileSync(state.catalogReportPath, 'utf8'));

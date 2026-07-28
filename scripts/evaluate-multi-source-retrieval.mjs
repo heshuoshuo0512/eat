@@ -19,6 +19,7 @@ function parseArguments(argv) {
     vectorMode: process.env.RETRIEVAL_VECTOR_MODE || 'active',
     limit: 5,
     checkpointEvery: 10,
+    embeddingBatchSize: 1,
     resume: false,
   };
   for (const argument of argv) {
@@ -30,6 +31,7 @@ function parseArguments(argv) {
     else if (argument.startsWith('--vector-mode=')) options.vectorMode = argument.slice(14).trim();
     else if (argument.startsWith('--limit=')) options.limit = Math.max(3, Math.min(10, Number(argument.slice(8)) || 5));
     else if (argument.startsWith('--checkpoint-every=')) options.checkpointEvery = Math.max(1, Number(argument.slice(19)) || 10);
+    else if (argument.startsWith('--embedding-batch-size=')) options.embeddingBatchSize = Math.max(1, Math.min(32, Number(argument.slice(23)) || 1));
     else if (argument === '--resume') options.resume = true;
     else if (argument === '--help') options.help = true;
     else throw new Error(`Unknown argument: ${argument}`);
@@ -52,9 +54,19 @@ function mean(values) {
   return Number((values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length)).toFixed(4));
 }
 
+function chunksOf(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+function embeddingKey(value) {
+  return String(value || '').normalize('NFKC').trim().toLocaleLowerCase();
+}
+
 const options = parseArguments(process.argv.slice(2));
 if (options.help) {
-  console.log('Usage: node scripts/evaluate-multi-source-retrieval.mjs --database=<sqlite> --model=<id> --dimension=<n> [--vector-mode=active|off] [--resume]');
+  console.log('Usage: node scripts/evaluate-multi-source-retrieval.mjs --database=<sqlite> --model=<id> --dimension=<n> [--vector-mode=active|off] [--embedding-batch-size=1] [--resume]');
   process.exit(0);
 }
 
@@ -67,7 +79,7 @@ process.env.AI_EMBEDDING_DIMENSION = String(options.dimension);
 process.env.AI_EMBEDDING_TIMEOUT_MS ||= '120000';
 process.env.RETRIEVAL_VECTOR_MODE = options.vectorMode;
 
-const [{ createDatabase }, { getAiProviderStatus }, { searchRetrievalIndex }] = await Promise.all([
+const [{ createDatabase }, { createEmbedding, createEmbeddings, getAiProviderStatus }, { searchRetrievalIndex }] = await Promise.all([
   import('../server/database.js'),
   import('../server/aiProvider.js'),
   import('../server/retrievalIndex.js'),
@@ -83,7 +95,7 @@ function writeCheckpoint(rows, status = 'partial') {
     generatedAt: new Date().toISOString(),
     status,
     databasePath: options.databasePath,
-    provider: { model: options.model, dimension: options.dimension, vectorMode: options.vectorMode },
+    provider: { model: options.model, dimension: options.dimension, vectorMode: options.vectorMode, embeddingBatchSize: options.embeddingBatchSize },
     processedCount: rows.length,
     queryCount: queries.length,
     rows,
@@ -97,57 +109,77 @@ try {
       const existing = JSON.parse(readFileSync(options.outputPath, 'utf8'));
       const compatible = existing.provider?.model === options.model
         && Number(existing.provider?.dimension) === options.dimension
+        && Number(existing.provider?.embeddingBatchSize || 1) === options.embeddingBatchSize
         && existing.databasePath === options.databasePath;
       if (compatible && Array.isArray(existing.rows)) rows = existing.rows;
     } catch {}
   }
   const completedIds = new Set(rows.map((item) => item.id));
-  for (const evaluation of queries) {
-    if (completedIds.has(evaluation.id)) continue;
-    const startedAt = performance.now();
-    const routed = await retrieveRoutedKnowledge({
-      query: evaluation.query,
-      tenantId: evaluation.tenantId,
-      limit: options.limit,
-    }, {
-      knowledgeSearch: ({ query, tenantId, limit, sourceTypes }) => {
-        const globalOnly = sourceTypes.every((sourceType) => ['health_knowledge', 'campus_dining_knowledge'].includes(sourceType));
-        return searchRetrievalIndex(db, query, {
-          tenantId: globalOnly ? '__global__' : tenantId,
-          sourceTypes,
-          limit,
-          vectorMode: options.vectorMode,
-        });
-      },
-      foodCompositionLookup: ({ query, limit }) => matchFoodCompositionReferencesForQuery(query, references, limit),
-    });
-    const returnedTypes = new Set(routed.results.map((item) => item.sourceType));
-    const evidenceTypes = new Set(routed.results.map((item) => item.evidenceType));
-    const rank = rankOf(routed.results, evaluation.expectedSourceIds);
-    const checks = {
-      route: routed.trace.routing.intent === evaluation.expectedRouteIntent,
-      requiredSources: evaluation.allowEmpty || evaluation.requiredSourceTypes.every((sourceType) => returnedTypes.has(sourceType)),
-      forbiddenSources: evaluation.forbiddenSourceTypes.every((sourceType) => !returnedTypes.has(sourceType)),
-      expectedEvidence: evaluation.allowEmpty || evaluation.expectedEvidenceTypes.every((evidenceType) => evidenceTypes.has(evidenceType)),
-      expectedSource: !evaluation.expectedSourceIds.length || rank > 0,
-      scope: routed.results.every((item) => item.sourceType === 'campus_policy'
-        ? item.tenantId === evaluation.tenantId
-        : item.tenantId === '__global__'),
-    };
-    rows.push({
-      id: evaluation.id,
-      category: evaluation.category,
-      query: evaluation.query,
-      expectedSourceIds: evaluation.expectedSourceIds,
-      returned: routed.results.map((item) => ({ id: item.id, sourceId: item.sourceId, sourceType: item.sourceType, evidenceType: item.evidenceType, tenantId: item.tenantId, score: item.score })),
-      rank,
-      checks,
-      passed: Object.values(checks).every(Boolean),
-      degradedReasons: routed.degradedReasons,
-      trace: routed.trace,
-      latencyMs: Number((performance.now() - startedAt).toFixed(2)),
-    });
-    if (rows.length % options.checkpointEvery === 0 && rows.length < queries.length) writeCheckpoint(rows);
+  const pending = queries.filter((evaluation) => !completedIds.has(evaluation.id));
+  for (const batch of chunksOf(pending, options.embeddingBatchSize)) {
+    let embeddingMap = null;
+    let embeddingBatchMs = 0;
+    if (options.vectorMode !== 'off' && options.embeddingBatchSize > 1) {
+      const embeddingStartedAt = performance.now();
+      const vectors = await createEmbeddings(batch.map((evaluation) => evaluation.query));
+      embeddingBatchMs = performance.now() - embeddingStartedAt;
+      embeddingMap = new Map(batch.map((evaluation, index) => [embeddingKey(evaluation.query), vectors[index]]));
+    }
+    for (const evaluation of batch) {
+      const startedAt = performance.now();
+      const routed = await retrieveRoutedKnowledge({
+        query: evaluation.query,
+        tenantId: evaluation.tenantId,
+        limit: options.limit,
+      }, {
+        knowledgeSearch: ({ query, tenantId, limit, sourceTypes }) => {
+          const globalOnly = sourceTypes.every((sourceType) => ['health_knowledge', 'campus_dining_knowledge'].includes(sourceType));
+          return searchRetrievalIndex(db, query, {
+            tenantId: globalOnly ? '__global__' : tenantId,
+            sourceTypes,
+            limit,
+            vectorMode: options.vectorMode,
+            ...(embeddingMap ? {
+              embeddingProvider: (value) => embeddingMap.get(embeddingKey(value)) || createEmbedding(value),
+              embeddingModel: options.model,
+              embeddingDimension: options.dimension,
+            } : {}),
+          });
+        },
+        foodCompositionLookup: ({ query, limit }) => matchFoodCompositionReferencesForQuery(query, references, limit),
+      });
+      const retrievalLatencyMs = performance.now() - startedAt;
+      const embeddingBatchShareMs = embeddingBatchMs / batch.length;
+      const returnedTypes = new Set(routed.results.map((item) => item.sourceType));
+      const evidenceTypes = new Set(routed.results.map((item) => item.evidenceType));
+      const rank = rankOf(routed.results, evaluation.expectedSourceIds);
+      const checks = {
+        route: routed.trace.routing.intent === evaluation.expectedRouteIntent,
+        requiredSources: evaluation.allowEmpty || evaluation.requiredSourceTypes.every((sourceType) => returnedTypes.has(sourceType)),
+        forbiddenSources: evaluation.forbiddenSourceTypes.every((sourceType) => !returnedTypes.has(sourceType)),
+        expectedEvidence: evaluation.allowEmpty || evaluation.expectedEvidenceTypes.every((evidenceType) => evidenceTypes.has(evidenceType)),
+        expectedSource: !evaluation.expectedSourceIds.length || rank > 0,
+        scope: routed.results.every((item) => item.sourceType === 'campus_policy'
+          ? item.tenantId === evaluation.tenantId
+          : item.tenantId === '__global__'),
+      };
+      rows.push({
+        id: evaluation.id,
+        category: evaluation.category,
+        query: evaluation.query,
+        expectedSourceIds: evaluation.expectedSourceIds,
+        returned: routed.results.map((item) => ({ id: item.id, sourceId: item.sourceId, sourceType: item.sourceType, evidenceType: item.evidenceType, tenantId: item.tenantId, score: item.score })),
+        rank,
+        checks,
+        passed: Object.values(checks).every(Boolean),
+        degradedReasons: routed.degradedReasons,
+        trace: routed.trace,
+        embeddingBatchShareMs: Number(embeddingBatchShareMs.toFixed(2)),
+        retrievalLatencyMs: Number(retrievalLatencyMs.toFixed(2)),
+        latencyMs: Number((retrievalLatencyMs + embeddingBatchShareMs).toFixed(2)),
+      });
+      if (rows.length % options.checkpointEvery === 0 && rows.length < queries.length) writeCheckpoint(rows);
+    }
   }
   const order = new Map(queries.map((item, index) => [item.id, index]));
   rows.sort((left, right) => (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER));
@@ -170,7 +202,12 @@ try {
     generatedAt: new Date().toISOString(),
     status: 'completed',
     databasePath: options.databasePath,
-    provider: { model: provider.model, dimension: provider.dimension, vectorMode: options.vectorMode },
+    provider: { model: provider.model, dimension: provider.dimension, vectorMode: options.vectorMode, embeddingBatchSize: options.embeddingBatchSize },
+    measurement: {
+      latencyMs: options.embeddingBatchSize > 1
+        ? 'retrieval latency plus an equal share of the query embedding batch latency'
+        : 'end-to-end sequential query latency',
+    },
     summary,
     categories: Object.fromEntries([...new Set(rows.map((item) => item.category))].map((category) => {
       const categoryRows = rows.filter((item) => item.category === category);

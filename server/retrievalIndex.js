@@ -547,7 +547,8 @@ function embeddingConfigurationFrom(options = {}) {
 async function existingDocument(db, document) {
   if (db.pool) {
     const result = await db.query(
-      `SELECT id, content_hash, embedding_model, embedding IS NOT NULL AS has_embedding
+      `SELECT id, content_hash, embedding_model, embedding IS NOT NULL AS has_embedding,
+              CASE WHEN embedding IS NOT NULL THEN vector_dims(embedding) ELSE NULL END AS embedding_dimension
        FROM rag_documents
        WHERE tenant_id = $1 AND source_type = $2 AND source_id = $3 AND chunk_index = $4`,
       [document.tenantId, document.sourceType, document.sourceId, document.chunkIndex],
@@ -559,7 +560,15 @@ async function existingDocument(db, document) {
      FROM rag_documents
      WHERE tenant_id = ? AND source_type = ? AND source_id = ? AND chunk_index = ?`,
   ).get(document.tenantId, document.sourceType, document.sourceId, document.chunkIndex);
-  return row ? { ...row, has_embedding: Boolean(row.embedding_json) } : null;
+  if (!row) return null;
+  let embeddingDimension = null;
+  if (row.embedding_json) {
+    try {
+      const embedding = JSON.parse(row.embedding_json);
+      embeddingDimension = Array.isArray(embedding) ? embedding.length : null;
+    } catch {}
+  }
+  return { ...row, has_embedding: Boolean(row.embedding_json), embedding_dimension: embeddingDimension };
 }
 
 async function upsertPostgresDocument(db, document, embedding, embeddingModel, indexedAt) {
@@ -679,7 +688,10 @@ export async function upsertRetrievalDocuments(db, documents, options = {}) {
   for (const document of normalizedDocuments) {
     const existing = await existingDocument(db, document);
     const unchanged = existing?.content_hash === document.contentHash;
-    const hasCurrentEmbedding = unchanged && existing?.has_embedding && existing?.embedding_model === embeddingModel;
+    const hasCurrentEmbedding = unchanged
+      && existing?.has_embedding
+      && existing?.embedding_model === embeddingModel
+      && Number(existing?.embedding_dimension) === embeddingDimension;
     if (unchanged && (!embeddingProvider || hasCurrentEmbedding) && existing.id === document.id) {
       skippedCount += 1;
       continue;
