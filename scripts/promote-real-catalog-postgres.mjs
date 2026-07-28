@@ -168,13 +168,32 @@ async function insertRows(client, sourceDb, table, checksum, extraColumns = [], 
   const columns = target.filter((column) => sourceColumns.includes(column) || extraColumns.includes(column));
   const rows = tableRows(sourceDb, table);
   if (!rows.length) return 0;
+  const existingById = new Map();
+  if (options.preserveMatchingRows) {
+    const existing = await client.query(`SELECT id, tenant_id, source_type, source_id, content_hash
+      FROM ${table} WHERE id = ANY($1::text[])`, [rows.map((row) => row.id)]);
+    for (const row of existing.rows) existingById.set(row.id, row);
+  }
   const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ');
   const quoted = columns.map((column) => `"${column}"`).join(', ');
   const sql = `INSERT INTO ${table} (${quoted}) VALUES (${placeholders})`;
+  let inserted = 0;
+  let preserved = 0;
   for (const row of rows) {
+    const existing = existingById.get(row.id);
+    if (existing) {
+      for (const field of ['tenant_id', 'source_type', 'source_id', 'content_hash']) {
+        if (String(existing[field] || '') !== String(row[field] || '')) {
+          throw new Error(`Existing ${table} row conflicts with the source: ${row.id} (${field})`);
+        }
+      }
+      preserved += 1;
+      continue;
+    }
     await client.query(sql, columns.map((column) => valueForColumn(table, column, row, checksum, options)));
+    inserted += 1;
   }
-  return rows.length;
+  return options.preserveMatchingRows ? { total: rows.length, inserted, preserved } : rows.length;
 }
 
 async function targetCounts(client, tenantId) {
@@ -269,7 +288,10 @@ try {
     inserted.stalls = await insertRows(client, sourceDb, 'stalls', inspection.checksum, ['reservation_enabled'], { preparedSource });
     inserted.dishes = await insertRows(client, sourceDb, 'dishes', inspection.checksum, ['reservation_enabled'], { preparedSource });
     inserted.catalog_import_rows = await insertRows(client, sourceDb, 'catalog_import_rows', inspection.checksum, [], { preparedSource });
-    inserted.rag_documents = await insertRows(client, sourceDb, 'rag_documents', inspection.checksum, ['metadata', 'embedding'], { preparedSource });
+    inserted.rag_documents = await insertRows(client, sourceDb, 'rag_documents', inspection.checksum, ['metadata', 'embedding'], {
+      preparedSource,
+      preserveMatchingRows: true,
+    });
     inserted.dish_ai_annotations = await insertRows(client, sourceDb, 'dish_ai_annotations', inspection.checksum, [], { preparedSource });
     const counts = await targetCounts(client, tenantId);
     for (const key of ['canteens', 'stalls', 'dishes', 'catalog_import_rows', 'rag_documents', 'dish_ai_annotations']) {

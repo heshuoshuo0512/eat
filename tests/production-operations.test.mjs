@@ -54,4 +54,11 @@ describe('Production operations contract', () => {
     assert.match(promoter, /auditCounts\[key\] !== SOURCE_EXPECTED\[key\]/);
     assert.doesNotMatch(promoter, /auditCounts\[key\] !== EXPECTED\[key\]/);
   });
+
+  it('preserves only content-identical knowledge documents during catalog promotion', () => {
+    const promoter = read('scripts/promote-real-catalog-postgres.mjs');
+    assert.match(promoter, /preserveMatchingRows: true/);
+    assert.match(promoter, /\['tenant_id', 'source_type', 'source_id', 'content_hash'\]/);
+    assert.match(promoter, /Existing \$\{table\} row conflicts with the source/);
+  });
 });
