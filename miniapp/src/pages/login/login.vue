@@ -1,13 +1,12 @@
 <template>
-  <sc-page-shell hide-nav>
+  <sc-page-shell hide-nav tone="neutral">
     <view class="login-screen">
-      <image class="login-poster" src="/static/food/hero-meal.svg" mode="aspectFill" />
-      <view class="login-overlay"></view>
       <view class="login-content">
-        <view class="login-hero">
-          <view class="login-brandline"><image src="/static/brand/logo-mark-reversed.svg" mode="aspectFit" /><view><text>SMART CANTEEN</text><text class="brand-name">智慧食堂</text></view></view>
-          <text class="login-title">校园每一餐，都有真实依据。</text>
-          <text class="login-subtitle">菜单、评价和个人饮食限制统一同步。</text>
+        <view class="login-brand">
+          <sc-illustration class="login-mark" name="brand" size="small" label="智慧食堂品牌标记" />
+          <text class="login-brandline">智慧食堂</text>
+          <text class="login-title">认真吃好校园里的每一餐</text>
+          <text class="login-subtitle">真实菜单、供应状态与个人饮食限制同步更新</text>
         </view>
 
         <view class="login-card panel-card">
@@ -17,7 +16,7 @@
 
           <view v-if="mode==='login'" class="auth-form">
             <text class="form-title">登录智慧食堂</text>
-            <button class="wechat-btn" open-type="getPhoneNumber" :loading="loadingMode==='wechat'" :disabled="Boolean(loadingMode)" @getphonenumber="loginWithWechat"><text class="wechat-mark">微</text><text>微信授权手机号登录</text></button>
+            <button class="wechat-btn" open-type="getPhoneNumber" :loading="loadingMode==='wechat'" :disabled="Boolean(loadingMode)" @getphonenumber="loginWithWechat"><sc-icon name="user" :size="18" tone="current" /><text>微信授权手机号登录</text></button>
             <view class="divider"><text></text><text>或使用手机号密码</text><text></text></view>
             <label><text>手机号或账号</text><input v-model="loginForm.identifier" class="input" maxlength="32" placeholder="请输入手机号或账号" /></label>
             <label><text>密码</text><input v-model="loginForm.password" class="input" password maxlength="72" placeholder="请输入密码" /></label>
@@ -45,8 +44,8 @@
           </view>
 
           <checkbox-group class="consent" @change="consentAccepted=$event.detail.value.includes('accepted')">
-            <label><checkbox value="accepted" :checked="consentAccepted" color="#237A57" /><text>我已阅读并同意</text></label>
-            <button @tap="openPrivacy">《隐私保护指引》</button><text>与</text><button @tap="openTerms">《用户服务协议》</button>
+            <label class="consent-check"><checkbox class="consent-box" value="accepted" :checked="consentAccepted" color="#181A1F" /><text>我已阅读并同意</text></label>
+            <view class="consent-links"><button @tap="openPrivacy">《隐私保护指引》</button><text>与</text><button @tap="openTerms">《用户服务协议》</button></view>
           </checkbox-group>
           <text v-if="message" class="login-message" :class="{ error:isError }">{{ message }}</text>
         </view>
@@ -84,11 +83,38 @@ function openPrivacy(){uni.navigateTo({url:'/pages/privacy/privacy'});} function
 </script>
 
 <style scoped>
-.login-screen { position:relative; width:calc(100% + var(--page-gutter)*2); min-height:100vh; margin:0 calc(var(--page-gutter)*-1) calc(-56rpx - env(safe-area-inset-bottom)); padding:44rpx var(--page-gutter) calc(44rpx + env(safe-area-inset-bottom)); overflow:hidden; background:#183e31; box-sizing:border-box; }
-.login-poster,.login-overlay { position:absolute; inset:0; width:100%; height:100%; }.login-poster{opacity:.72}.login-overlay{background:rgba(14,58,42,.84)}
-.login-content { position:relative; z-index:1; width:100%; max-width:680rpx; margin:auto; }.login-hero{color:#fff;padding:8rpx 8rpx 24rpx}.login-brandline{display:flex;align-items:center;gap:14rpx}.login-brandline image{width:58rpx;height:58rpx}.login-brandline text{display:block;color:rgba(255,255,255,.72);font-size:22rpx}.login-brandline .brand-name{margin-top:2rpx;color:#fff;font-size:28rpx;font-weight:600}.login-title,.login-subtitle{display:block}.login-title{margin-top:24rpx;font-size:38rpx;font-weight:600;line-height:1.3}.login-subtitle{margin-top:8rpx;color:rgba(255,255,255,.8);font-size:24rpx}
-.login-card { padding:24rpx; border:1rpx solid rgba(255,255,255,.5); border-radius:24rpx; background:rgba(255,255,255,.97); box-shadow:0 18rpx 54rpx rgba(5,30,20,.24); }
-.auth-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4rpx;min-height:88rpx;padding:8rpx;border-radius:14rpx;background:var(--surface-soft)}.auth-tabs button{display:flex;align-items:center;justify-content:center;background:transparent}.auth-tabs button view{display:flex;align-items:center;justify-content:center;width:100%;height:56rpx;border-radius:10rpx;color:var(--muted);font-size:24rpx}.auth-tabs button.active view{color:#fff;background:var(--brand)}
-.auth-form{display:grid;gap:14rpx;margin-top:22rpx}.form-title{display:block;color:var(--ink);font-size:30rpx;font-weight:600}.auth-form label>text{display:block;margin-bottom:7rpx;color:var(--ink-2);font-size:24rpx;font-weight:500}.wechat-btn{display:flex;align-items:center;justify-content:center;gap:10rpx;min-height:88rpx;border-radius:var(--radius);color:#fff;background:var(--brand);font-size:27rpx}.wechat-mark{display:flex;align-items:center;justify-content:center;width:40rpx;height:40rpx;border-radius:10rpx;color:var(--brand);background:#fff;font-size:22rpx}.divider{display:flex;align-items:center;gap:10rpx;color:var(--muted);font-size:22rpx}.divider text:first-child,.divider text:last-child{height:1rpx;flex:1;background:var(--line)}.code-row{display:grid;grid-template-columns:minmax(0,1fr) 190rpx;gap:8rpx}.code-row button{display:flex;align-items:center;min-height:88rpx;padding:0}.code-row button view{display:flex;align-items:center;justify-content:center;width:100%;height:64rpx;border-radius:12rpx;color:var(--brand);background:var(--brand-soft);font-size:23rpx}.demo-btn{min-height:64rpx;color:var(--brand);background:transparent;font-size:24rpx}
-.consent{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:18rpx;color:var(--muted);font-size:22rpx}.consent label{display:flex;align-items:center}.consent checkbox{transform:scale(.82)}.consent button{display:inline-flex;align-items:center;min-height:48rpx;padding:0 2rpx;color:var(--brand);background:transparent;font-size:22rpx}.login-message{display:block;margin-top:12rpx;color:var(--brand);font-size:24rpx;text-align:center}.login-message.error{color:var(--danger)}
+.login-screen { display:flex; width:auto; min-height:100vh; margin:0 calc(-1 * var(--page-gutter)); padding:32px var(--page-gutter) calc(40px + env(safe-area-inset-bottom)); align-items:flex-start; justify-content:center; background:var(--bg); box-sizing:border-box; }
+.login-content { width:100%; max-width:440px; margin:auto; }
+.login-brand { margin-bottom:24px; text-align:center; }
+.login-mark { margin:0 auto 12px; }
+.login-brandline,.login-title,.login-subtitle { display:block; }
+.login-brandline { color:var(--brand); font-size:16px; font-weight:600; }
+.login-title { margin-top:10px; color:var(--ink); font-size:28px; font-weight:600; line-height:1.35; }
+.login-subtitle { margin-top:8px; color:var(--ink-2); font-size:14px; line-height:1.5; }
+.login-card { margin:0; padding:20px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); box-shadow:none; }
+.auth-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; min-height:44px; padding:4px; border-radius:var(--radius); background:var(--surface-soft); }
+.auth-tabs button { display:flex; align-items:center; justify-content:center; background:transparent; }
+.auth-tabs button view { display:flex; width:100%; height:36px; align-items:center; justify-content:center; border-radius:6px; color:var(--muted); font-size:14px; }
+.auth-tabs button.active view { color:var(--ink); background:var(--surface); }
+.auth-form { display:grid; gap:12px; margin-top:18px; }
+.form-title { display:block; color:var(--ink); font-size:16px; font-weight:600; }
+.auth-form label>text { display:block; margin-bottom:6px; color:var(--ink-2); font-size:14px; font-weight:500; }
+.wechat-btn { display:flex; min-height:44px; align-items:center; justify-content:center; gap:8px; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface-soft); font-size:14px; }.wechat-btn:active { background:var(--surface-strong); transform:translateY(1px); }
+.divider { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+.divider text:first-child,.divider text:last-child { height:1px; flex:1; background:var(--line); }
+.code-row { display:grid; grid-template-columns:minmax(0,1fr) 112px; gap:8px; }
+.code-row button { display:flex; min-height:44px; align-items:center; padding:0; }
+.code-row button view { display:flex; width:100%; height:44px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface-soft); font-size:12px; box-sizing:border-box; }
+.demo-btn { min-height:44px; color:var(--ink-2); background:transparent; font-size:14px; }
+.consent { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; justify-content:center; gap:2px 3px; margin-top:16px; color:var(--muted); font-size:12px; }
+.consent label,.consent-links { display:flex; align-items:center; }
+.consent-links { min-width:0; flex-wrap:wrap; }
+.consent checkbox { transform:scale(.82); }
+.consent button { display:inline-flex; min-height:44px; padding:0 1px; align-items:center; color:var(--ink); background:transparent; font-size:12px; }
+.login-message { display:block; margin-top:10px; color:var(--ink-2); font-size:14px; text-align:center; }
+.login-message.error { color:var(--danger); }
+@media (max-width:359px) { .login-card { padding:16px; } .code-row { grid-template-columns:minmax(0,1fr) 104px; } }
+@media (max-width:479px) { .consent { grid-template-columns:1fr; }.consent-check,.consent-links { justify-content:center; } }
+@media (min-width:768px) { .login-screen { align-items:center; }.login-content { display:grid; max-width:920px; grid-template-columns:minmax(0,.85fr) minmax(420px,1.15fr); gap:24px; align-items:stretch; }.login-brand { display:flex; min-height:520px; flex-direction:column; justify-content:center; margin:0; padding:24px; border:1px solid var(--line); border-radius:var(--radius-large); background:#fbfbfc; text-align:left; box-sizing:border-box; }.login-mark { margin:0 0 18px; }.login-card { align-self:center; }.login-title { font-size:24px; } }
+@media (min-width:900px) { .login-content { gap:36px; }.login-brand { padding:40px; }.login-title { font-size:28px; } }
 </style>

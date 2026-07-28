@@ -109,15 +109,20 @@ describe('admin catalog tree', () => {
     assert.deepEqual(result.data.regions.map((region) => region.id), ['campus-main', 'north-zone', 'south-zone', 'east-zone']);
     assert.equal(result.data.total, 4);
     assert.ok(result.data.regions.every((region) => region.counts && typeof region.missing === 'boolean'));
-    const [complex, ...multiFloorCanteens] = result.data.regions;
+    const [complex, north, south, east] = result.data.regions;
     assert.equal(complex.venueType, 'dining_complex');
     assert.equal(complex.areaType, 'restaurant');
     assert.equal(complex.areaLabel, '餐厅');
     assert.equal(complex.labels.area, '餐厅');
     assert.ok(complex.canteens.every((area) => area.areaType === 'restaurant' && area.areaLabel === '餐厅' && area.displayName === area.canteen.name));
-    assert.ok(multiFloorCanteens.every((region) => region.venueType === 'multi_floor_canteen'));
-    assert.ok(multiFloorCanteens.every((region) => region.areaType === 'floor_area' && region.labels.area === '楼层餐区'));
-    assert.ok(multiFloorCanteens.every((region) => region.canteens.every((area) => area.areaType === 'floor_area' && area.areaLabel === '楼层餐区')));
+    assert.ok([north, south].every((region) => region.venueType === 'multi_floor_canteen'));
+    assert.ok([north, south].every((region) => region.areaType === 'floor_area' && region.labels.area === '楼层餐区'));
+    assert.ok([north, south].every((region) => region.canteens.every((area) => area.areaType === 'floor_area' && area.areaLabel === '楼层餐区')));
+    assert.equal(east.defaultName, '东区餐饮与服务区');
+    assert.equal(east.venueType, 'dining_service_zone');
+    assert.equal(east.areaType, 'dining_area');
+    assert.equal(east.labels.area, '餐饮区域');
+    assert.ok(east.canteens.every((area) => area.areaType === 'dining_area' && area.areaLabel === '餐饮区域'));
     assert.ok(result.data.regions.every((region) => typeof region.counts.openStalls === 'number'));
     const serialized = JSON.stringify(result.data);
     assert.doesNotMatch(serialized, /allDirectDishes/);
@@ -537,6 +542,7 @@ describe('admin catalog tree', () => {
     });
     assert.equal(stall.status, 201);
     assert.equal(stall.data.savedId, stallId);
+    assert.equal(db.prepare('SELECT rating FROM stalls WHERE tenant_id = ? AND id = ?').get('default', stallId).rating, 0);
 
     const dishBody = {
       id: dishId,
@@ -558,6 +564,15 @@ describe('admin catalog tree', () => {
     assert.equal(dish.data.savedId, dishId);
     assert.equal(dish.data.savedEntity.id, dishId);
     assert.equal(dish.data.savedEntity.status, 'active');
+    assert.equal(dish.data.savedEntity.rating, 0);
+
+    const ratedDish = await request(`/api/admin/dishes/${dishId}`, {
+      method: 'PUT',
+      token: adminToken,
+      body: { ...dishBody, rating: 4.2 }
+    });
+    assert.equal(ratedDish.status, 200);
+    assert.equal(ratedDish.data.savedEntity.rating, 4.2);
 
     const updatedArea = await request(`/api/admin/canteens/${areaId}`, { method: 'PUT', token: adminToken, body: { ...areaBody, name: '更新后的餐区' } });
     const updatedStall = await request(`/api/admin/stalls/${stallId}`, { method: 'PUT', token: adminToken, body: { name: '更新后的档口' } });
@@ -568,6 +583,7 @@ describe('admin catalog tree', () => {
     assert.equal(updatedStall.data.savedId, stallId);
     assert.equal(updatedDish.status, 200);
     assert.equal(updatedDish.data.savedId, dishId);
+    assert.equal(updatedDish.data.savedEntity.rating, 4.2);
 
     const hiddenDish = await request(`/api/admin/dishes/${dishId}`, {
       method: 'PUT',

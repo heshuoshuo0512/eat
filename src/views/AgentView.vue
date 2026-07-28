@@ -334,6 +334,7 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue';
 import RagTrustState from '../components/RagTrustState.vue';
+import { dishNutritionPresentation, dishPriceText } from '../domain/dishPresentation.js';
 import { validateQuestion } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
@@ -675,12 +676,9 @@ function sourceLabel(value) {
 }
 
 function dishDescription(dish) {
-  const parts = [];
-  const price = Number(dish.price);
-  if (Number.isFinite(price)) parts.push(`¥${price.toFixed(2)}`);
+  const parts = [dishPriceText(dish)];
   if (dish.taste) parts.push(dish.taste);
-  const protein = Number(dish.nutrition?.protein);
-  if (Number.isFinite(protein)) parts.push(`蛋白 ${protein}g`);
+  parts.push(dishNutritionPresentation(dish).label);
   return parts.join(' · ') || '菜品详情已载入';
 }
 </script>

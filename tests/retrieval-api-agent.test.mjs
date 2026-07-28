@@ -297,6 +297,12 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
     assert.ok(tools.includes('knowledge.search'));
     assert.ok(!tools.includes('meal.recommend'));
     assert.ok(!tools.includes('orders.mine'));
+    const healthCitation = data.citations.find((item) => item.sourceType === 'health_knowledge');
+    assert.ok(healthCitation, 'knowledge answer should include an approved global health citation');
+    assert.equal(healthCitation.tenantId, '__global__');
+    for (const field of ['knowledgeDomain', 'publisher', 'version', 'reviewedAt', 'license', 'factStatus']) {
+      assert.ok(healthCitation[field], `health citation should include ${field}`);
+    }
   });
 
   it('does not propose create_order when the user did not explicitly name an orderable dish', async () => {

@@ -36,5 +36,10 @@
     "NIH ODS 当前抓取受限，仅保留入口",
     "校园实时事实、学校制度、菜品配方和菜单必须由项目内部维护",
     "外部来源不能直接替代医疗建议或中国法域合规审查"
-  ]
+  ],
+  "evaluation": {
+    "knowledgeQueries": 120,
+    "multiSourceQueries": 300,
+    "multiSourceHandReviewed": 60
+  }
 }

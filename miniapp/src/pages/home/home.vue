@@ -1,53 +1,48 @@
 <template>
-  <sc-page-shell title="智慧食堂">
+  <sc-page-shell :title="greeting" tone="meal" tab-id="home" :status="mealContext">
+    <template #hero>
+      <view class="home-hero-inner">
+        <sc-reveal-card
+          :dish="revealDish" :index="revealState.index" :total="revealDishes.length" :phase="revealState.phase"
+          :location="dishLocation(revealDish)" :reason="dishReason(revealDish)" :supply="supplyLabel(revealDish)"
+          :reduced-motion="store.motionReduced.value" @action="handleReveal" @reset="resetReveal" @detail="openDishDetail"
+        />
+      </view>
+    </template>
     <sc-state-card v-if="store.loading.value && !store.loaded.value" type="loading" title="正在同步食堂数据" desc="菜单、评分和供应状态正在更新。" />
     <sc-state-card v-else-if="store.error.value && !store.loaded.value" type="error" title="数据同步失败" :desc="store.error.value" action-text="重试" @action="reload" />
 
-    <sc-reveal-card
-      :dish="revealDish" :index="revealState.index" :total="revealDishes.length" :phase="revealState.phase"
-      :location="dishLocation(revealDish)" :reason="dishReason(revealDish)" :supply="supplyLabel(revealDish)"
-      :reduced-motion="store.motionReduced.value" @action="handleReveal" @reset="resetReveal" @detail="openDishDetail"
-    />
+    <view class="home-layout">
+      <view class="home-primary">
+        <view class="home-section core-section">
+          <view class="section-heading"><view><text>开始用餐</text><text>按真实供应找到这一餐</text></view><text>{{ store.dishes.value.length }} 道菜</text></view>
+          <view class="core-actions">
+            <button v-for="(entry, index) in coreEntries" :key="entry.id" class="core-action" :class="`core-${index}`" @tap="openEntry(entry)">
+              <view class="core-icon"><sc-icon :name="entry.iconName" :size="20" /></view>
+              <view class="entry-copy"><text class="ui-strong">{{ entry.label }}</text><text>{{ entry.description }}</text></view><sc-icon class="core-arrow" name="arrow-right" :size="16" tone="muted" />
+            </button>
+          </view>
+        </view>
+      </view>
 
-    <view class="home-section core-section">
-      <view class="section-heading"><view><text>智能吃饭</text><text class="ui-strong">两个入口，直接开始</text></view></view>
-      <view class="core-actions">
-        <button v-for="entry in coreEntries" :key="entry.id" class="core-action" @tap="openEntry(entry)">
-          <view class="entry-icon"><image :src="entry.icon" mode="aspectFit" /></view>
-          <view class="entry-copy"><text class="ui-strong">{{ entry.label }}</text><text>{{ entry.description }}</text></view>
-          <text class="entry-arrow">›</text>
-        </button>
+      <view class="home-secondary">
+        <view class="home-section explore-section">
+          <view class="section-heading"><view><text>校园服务</text><text>食堂、排行与个人档案</text></view></view>
+          <view class="list-group explore-grid">
+            <sc-list-row v-for="entry in utilityEntries" :key="entry.id" :icon-name="entry.iconName" :title="entry.label" :description="entry.description" :meta="exploreDescription(entry)" :tone="entry.tone" @tap="openEntry(entry)" />
+          </view>
+        </view>
       </view>
     </view>
 
-    <view class="home-section explore-section">
-      <view class="section-heading"><view><text>更多探索</text><text class="ui-strong">常用功能，直接打开</text></view></view>
-      <view class="explore-grid">
-        <button v-for="entry in exploreEntries" :key="entry.id" class="explore-card" @tap="openEntry(entry)">
-          <view class="explore-icon"><image :src="entry.icon" mode="aspectFit" /></view>
-          <text class="ui-strong">{{ entry.label }}</text>
-          <text class="explore-note">{{ exploreDescription(entry) }}</text>
-        </button>
-      </view>
-    </view>
-
-    <view class="home-section community-section">
-      <view class="section-heading"><view><text>校园互动</text><text class="ui-strong">帖子与评价，一页切换</text></view></view>
-      <view class="community-grid">
-        <button v-for="entry in communityEntries" :key="entry.id" class="community-card" @tap="openEntry(entry)">
-          <view class="community-icon"><image :src="entry.icon" mode="aspectFit" /></view>
-          <view><text class="ui-strong">{{ entry.label }}</text><text>{{ entry.description }}</text></view>
-          <text class="entry-arrow">›</text>
-        </button>
-      </view>
-    </view>
   </sc-page-shell>
 </template>
 
 <script setup>
 import { computed, reactive, ref } from 'vue';
 import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
-import { COMMUNITY_ENTRY_IDS, CORE_ENTRY_IDS, EXPLORE_ENTRY_IDS, getStudentEntries } from '../../domain/studentNavigation.js';
+import { dishSupplyPresentation } from '../../domain/dishPresentation.js';
+import { CORE_ENTRY_IDS, EXPLORE_ENTRY_IDS, getStudentEntries } from '../../domain/studentNavigation.js';
 import { nextRevealState, resetRevealState } from '../../domain/studentDiscovery.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 
@@ -58,7 +53,7 @@ const onboardingPromptOpen = ref(false);
 const drawnThisVisit = new Set();
 const coreEntries = getStudentEntries(CORE_ENTRY_IDS);
 const exploreEntries = getStudentEntries(EXPLORE_ENTRY_IDS);
-const communityEntries = getStudentEntries(COMMUNITY_ENTRY_IDS);
+const utilityEntries = [...exploreEntries, { id:'health-profile', label:'健康档案', description:'管理过敏原、忌口和饮食目标', iconName:'safe', tone:'health', route:'/pages/health-profile/health-profile', navigationType:'navigateTo' }];
 const revealDishes = computed(() => {
   const picks = store.contextualRecommendation.value?.recommendations || [];
   const catalog = new Map(store.dishes.value.map((dish) => [String(dish.id), dish]));
@@ -66,6 +61,8 @@ const revealDishes = computed(() => {
   return hydrated.length ? hydrated : store.recommendation.value.dishes;
 });
 const revealDish = computed(() => revealDishes.value[revealState.index] || revealDishes.value[0] || null);
+const mealContext = computed(() => ({ breakfast:'早餐', lunch:'午餐', dinner:'晚餐' }[store.profile.value.mealType] || '今日餐次'));
+const greeting = computed(() => { const hour = new Date().getHours(); return hour < 11 ? '早上好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好'; });
 
 onShow(async () => {
   try {
@@ -89,11 +86,12 @@ async function handleReveal() {
 function resetReveal() { Object.assign(revealState, resetRevealState()); }
 function dishLocation(dish) { if (!dish) return ''; const stall = store.stalls.value.find((item) => item.id === dish.stallId); const canteen = store.canteens.value.find((item) => item.id === stall?.canteenId); return [canteen?.name, stall?.name].filter(Boolean).join(' · ') || '校园档口'; }
 function dishReason(dish) { if (!dish) return ''; if (Array.isArray(dish.why)) return dish.why.slice(0, 2).join(' · '); return dish.reason || '结合健康档案、评分与当前供应推荐。'; }
-function supplyLabel(dish) { if (!dish) return ''; if (dish.availability?.reason) return dish.availability.reason; const menu = store.todayMenu.value.dishes?.find((item) => String(item.id) === String(dish.id)); if (!menu) return '非今日供应'; return menu.supplyStatus === 'sold_out' ? '今日售罄' : menu.supplyStatus === 'limited' ? '库存紧张' : '今日可点'; }
+function supplyLabel(dish) { if (!dish) return ''; const menu = store.todayMenu.value.dishes?.find((item) => String(item.id) === String(dish.id)); return dishSupplyPresentation(dish, menu || null).label; }
 function openDishDetail(id) { uni.navigateTo({ url: `/pages/dish-detail/dish-detail?id=${encodeURIComponent(id)}` }); }
 function exploreDescription(entry) {
   if (entry.id === 'canteens') return `${store.canteens.value.length} 座食堂`;
   if (entry.id === 'rankings') return '真实评分榜';
+  if (entry.id === 'health-profile') return store.profile.value.onboardingStatus === 'completed' ? '已同步' : '待完善';
   return '六种风味';
 }
 function openEntry(entry) {
@@ -121,37 +119,44 @@ function promptHealthProfile() {
 </script>
 
 <style scoped>
-.home-section { margin-top:28rpx; }
-.section-heading { display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:14rpx; }
-.section-heading text,.section-heading .ui-strong { display:block; }
-.section-heading text { color:var(--section-tone, var(--brand)); font-size:22rpx; font-weight:500; }
-.section-heading .ui-strong { margin-top:4rpx; color:var(--ink); font-size:30rpx; font-weight:600; line-height:1.35; }
-.core-section,.explore-section { --section-tone:var(--brand); }
-.community-section { --section-tone:var(--community); }
-.core-actions { display:flex; flex-direction:column; gap:12rpx; }
-.core-action { display:flex; align-items:center; gap:14rpx; width:100%; min-height:96rpx; padding:10rpx 16rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:left; box-shadow:var(--shadow-soft); box-sizing:border-box; }
-.entry-icon { display:flex; align-items:center; justify-content:center; width:54rpx; height:54rpx; flex:0 0 54rpx; border-radius:12rpx; background:var(--brand-soft); }
-.entry-icon image { width:32rpx; height:32rpx; }
-.entry-copy { flex:1; min-width:0; }
-.entry-copy .ui-strong,.entry-copy text { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.entry-copy .ui-strong { color:var(--ink); font-size:27rpx; font-weight:600; }
-.entry-copy text { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
-.entry-arrow { color:#96a199; font-size:36rpx; }
-.explore-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10rpx; }
-.explore-card { display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:0; min-height:144rpx; padding:14rpx 8rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:center; box-shadow:var(--shadow-soft); box-sizing:border-box; }
-.explore-icon { display:flex; align-items:center; justify-content:center; width:50rpx; height:50rpx; margin-bottom:8rpx; border-radius:14rpx; background:var(--brand-soft); }
-.explore-icon image { width:30rpx; height:30rpx; }
-.explore-card .ui-strong,.explore-note { display:block; max-width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.explore-card .ui-strong { color:var(--ink); font-size:24rpx; font-weight:600; }
-.explore-note { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
-.community-grid { display:flex; flex-direction:column; gap:10rpx; }
-.community-card { display:flex; align-items:center; gap:12rpx; width:100%; min-height:92rpx; padding:10rpx 14rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:left; box-shadow:var(--shadow-soft); box-sizing:border-box; }
-.community-icon { display:flex; align-items:center; justify-content:center; width:50rpx; height:50rpx; flex:0 0 50rpx; border-radius:14rpx; background:var(--community-soft); }
-.community-icon image { width:30rpx; height:30rpx; }
-.community-card>view:nth-child(2) { flex:1; min-width:0; }
-.community-card .ui-strong,.community-card>view:nth-child(2)>text { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.community-card .ui-strong { color:var(--ink); font-size:26rpx; font-weight:600; }
-.community-card>view:nth-child(2)>text { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
-.core-action:active,.explore-card:active { transform:scale(.985); opacity:.92; background:var(--surface-soft); }
-.community-card:active { transform:scale(.985); opacity:.92; background:var(--surface-soft); }
+.home-hero-inner { width:100%; max-width:1120px; margin:0 auto; padding:18px var(--page-gutter) 20px; background:transparent; box-sizing:border-box; }
+.home-layout,.home-primary,.home-secondary { min-width:0; }
+.home-section { margin-top:4px; }
+.section-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.section-heading view text { display:block; color:var(--ink); font-size:16px; font-weight:600; }
+.section-heading view text+text { margin-top:3px; color:var(--muted); font-size:12px; font-weight:400; }
+.section-heading>text { flex:0 0 auto; color:var(--brand-dark); font-size:12px; font-weight:600; }
+.core-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.core-action { display:grid; grid-template-columns:36px minmax(0,1fr) 20px; min-width:0; min-height:68px; align-items:center; gap:10px; padding:12px 14px; border:1px solid var(--brand-line); border-radius:var(--radius-large); background:var(--brand-soft); text-align:left; transition:background-color var(--motion-base) var(--ease-standard),transform var(--motion-fast) var(--ease-standard); }
+.core-action.core-1 { border-color:var(--info-line); background:var(--info-soft); }
+.core-icon { display:flex; width:36px; height:36px; align-items:center; justify-content:center; border-radius:8px; color:var(--brand-dark); background:#fff; }
+.core-1 .core-icon { color:var(--info); }
+.entry-copy { min-width:0; }
+.entry-copy .ui-strong,.entry-copy text { display:block; overflow:hidden; }
+.entry-copy .ui-strong { color:var(--ink); font-size:14px; font-weight:600; white-space:nowrap; text-overflow:ellipsis; }
+.entry-copy text { display:-webkit-box; margin-top:3px; overflow:hidden; color:var(--muted); font-size:12px; line-height:1.4; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+.core-action:active { transform:translateY(1px); background:#ffe5e7; }.core-action.core-1:active { background:#e3e9ff; }
+.explore-grid { margin-bottom:0; background:var(--surface); }
+@media (max-width:359px) {
+  .core-action { grid-template-columns:32px minmax(0,1fr); gap:8px; padding:12px; }
+  .core-icon { width:32px; height:32px; }
+  .core-arrow { display:none; }
+}
+@media (max-width:479px) { .core-actions { grid-template-columns:1fr; }.core-action { min-height:68px; }.entry-copy text { -webkit-line-clamp:1; } }
+@media (min-width:360px) and (max-width:479px) and (max-height:900px) {
+  .home-hero-inner { padding-top:12px; padding-bottom:14px; }
+  .section-heading { margin-bottom:8px; }
+  .core-actions { gap:8px; }
+  .core-action { min-height:64px; }
+}
+@media (min-width:480px) and (max-width:767px) { .core-action { min-height:82px; } }
+@media (min-width:768px) {
+  .home-hero-inner { padding-top:24px; padding-bottom:28px; }
+  .home-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,1fr); gap:28px; align-items:start; }
+  .home-section { margin-top:0; }
+  .core-actions { grid-template-columns:1fr; }
+  .core-action { min-height:68px; }
+}
+@media (min-width:1024px) { .core-actions { grid-template-columns:1fr 1fr; }.core-action { min-height:92px; } }
+@media (min-width:768px) and (max-height:700px) { .home-hero-inner { padding-top:12px; padding-bottom:14px; }.home-layout { gap:20px; } }
 </style>

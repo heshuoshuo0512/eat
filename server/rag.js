@@ -6,6 +6,8 @@ import {
   isChatProviderEnabled,
   isEmbeddingProviderEnabled,
 } from './aiProvider.js';
+import { buildDishFacts } from './diningFacts.js';
+import { normalizeDishPricing } from './dishPricing.js';
 
 // Compatibility API for older callers. New application flows use retrievalIndex + retrievalService.
 
@@ -32,6 +34,8 @@ export function buildDishDocuments(dishes, stalls = [], canteens = []) {
     const canteen = canteens.find((item) => item.id === stall?.canteenId);
     const parentCanteen = canteen?.parentId ? canteens.find((item) => item.id === canteen.parentId) : null;
     const nutrition = dish.nutrition || {};
+    const facts = buildDishFacts(dish);
+    const pricing = normalizeDishPricing(dish, dish.price);
     const fiber = dish.fiber || 0;
     const sodium = dish.sodium || 0;
     const sugar = dish.sugar || 0;
@@ -44,8 +48,19 @@ export function buildDishDocuments(dishes, stalls = [], canteens = []) {
       sourceId: dish.id,
       title: dish.name,
       name: dish.name,
-      content: `${dish.name}，${dish.cuisine}，${dish.taste}，${dish.description || ''}。食材：${dish.ingredients.join('、')}。标签：${dish.tags.join('、')}。营养：${nutrition.calories} kcal，蛋白 ${nutrition.protein}g，脂肪 ${nutrition.fat}g，碳水 ${nutrition.carbs}g，膳食纤维 ${fiber}g，钠 ${sodium}mg，糖 ${sugar}g，钙 ${calcium}mg，铁 ${iron}mg。食堂层级：${locationParts || '未知'}。价格 ${dish.price} 元。`,
-      metadata: { dishId: dish.id, stallId: dish.stallId, canteenId: canteen?.id, parentCanteenId: canteen?.parentId || null, canteenType: canteen?.canteenType || 'primary', price: dish.price, halal: dish.halal, fiber, sodium, sugar, calcium, iron }
+      content: [
+        `${dish.name}，${dish.cuisine}，${dish.taste}，${dish.description || ''}`,
+        `食材：${dish.ingredients.join('、') || '未标注'}`,
+        `标签：${dish.tags.join('、') || '无'}`,
+        facts.factStatus.nutrition === 'unknown'
+          ? '营养：待核验'
+          : `营养：${nutrition.calories} kcal，蛋白 ${nutrition.protein}g，脂肪 ${nutrition.fat}g，碳水 ${nutrition.carbs}g，膳食纤维 ${fiber}g，钠 ${sodium}mg，糖 ${sugar}g，钙 ${calcium}mg，铁 ${iron}mg`,
+        `过敏原：${facts.declarations.some((item) => item.status === 'unknown') ? '数据库尚未确认' : (dish.allergens || []).join('、') || '未标注'}`,
+        `食堂层级：${locationParts || '未知'}`,
+        `价格：${pricing.display}`,
+        '供应：目录菜品，今日供应尚未确认',
+      ].join('。'),
+      metadata: { dishId: dish.id, stallId: dish.stallId, canteenId: canteen?.id, parentCanteenId: canteen?.parentId || null, canteenType: canteen?.canteenType || 'primary', price: dish.price, priceDisplay: pricing.display, pricing, halal: dish.halal, fiber, sodium, sugar, calcium, iron, factStatus: facts.factStatus, availabilityStatus: 'catalog_only' }
     };
   });
 }

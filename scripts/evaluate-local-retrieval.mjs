@@ -122,14 +122,14 @@ try {
   if (options.reindex) {
     indexing.push(await reindexRetrieval(db, {
       tenantId: GLOBAL_KNOWLEDGE_TENANT_ID,
-      sourceTypes: ['campus_dining_knowledge'],
+      sourceTypes: ['campus_dining_knowledge', 'health_knowledge'],
       vectorMode: 'active',
       embeddingDimension: provider.dimension,
       embeddingBatchSize: provider.batchSize,
     }));
     indexing.push(await reindexRetrieval(db, {
       tenantId: 'default',
-      sourceTypes: ['dish', 'health_knowledge'],
+      sourceTypes: ['dish', 'campus_policy'],
       vectorMode: 'active',
       embeddingDimension: provider.dimension,
       embeddingBatchSize: provider.batchSize,

@@ -10,6 +10,7 @@ dist/
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
+data/imports/real/
 uploads/*
 !uploads/.gitkeep
 .env
@@ -21,3 +22,6 @@ unpackage/
 miniapp/dist/
 miniapp/node_modules/
 miniapp/unpackage/
+artifacts/miniapp-ui/
+__pycache__/
+*.py[cod]

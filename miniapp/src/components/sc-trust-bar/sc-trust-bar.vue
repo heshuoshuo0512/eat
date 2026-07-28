@@ -18,10 +18,10 @@ const metrics = computed(() => [
 </script>
 
 <style scoped>
-.trust-bar { display:flex; margin-bottom:20rpx; overflow:hidden; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
-.trust-bar view { flex:1; min-width:0; padding:16rpx 8rpx; border-right:1rpx solid var(--line); text-align:center; }
+.trust-bar { display:flex; margin-bottom:16px; overflow:hidden; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.trust-bar view { flex:1; min-width:0; padding:10px 6px; border-right:1px solid var(--line); text-align:center; }
 .trust-bar view:last-child { border-right:0; }
 .trust-bar text,.trust-bar .ui-strong { display:block; }
-.trust-bar text { overflow:hidden; color:var(--muted); font-size:22rpx; white-space:nowrap; text-overflow:ellipsis; }
-.trust-bar .ui-strong { margin-top:4rpx; color:var(--brand-dark); font-size:28rpx; font-weight:600; }
+.trust-bar text { overflow:hidden; color:var(--muted); font-size:12px; white-space:nowrap; text-overflow:ellipsis; }
+.trust-bar .ui-strong { margin-top:3px; color:var(--ink); font-size:14px; font-weight:600; }
 </style>

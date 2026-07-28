@@ -228,6 +228,26 @@ node --test tests/enterprise-api.test.mjs # 企业 API 测试
 | `S3_BUCKET` | 无 | 配置后切换到 S3/MinIO 对象存储 |
 | `UPLOAD_URL_TTL_SECONDS` | `900` | 上传内容短期签名 URL 的有效秒数 |
 
+### 可信拍照识餐 MVP
+
+拍照识餐采用“食堂/档口/已发布菜单过滤 + SigLIP 图片向量召回 + 多模态复核 + 用户确认”。图片模型只输出可见菜名、食材、做法和质量判断，食堂、档口、价格及营养事实均来自当前租户的关系数据库。确认菜品前不会返回可信营养；缺少已审核配方时返回 `unknown`，不会填充默认数字。
+
+试点数据按一个食堂、80-100 道高频菜建设。每道菜至少准备 8 张 `reference` 图片和 4 张独立 `evaluation` 图片；测试图不会生成检索向量。管理员先通过 `/api/uploads` 上传图片，再在菜品编辑器中绑定、审核和生成向量。批准配方后，系统使用受治理的食物成分参考库计算带来源 ID 的营养区间。
+
+视觉观察和候选复核复用 OpenAI-compatible AI 配置，所选模型必须支持多图片输入和结构化 JSON。向量服务可单独启动：
+
+```bash
+# Docker 内 API 使用服务名访问向量服务
+VISION_EMBEDDING_BASE_URL=http://vision-embedding:8090 docker compose --profile vision up --build
+
+# API 在宿主机运行时使用映射端口
+VISION_EMBEDDING_BASE_URL=http://127.0.0.1:8090 npm run dev:api
+```
+
+相关变量：`AI_VISION_MODEL`、`VISION_EMBEDDING_BASE_URL`、`VISION_EMBEDDING_MODEL`、`VISION_EMBEDDING_DIMENSION=768` 和 `VISION_EMBEDDING_TIMEOUT_MS`。`VISION_AUTO_MATCH_ENABLED` 默认关闭；离线 Top 1 精确率和 Top 3 召回率达到门槛前，所有结果都要求用户确认。普通用户原图只临时处理，数据库仅保存 SHA-256、结构化观察、候选和反馈。
+
+租户管理员可通过 `GET /api/admin/vision/metrics?days=30` 查看候选覆盖率、识别 P95、用户改选率、模型成本和菜品/档口混淆对。只有累计至少 5,000 张用户授权且已确认照片、目标菜品每类至少 50 张，并且检索方案仍未达到指标时，才进入专用分类器或视觉编码器微调评估。
+
 ### 菜单、AI 配额与上传运维
 
 - `GET /api/menus/today` 返回今日真实供餐；`source=menu` 表示来自已发布菜单，`source=fallback` 表示菜品库兜底。
@@ -292,6 +312,18 @@ graph TD
 - 上传建议切到 S3/MinIO/OSS。
 - 使用 HTTPS。
 - 配置数据库备份。
+
+## 核心知识库治理
+
+首批营养、健身、食物成分、过敏与食品安全、校园制度知识采用审核快照，不在问答时实时抓取。健康和安全知识存放于 `__global__`，校园制度按租户隔离；未知菜品营养和过敏原不会被外部同名菜谱补全。
+
+```bash
+npm run validate:knowledge-kb     # 校验来源、许可、哈希和审核状态
+npm run eval:knowledge-kb         # 运行 120 条冻结检索与安全评测
+npm run check:knowledge-sources   # 生成上游来源月检报告，不自动发布
+```
+
+完整接入、版权和安全边界见 `docs/健康知识库接入说明.md`。
 
 ## 小程序迁移路径
 

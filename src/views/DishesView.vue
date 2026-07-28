@@ -58,13 +58,13 @@
         <span v-else class="emoji large">{{ dish.image }}</span>
         <span class="dish-card-info">
           <strong>{{ dish.name }}</strong>
-          <small class="muted">{{ dish.cuisine }} · {{ dish.taste }} · ¥{{ dish.price }}</small>
-          <small class="muted">{{ dish.nutrition?.calories || 0 }} kcal · 蛋白 {{ dish.nutrition?.protein || 0 }}g · 脂肪 {{ dish.nutrition?.fat || 0 }}g · 碳水 {{ dish.nutrition?.carbs || 0 }}g</small>
+          <small class="muted">{{ dish.cuisine }} · {{ dish.taste || '口味待核验' }} · {{ dishPriceText(dish) }}</small>
+          <small class="muted">{{ dishNutritionPresentation(dish).label }}</small>
           <small v-if="dishLocation(dish)" class="dish-location">{{ dishLocation(dish) }}</small>
           <small :class="['supply-badge', supplyState(dish).className]">{{ supplyState(dish).label }}</small>
           <RagTrustState :item="dish" compact />
         </span>
-        <span class="rating">{{ dish.displayRating.toFixed(1) }}</span>
+        <span class="rating">{{ dishRatingText(dish) }}</span>
       </button>
       <p v-if="!sortedDishes.length" class="muted empty-dishes">暂无有效菜品。</p>
     </div>
@@ -86,7 +86,7 @@
       </div>
 
       <div class="meta-row">
-        <span class="pill">¥{{ detail.price }}</span>
+        <span class="pill">{{ dishPriceText(detail) }}</span>
         <span class="pill">{{ detail.cuisine }}</span>
         <span class="pill">{{ detail.taste }}</span>
         <span v-if="detail.halal" class="pill halal-badge">清真</span>
@@ -95,7 +95,7 @@
       <RagTrustState :item="detail" />
 
       <!-- Expanded nutrition -->
-      <div class="nutrition-grid">
+      <div v-if="dishNutritionPresentation(detail).known" class="nutrition-grid">
         <span><strong>{{ detail.nutrition?.calories || 0 }}</strong><small>kcal</small></span>
         <span><strong>{{ detail.nutrition?.protein || 0 }}g</strong><small>蛋白</small></span>
         <span><strong>{{ detail.nutrition?.fat || 0 }}g</strong><small>脂肪</small></span>
@@ -106,6 +106,7 @@
         <span v-if="detail.nutrition?.calcium != null"><strong>{{ detail.nutrition.calcium }}mg</strong><small>钙</small></span>
         <span v-if="detail.nutrition?.iron != null"><strong>{{ detail.nutrition.iron }}mg</strong><small>铁</small></span>
       </div>
+      <p v-else class="muted nutrition-unverified">营养待核验，当前不会把数据库占位零值作为真实营养结论。</p>
 
       <div class="tag-row">
         <span v-for="tag in detail.tags" :key="tag" class="pill">{{ tag }}</span>
@@ -160,6 +161,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch, watchEffect } from
 import { RouterLink, useRoute } from 'vue-router';
 import RagTrustState from '../components/RagTrustState.vue';
 import SmartMealComposer from '../components/SmartMealComposer.vue';
+import { dishNutritionPresentation, dishPriceText, dishRatingText, dishSupplyPresentation } from '../domain/dishPresentation.js';
 import { buildProfilePrompts, compactCitationSnippet, createRatingMap, sortDishesByRating, visibleCitations } from '../domain/studentDiscovery.js';
 import { validateReviewForm } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
@@ -180,29 +182,8 @@ const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) =>
 const ratingById = computed(() => createRatingMap(store.rankings.dishes));
 
 function supplyState(dish) {
-  if (dish.availability && typeof dish.availability === 'object') {
-    const status = dish.availability.status || (dish.availability.orderable ? 'available' : 'unavailable');
-    const labelMap = {
-      available: '今日可点',
-      limited: '库存紧张',
-      sold_out: '今日售罄',
-      off_menu: '非今日供应',
-      outside_serving_hours: '未到供应时段',
-      unavailable: '当前不可点'
-    };
-    const classMap = { available: 'available', limited: 'limited', sold_out: 'sold-out' };
-    return {
-      label: dish.availability.reason || labelMap[status] || '当前不可点',
-      className: classMap[status] || 'off-menu',
-      canOrder: dish.availability.orderable === true
-    };
-  }
   const menuDish = todayMenuMap.value.get(dish.id);
-  if (!menuDish) return { label: '非今日供应', className: 'off-menu', canOrder: false };
-  const status = menuDish.supplyStatus || 'available';
-  if (status === 'sold_out') return { label: '今日售罄', className: 'sold-out', canOrder: false };
-  if (status === 'limited') return { label: '库存紧张', className: 'limited', canOrder: true };
-  return { label: '今日可点', className: 'available', canOrder: true };
+  return dishSupplyPresentation(dish, menuDish || null);
 }
 
 function isFavorite(dishId) {

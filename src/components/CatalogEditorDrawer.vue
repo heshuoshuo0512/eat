@@ -67,6 +67,31 @@
                     </div>
                     <p v-if="visionMessage" :class="['catalog-form-message', { error: visionError }]" role="status">{{ visionMessage }}</p>
                   </div>
+                  <div v-if="mode === 'edit' && item?.id" class="catalog-reference-manager">
+                    <div class="catalog-form-section-title"><strong>菜品识别参考图</strong><span>参考图用于检索；评测图永不进入向量索引</span></div>
+                    <div class="catalog-form-grid two">
+                      <label>图片用途
+                        <select v-model="referencePurpose"><option value="reference">检索参考图</option><option value="evaluation">独立评测图</option></select>
+                      </label>
+                      <label>出品批次<input v-model="referenceBatchKey" placeholder="例如 2026-07-28-lunch" /></label>
+                    </div>
+                    <label>上传图片<input type="file" accept="image/png,image/jpeg,image/webp" :disabled="referenceLoading" @change="selectReferenceImage" /></label>
+                    <div class="catalog-vision-actions">
+                      <button class="secondary" type="button" :disabled="referenceLoading || !referenceFile" @click="uploadReferenceImage">{{ referenceLoading ? '处理中...' : '上传待审核' }}</button>
+                      <button class="ghost" type="button" :disabled="referenceLoading || !referenceImages.some((entry) => entry.qualityStatus === 'approved' && entry.purpose === 'reference')" @click="reindexReferenceImages">生成视觉向量</button>
+                    </div>
+                    <p v-if="referenceMessage" :class="['catalog-form-message', { error: referenceError }]" role="status">{{ referenceMessage }}</p>
+                    <div v-if="referenceImages.length" class="catalog-reference-list">
+                      <article v-for="entry in referenceImages" :key="entry.id">
+                        <img :src="entry.imageUrl" :alt="entry.purpose === 'evaluation' ? '评测图' : '参考图'" />
+                        <div><strong>{{ entry.purpose === 'evaluation' ? '评测图' : '参考图' }}</strong><small>{{ entry.batchKey || '未标批次' }} · {{ entry.qualityStatus }} · {{ entry.embeddingStatus }}</small></div>
+                        <div class="catalog-reference-actions">
+                          <button v-if="entry.qualityStatus !== 'approved'" type="button" class="ghost" title="审核通过" @click="reviewReference(entry, 'approved')">通过</button>
+                          <button type="button" class="ghost" title="删除参考图" @click="removeReference(entry)">删除</button>
+                        </div>
+                      </article>
+                    </div>
+                  </div>
                 </template>
               </CatalogDishFormFields>
             </template>
@@ -90,6 +115,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { dishNutritionPresentation, dishPriceText } from '../domain/dishPresentation.js';
 import { validateImageFile } from '../domain/validation.js';
 import CatalogAreaFormFields from './CatalogAreaFormFields.vue';
 import CatalogDishFormFields from './CatalogDishFormFields.vue';
@@ -120,6 +146,13 @@ const visionFile = ref(null);
 const visionLoading = ref(false);
 const visionMessage = ref('');
 const visionError = ref(false);
+const referenceFile = ref(null);
+const referencePurpose = ref('reference');
+const referenceBatchKey = ref('');
+const referenceImages = ref([]);
+const referenceLoading = ref(false);
+const referenceMessage = ref('');
+const referenceError = ref(false);
 const DEFAULT_MEAL_TYPES = ['lunch', 'dinner'];
 let operationGeneration = 0;
 let previouslyFocusedElement = null;
@@ -140,7 +173,7 @@ const stallOptions = computed(() => {
   ) && (!entry.parentId || entry.id === currentStallId));
 });
 const dirty = computed(() => mode.value !== 'view' && JSON.stringify(form) !== initialSnapshot.value);
-const busy = computed(() => saving.value || uploadingImage.value || visionLoading.value);
+const busy = computed(() => saving.value || uploadingImage.value || visionLoading.value || referenceLoading.value);
 const errorKindLabel = computed(() => ({
   permission: '权限不足',
   validation: '请修正表单',
@@ -174,13 +207,12 @@ const viewFields = computed(() => {
     { label: '营业状态', value: value.open ? '营业中' : '暂停营业' },
     { label: '简介', value: value.description }
   ];
-  const nutrition = value.nutrition && typeof value.nutrition === 'object' ? value.nutrition : {};
   return [
     { label: '所属档口', value: stall.value?.name },
-    { label: '价格', value: value.price == null ? '' : `¥${value.price}` },
+    { label: '价格', value: dishPriceText(value) },
     { label: '口味 / 菜系', value: [value.taste, value.cuisine].filter(Boolean).join(' / ') },
     { label: '食材', value: listText(value.ingredients).replace(/, /g, '、') },
-    { label: '营养', value: `${nutrition.calories || 0} kcal · 蛋白质 ${nutrition.protein || 0}g` },
+    { label: '营养', value: dishNutritionPresentation(value).label },
     { label: '状态', value: value.status === 'hidden' ? '已隐藏' : '上架中' },
     { label: '描述', value: value.description }
   ];
@@ -197,6 +229,10 @@ function resetForm() {
   imageMessage.value = '';
   imageError.value = false;
   clearVisionImage();
+  referenceFile.value = null;
+  referenceImages.value = [];
+  referenceMessage.value = '';
+  referenceError.value = false;
   const value = item.value || {};
   if (entityType.value === 'venue' || entityType.value === 'area') {
     Object.assign(form, {
@@ -207,7 +243,7 @@ function resetForm() {
   } else if (entityType.value === 'stall') {
     Object.assign(form, {
       id: mode.value === 'edit' ? value.id || '' : '', canteenId: value.canteenId || area.value?.id || '',
-      name: value.name || '', floor: value.floor || '1F', category: value.category || '', rating: value.rating ?? 4.5,
+      name: value.name || '', floor: value.floor || '1F', category: value.category || '', rating: value.rating ?? 0,
       avgPrice: value.avgPrice ?? 15, open: value.open !== false, description: value.description || ''
     });
   } else {
@@ -221,14 +257,83 @@ function resetForm() {
       nutritionFactStatus: value.factStatus?.nutrition || 'unknown', recipeFactStatus: value.factStatus?.recipe || 'unknown',
       halalFactStatus: value.factStatus?.halal || 'unknown', dietaryFactStatus: value.factStatus?.dietary || 'unknown',
       spiceFactStatus: value.factStatus?.spice || 'unknown', factSource: value.factSource || 'manual', dataVersion: value.dataVersion || 'manual-v1',
-      calories: nutrition.calories ?? 500, protein: nutrition.protein ?? 25,
-      fat: nutrition.fat ?? 12, carbs: nutrition.carbs ?? 60, fiber: value.fiber ?? 0, sodium: value.sodium ?? 0,
+      calories: nutrition.calories ?? 0, protein: nutrition.protein ?? 0,
+      fat: nutrition.fat ?? 0, carbs: nutrition.carbs ?? 0, fiber: value.fiber ?? 0, sodium: value.sodium ?? 0,
       sugar: value.sugar ?? 0, calcium: value.calcium ?? 0, iron: value.iron ?? 0, image: value.image || '🍽️',
       imageUrl: value.imageUrl || '', description: value.description ?? '', status: value.status || 'active',
-      rating: value.rating ?? 4.5, reviewCount: value.reviewCount ?? 0, sales: value.sales ?? 0
+      rating: value.rating ?? 0, reviewCount: value.reviewCount ?? 0, sales: value.sales ?? 0
     });
   }
   initialSnapshot.value = JSON.stringify(form);
+}
+
+async function loadReferenceImages() {
+  if (entityType.value !== 'dish' || mode.value !== 'edit' || !item.value?.id) return;
+  try {
+    const response = await store.listDishReferenceImages(item.value.id);
+    referenceImages.value = response.images || [];
+  } catch (error) {
+    referenceMessage.value = error.message || '参考图加载失败。';
+    referenceError.value = true;
+  }
+}
+
+function selectReferenceImage(event) {
+  const selected = event.target.files?.[0];
+  referenceMessage.value = '';
+  referenceError.value = false;
+  if (!selected) { referenceFile.value = null; return; }
+  const error = validateImageFile(selected);
+  if (error) { referenceFile.value = null; referenceMessage.value = error; referenceError.value = true; return; }
+  referenceFile.value = selected;
+  referenceMessage.value = '图片已选择，上传后还需审核。';
+}
+
+async function uploadReferenceImage() {
+  if (!referenceFile.value || !item.value?.id || referenceLoading.value) return;
+  referenceLoading.value = true;
+  referenceError.value = false;
+  try {
+    const selected = referenceFile.value;
+    const uploaded = await store.uploadImage({ filename: selected.name, contentType: selected.type, dataBase64: await fileToBase64(selected) });
+    const response = await store.addDishReferenceImage(item.value.id, { uploadId: uploaded.id, purpose: referencePurpose.value, batchKey: referenceBatchKey.value, qualityStatus: 'pending' });
+    referenceImages.value = response.images || [];
+    referenceFile.value = null;
+    referenceMessage.value = '图片已上传为待审核素材。';
+  } catch (error) {
+    referenceMessage.value = error.message || '参考图上传失败。';
+    referenceError.value = true;
+  } finally { referenceLoading.value = false; }
+}
+
+async function reviewReference(entry, qualityStatus) {
+  referenceLoading.value = true;
+  try {
+    await store.updateDishReferenceImage(entry.id, { qualityStatus });
+    await loadReferenceImages();
+    referenceMessage.value = qualityStatus === 'approved' ? '参考图已审核，可生成视觉向量。' : '参考图状态已更新。';
+  } catch (error) { referenceMessage.value = error.message; referenceError.value = true; }
+  finally { referenceLoading.value = false; }
+}
+
+async function removeReference(entry) {
+  referenceLoading.value = true;
+  try {
+    const response = await store.deleteDishReferenceImage(entry.id);
+    referenceImages.value = response.images || [];
+    referenceMessage.value = '参考图已删除。';
+  } catch (error) { referenceMessage.value = error.message; referenceError.value = true; }
+  finally { referenceLoading.value = false; }
+}
+
+async function reindexReferenceImages() {
+  referenceLoading.value = true;
+  try {
+    const response = await store.reindexDishReferenceImages({ dishId: item.value.id });
+    await loadReferenceImages();
+    referenceMessage.value = `视觉向量完成 ${response.indexed} 张，失败 ${response.failed} 张。`;
+  } catch (error) { referenceMessage.value = error.message; referenceError.value = true; }
+  finally { referenceLoading.value = false; }
 }
 
 function focusErrorField(error) {
@@ -381,7 +486,7 @@ async function save() {
       saved = await store.upsertStall({
         id: form.id || undefined, canteenId: text(form.canteenId, `所属${areaLabel.value}`), parentId: null,
         name: text(form.name, '档口名称', 2), floor: text(form.floor, '楼层'), category: text(form.category, '品类', 2),
-        rating: number(form.rating, '评分', 1, 5), avgPrice: number(form.avgPrice, '人均价格', 1, 200),
+        rating: number(form.rating, '评分', 0, 5), avgPrice: number(form.avgPrice, '人均价格', 1, 200),
         open: Boolean(form.open), description: String(form.description || '').trim()
       });
     } else {
@@ -496,7 +601,10 @@ watch(() => [
 ], () => {
   operationGeneration += 1;
   for (const key of Object.keys(form)) delete form[key];
-  if (props.open) resetForm();
+  if (props.open) {
+    resetForm();
+    loadReferenceImages();
+  }
 }, { immediate: true });
 
 watch(() => props.open, async (isOpen) => {
@@ -557,6 +665,14 @@ defineExpose({ requestClose, confirmDiscard, dirty, saving, busy });
 .catalog-image-preview { overflow: hidden; aspect-ratio: 16 / 9; border: 1px solid rgba(31, 122, 77, .14); border-radius: .45rem; background: #edf4ee; }
 .catalog-image-preview img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .catalog-vision-prefill { display: grid; gap: .75rem; border-top: 1px solid rgba(31, 122, 77, .12); padding-top: .85rem; }
+.catalog-reference-manager { display: grid; gap: .75rem; border-top: 1px solid rgba(31, 122, 77, .12); padding-top: .85rem; }
+.catalog-reference-list { display: grid; gap: .5rem; }
+.catalog-reference-list article { display: grid; grid-template-columns: 3rem minmax(0,1fr) auto; gap: .65rem; align-items: center; padding: .5rem; border: 1px solid rgba(31, 122, 77, .12); border-radius: .4rem; background: #fff; }
+.catalog-reference-list img { width: 3rem; height: 3rem; border-radius: .3rem; object-fit: cover; }
+.catalog-reference-list strong, .catalog-reference-list small { display: block; }
+.catalog-reference-list small { margin-top: .15rem; color: #6b776e; font-size: .7rem; }
+.catalog-reference-actions { display: flex; gap: .3rem; }
+.catalog-reference-actions button { min-height: 2rem; padding-inline: .45rem; }
 .catalog-vision-actions { display: flex; gap: .55rem; }
 .catalog-vision-actions button { min-height: 2.5rem; padding-inline: .8rem; }
 .catalog-view-list { margin: 0; display: grid; gap: .85rem; }

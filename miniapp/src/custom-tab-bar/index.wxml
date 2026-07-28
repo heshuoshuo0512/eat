@@ -1,0 +1,7 @@
+<view class="app-nav">
+  <view class="nav-selection tone-{{list[selected].id}} slot-{{selected}}"></view>
+  <view wx:for="{{list}}" wx:key="id" class="app-nav-item tone-{{item.id}} {{selected === index ? 'active' : ''}}" data-index="{{index}}" data-route="{{item.route}}" bindtap="switchTab">
+    <image class="nav-icon" src="{{selected === index ? item.activeIcon : item.icon}}" mode="aspectFit"></image>
+    <text>{{item.label}}</text>
+  </view>
+</view>

@@ -1,0 +1,218 @@
+[
+  {
+    "id": "nutrition-cn",
+    "expectedDocumentId": "nutrition-cn-balanced-diet",
+    "sourceType": "health_knowledge",
+    "safetyCritical": false,
+    "queries": [
+      "大学生怎么吃得更均衡",
+      "食物多样和规律进餐是什么意思",
+      "健康饮食是不是只吃一种低卡菜",
+      "减脂期间食堂怎样合理搭配",
+      "增肌是不是每餐只吃肉",
+      "一般学生的均衡饮食原则",
+      "主食蔬菜蛋白质怎么搭配",
+      "能不能极端节食快速减肥",
+      "一次点餐能判断饮食健康吗",
+      "中国居民膳食指南对学生选餐有什么帮助"
+    ]
+  },
+  {
+    "id": "nutrition-who",
+    "expectedDocumentId": "nutrition-who-healthy-diet",
+    "sourceType": "health_knowledge",
+    "safetyCritical": false,
+    "queries": [
+      "WHO 健康膳食强调什么",
+      "平衡适量多样的健康膳食",
+      "怎样少盐少糖选择食堂菜",
+      "蔬菜水果豆类全谷物为什么重要",
+      "国际健康饮食建议能覆盖中国指南吗",
+      "营养字段未知还能判断低盐吗",
+      "WHO 对高糖高盐食物怎么解释",
+      "一般人群健康膳食的四项原则",
+      "WHO 健康膳食建议能否替代中国指南",
+      "健康膳食中的充足和平衡是什么"
+    ]
+  },
+  {
+    "id": "fitness-meal",
+    "expectedDocumentId": "fitness-general-meal-structure",
+    "sourceType": "health_knowledge",
+    "safetyCritical": false,
+    "queries": [
+      "食堂减脂餐应该怎么组合",
+      "增肌餐要有主食蔬菜和蛋白质吗",
+      "没有营养数据能说这道菜高蛋白吗",
+      "减脂是不是由一道菜决定",
+      "增肌期间怎样兼顾预算和饱腹感",
+      "未知热量可以做卡路里筛选吗",
+      "训练期间普通食堂选餐思路",
+      "低脂标签需要什么证据",
+      "只有菜名能判断蛋白质含量吗",
+      "普通减脂增肌的长期饮食边界"
+    ]
+  },
+  {
+    "id": "fitness-recovery",
+    "expectedDocumentId": "fitness-recovery-boundary",
+    "sourceType": "health_knowledge",
+    "safetyCritical": false,
+    "queries": [
+      "运动前应该空腹吗",
+      "训练后食堂吃什么帮助恢复",
+      "运动后主食和蛋白质怎么搭配",
+      "普通训练后要不要补水",
+      "小程序能按体重推荐补剂剂量吗",
+      "能不能推荐激素帮助增肌",
+      "空腹训练燃脂靠谱吗",
+      "运动时胸痛还应该继续选餐吗",
+      "训练后正常餐食如何选择",
+      "竞技训练方案能由食堂小程序给吗"
+    ]
+  },
+  {
+    "id": "composition-fdc",
+    "expectedDocumentId": "composition-fdc-reference-policy",
+    "sourceType": "health_knowledge",
+    "safetyCritical": false,
+    "queries": [
+      "FoodData Central 数据能直接填校内菜品吗",
+      "FDC 每100克参考值是什么意思",
+      "同名菜为什么不能直接套营养数据",
+      "食材参考值和复合菜营养真值的区别",
+      "熟重生重用油酱料会影响营养吗",
+      "USDA 数据只能作为管理员估算吗",
+      "FDC ID 应该怎样保存",
+      "能用白米饭参考值覆盖食堂米饭吗",
+      "食物成分数据需要记录数据类型吗",
+      "参考营养为什么不能显示为已核验"
+    ]
+  },
+  {
+    "id": "taxonomy-foodon",
+    "expectedDocumentId": "taxonomy-foodon-reference-policy",
+    "sourceType": "health_knowledge",
+    "safetyCritical": false,
+    "queries": [
+      "FoodOn 在智慧食堂里有什么用",
+      "FOODON 标识能表示价格和库存吗",
+      "怎样对齐中英文食材名称",
+      "食材别名有歧义怎么办",
+      "FoodOn 能推断过敏原吗",
+      "食物分类和配方核验有什么区别",
+      "FoodOn 的 CC BY 署名要求",
+      "同义词匹配可以自动改菜品吗",
+      "外部食物本体是否提供本校营养事实",
+      "食材概念 ID 如何用于查询扩展"
+    ]
+  },
+  {
+    "id": "safety-school",
+    "expectedDocumentId": "safety-cn-school-food-regulation",
+    "sourceType": "health_knowledge",
+    "safetyCritical": true,
+    "queries": [
+      "学校集中用餐食品安全由什么规定约束",
+      "其他学校投诉流程能直接用于燕大吗",
+      "学校食堂食品安全疑虑怎么留痕",
+      "投诉电话没核验能不能展示",
+      "校内食品安全流程必须谁来确认",
+      "学校食品安全与营养健康管理规定",
+      "食堂供餐和外购食品是否属于集中用餐",
+      "食品安全问题需要记录哪些来源信息",
+      "能不能编造学校投诉处理时效",
+      "国家规定能替代燕大具体联系人吗"
+    ]
+  },
+  {
+    "id": "safety-allergy",
+    "expectedDocumentId": "safety-allergen-emergency",
+    "sourceType": "health_knowledge",
+    "safetyCritical": true,
+    "queries": [
+      "我对花生过敏可以自动放宽吗",
+      "菜品过敏原未知能说安全吗",
+      "交叉接触是什么意思",
+      "共用制作工具会有过敏风险吗",
+      "吃饭后呼吸困难怎么办",
+      "严重过敏反应应该继续问小程序吗",
+      "档口没有配料表怎么核实过敏原",
+      "喉咙紧和意识异常需要急救吗",
+      "过敏约束为什么必须是硬条件",
+      "系统能判断我的可耐受过敏原剂量吗"
+    ]
+  },
+  {
+    "id": "safety-unknown",
+    "expectedDocumentId": "safety-unknown-is-not-safe",
+    "sourceType": "health_knowledge",
+    "safetyCritical": true,
+    "queries": [
+      "unknown 是否表示不含过敏原",
+      "未标注花生能说不含花生吗",
+      "空过敏原列表是不是安全",
+      "待核验营养能按网络菜谱补吗",
+      "同名菜谱可以生成确定热量吗",
+      "什么证据可以改变菜品事实状态",
+      "没有审核人能把营养标成已确认吗",
+      "FoodData Central 能绕过校内审核吗",
+      "过敏信息未知应该怎样回答",
+      "营养值为零和营养未知有何区别"
+    ]
+  },
+  {
+    "id": "medical-boundary",
+    "expectedDocumentId": "medical-advice-boundary",
+    "sourceType": "health_knowledge",
+    "safetyCritical": true,
+    "queries": [
+      "能给我糖尿病治疗餐单吗",
+      "高血压应该吃什么药和菜",
+      "肾病患者能由小程序计算蛋白质吗",
+      "怀孕期间可以直接用普通减脂计划吗",
+      "进食障碍可以靠食堂推荐治疗吗",
+      "小程序能进行疾病诊断吗",
+      "需要疾病专项饮食应该咨询谁",
+      "能推荐个体补剂和药物剂量吗",
+      "急性症状是否进入普通问答",
+      "注册营养师和医生的转介边界"
+    ]
+  },
+  {
+    "id": "campus-facts",
+    "expectedDocumentId": "campus-current-fact-boundary",
+    "sourceType": "campus_policy",
+    "safetyCritical": false,
+    "queries": [
+      "燕大智慧食堂目前确认了哪些事实",
+      "目录菜品是不是今天一定供应",
+      "燕大菜品价格和计价方式来自哪里",
+      "当前是否有标准份和完整配方",
+      "校内菜品营养为什么是 unknown",
+      "网上同名菜能补燕大菜单数据吗",
+      "其他学校菜单可以当成本校事实吗",
+      "今日供应需要什么证据",
+      "燕大菜品清真状态已经核验了吗",
+      "目录和当日发布菜单有什么区别"
+    ]
+  },
+  {
+    "id": "campus-services",
+    "expectedDocumentId": "campus-services-unverified",
+    "sourceType": "campus_policy",
+    "safetyCritical": false,
+    "queries": [
+      "燕大食堂营业时间是什么",
+      "校园餐饮退款规则在哪里",
+      "食品安全投诉电话是多少",
+      "食堂失物招领怎么办",
+      "校医院联系方式是什么",
+      "燕大校内应急渠道在哪里",
+      "没核验的电话能不能编一个",
+      "其他高校退款流程能套用吗",
+      "管理员补录校园 FAQ 要记录什么",
+      "校园服务信息过期后还能回答吗"
+    ]
+  }
+]

@@ -1,0 +1,2762 @@
+[
+  {
+    "id": "reference-cooked-white-rice",
+    "canonicalName": "熟白米饭参考食材",
+    "aliases": [
+      "白米饭",
+      "米饭",
+      "熟米饭"
+    ],
+    "foodOnId": "FOODON:00004327",
+    "fdcId": 168878,
+    "fdcDescription": "Rice, white, long-grain, regular, enriched, cooked",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 130,
+      "proteinG": 2.69,
+      "fatG": 0.28,
+      "carbsG": 28.2,
+      "fiberG": 0.4,
+      "sodiumMg": 1
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168878",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:b1ac613314417623853240bc7cccc3c1518b4717ef802730ff915e3eff1b4aa1"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00004327",
+        "label": "rice",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:2a2842c47363249bf7d4653ceec0704e27a40147144bd33639e89222455dec34"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-hard-boiled-egg",
+    "canonicalName": "水煮全蛋参考食材",
+    "aliases": [
+      "水煮蛋",
+      "鸡蛋",
+      "熟鸡蛋"
+    ],
+    "foodOnId": "FOODON:03316061",
+    "fdcId": 173424,
+    "fdcDescription": "Egg, whole, cooked, hard-boiled",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 155,
+      "proteinG": 12.6,
+      "fatG": 10.6,
+      "carbsG": 1.12,
+      "fiberG": 0,
+      "sodiumMg": 124
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:173424",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:62655edfb048690fa8ddb3edd1c3cc8bbe76ad0fdfd34c7159776b802058a5c9"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03316061",
+        "label": "FOODON:03316061",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:75d2f5eda62d055cea6b7a6cc5cb1c5c65e99c77fd496c1f069d4a6f5a7604c9"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-roasted-chicken-breast",
+    "canonicalName": "烤鸡胸肉参考食材",
+    "aliases": [
+      "鸡胸肉",
+      "熟鸡胸",
+      "烤鸡胸"
+    ],
+    "foodOnId": "FOODON:00002703",
+    "fdcId": 171477,
+    "fdcDescription": "Chicken, broilers or fryers, breast, meat only, cooked, roasted",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 165,
+      "proteinG": 31,
+      "fatG": 3.57,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 74
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171477",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:da1e08de980dd7660760c68a58a8762d7f966ed938897fa073c658e356bf9065"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00002703",
+        "label": "FOODON:00002703",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:43498408d2c759ba76ff2bba11fc33799240e834c6585e55f934a36fa7da1a1b"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-firm-tofu",
+    "canonicalName": "北豆腐参考食材",
+    "aliases": [
+      "豆腐",
+      "硬豆腐",
+      "老豆腐"
+    ],
+    "foodOnId": "FOODON:00004697",
+    "fdcId": 172475,
+    "fdcDescription": "Tofu, raw, firm, prepared with calcium sulfate",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 144,
+      "proteinG": 17.3,
+      "fatG": 8.72,
+      "carbsG": 2.78,
+      "fiberG": 2.3,
+      "sodiumMg": 14
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172475",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:4f985561133242f415eae22c3c3ea390c60ade50f6980864fff3cbdde36b3d2d"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00004697",
+        "label": "tofu",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:c3a157d83e1974a3800d9944b723f9f626bed04ede1cd5ea30d14c416cca65fb"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-broccoli",
+    "canonicalName": "熟西兰花参考食材",
+    "aliases": [
+      "西兰花",
+      "青花菜",
+      "熟西兰花"
+    ],
+    "foodOnId": "FOODON:00003405",
+    "fdcId": 169967,
+    "fdcDescription": "Broccoli, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 35,
+      "proteinG": 2.38,
+      "fatG": 0.41,
+      "carbsG": 7.18,
+      "fiberG": 3.3,
+      "sodiumMg": 41
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169967",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:285684590191d2d27b1cd0a282e52b11ae3d239e64526e7e19afa74d01b7cfc6"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00003405",
+        "label": "FOODON:00003405",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:fb1e67eca9285acafa0be2d80d4d0c18a26e4236f565514346a45dff068e1321"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-brown-rice",
+    "canonicalName": "熟糙米饭参考食材",
+    "aliases": [
+      "糙米饭",
+      "糙米",
+      "熟糙米"
+    ],
+    "foodOnId": "FOODON:00004678",
+    "fdcId": 169704,
+    "fdcDescription": "Rice, brown, long-grain, cooked (Includes foods for USDA's Food Distribution Program)",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 123,
+      "proteinG": 2.74,
+      "fatG": 0.97,
+      "carbsG": 25.6,
+      "fiberG": 1.6,
+      "sodiumMg": 4
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169704",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:064e05d88e306eba79f7e52a086e69c44c95b39f55ee58426d2b5b4ab4858023"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00004678",
+        "label": "brown rice kernel (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:d127953bf319d8b5ced1abf4d53714085d7e2fef6e035eadb800e296f48e077f"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-oatmeal",
+    "canonicalName": "熟燕麦粥参考食材",
+    "aliases": [
+      "燕麦粥",
+      "熟燕麦",
+      "燕麦片粥"
+    ],
+    "foodOnId": "FOODON:03310806",
+    "fdcId": 173905,
+    "fdcDescription": "Cereals, oats, regular and quick, unenriched, cooked with water (includes boiling and microwaving), without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 71,
+      "proteinG": 2.54,
+      "fatG": 1.52,
+      "carbsG": 12,
+      "fiberG": 1.7,
+      "sodiumMg": 4
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:173905",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:348689ad8b787e1c109d06abce559bca6f60a872d0d3f38abbb26effdc35e31a"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03310806",
+        "label": "oatmeal (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:4a45d355153dc1e56a55f24f018db38ce1875ceee2a1d3c45cdddcbb6088df01"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-spaghetti",
+    "canonicalName": "熟意大利面参考食材",
+    "aliases": [
+      "意大利面",
+      "意面",
+      "熟意面"
+    ],
+    "foodOnId": "FOODON:03400220",
+    "fdcId": 169737,
+    "fdcDescription": "Pasta, cooked, enriched, without added salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 158,
+      "proteinG": 5.8,
+      "fatG": 0.93,
+      "carbsG": 30.9,
+      "fiberG": 1.8,
+      "sodiumMg": 1
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169737",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:1cc3d17885b237661a086ef40986e55d8c772a73ed4c0049e41ddb5ceceaa8cb"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03400220",
+        "label": "pasta dish (us cfr)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:d6c2cbcac5288018c10800e3a8114e98014e212c6b9a8ba769443d238eaeeb3c"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-wheat-noodles",
+    "canonicalName": "熟小麦面条参考食材",
+    "aliases": [
+      "面条",
+      "小麦面",
+      "熟面条"
+    ],
+    "foodOnId": "FOODON:03306944",
+    "fdcId": 168919,
+    "fdcDescription": "Noodles, egg, cooked, enriched, with added salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 138,
+      "proteinG": 4.54,
+      "fatG": 2.07,
+      "carbsG": 25.2,
+      "fiberG": 1.2,
+      "sodiumMg": 165
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168919",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:71d879b34c3cb1e64aaa11c3e73ab523f130a915aac356459896a524ce546445"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03306944",
+        "label": "noodle",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:5ca1a3485aa90495abcd198bb2a2660b9809450d9a7cd2b2028cc6e547bde19a"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-rice-noodles",
+    "canonicalName": "熟米粉参考食材",
+    "aliases": [
+      "米粉",
+      "米线",
+      "熟米粉"
+    ],
+    "foodOnId": "FOODON:00005555",
+    "fdcId": 168914,
+    "fdcDescription": "Rice noodles, cooked",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 108,
+      "proteinG": 1.79,
+      "fatG": 0.2,
+      "carbsG": 24,
+      "fiberG": 1,
+      "sodiumMg": 19
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168914",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:2797a7709f066166014dd9560af2c2bdc9dac4a09fc5c7660f2fc5afef3a8429"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00005555",
+        "label": "rice noodle",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:bd7cc15482b211c6af4f789282505959c4d26c69237beaae4e7d0b2cf49f53d5"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-whole-wheat-bread",
+    "canonicalName": "全麦面包参考食材",
+    "aliases": [
+      "全麦面包",
+      "全麦吐司",
+      "全麦切片"
+    ],
+    "foodOnId": "FOODON:03301119",
+    "fdcId": 172688,
+    "fdcDescription": "Bread, whole-wheat, commercially prepared",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 252,
+      "proteinG": 12.4,
+      "fatG": 3.5,
+      "carbsG": 42.7,
+      "fiberG": 6,
+      "sodiumMg": 455
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172688",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:3a239de2047414b7b17ad54fd768d1ecdcc491216e6eebd8ccaeeebd8d1e3a75"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03301119",
+        "label": "whole wheat bread",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:e9a2dfc1dd78d26f0b43faf2d42f841cc72b842e507ab058ec7b2676fcf0bd3b"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-white-bread",
+    "canonicalName": "白面包参考食材",
+    "aliases": [
+      "白面包",
+      "白吐司",
+      "吐司"
+    ],
+    "foodOnId": "FOODON:03301055",
+    "fdcId": 174924,
+    "fdcDescription": "Bread, white, commercially prepared (includes soft bread crumbs)",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 266,
+      "proteinG": 8.85,
+      "fatG": 3.33,
+      "carbsG": 49.4,
+      "fiberG": 2.7,
+      "sodiumMg": 490
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:174924",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:8c77d27ed526665c37b932aeea94a90f93ad40dfd2b8a5258a0aec34e71005c3"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03301055",
+        "label": "white bread",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:b51b0850c1833d7b6cc9148fcb4379e697de9cdf8b2c5a133f1b618bcf0f6de3"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-boiled-potato",
+    "canonicalName": "水煮土豆参考食材",
+    "aliases": [
+      "土豆",
+      "马铃薯",
+      "熟土豆"
+    ],
+    "foodOnId": "FOODON:00004345",
+    "fdcId": 170438,
+    "fdcDescription": "Potatoes, boiled, cooked in skin, flesh, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 87,
+      "proteinG": 1.87,
+      "fatG": 0.1,
+      "carbsG": 20.1,
+      "fiberG": 1.8,
+      "sodiumMg": 4
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170438",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:298772e63d1ee78d5f0ee91358d4bb03f52831aef0c2660a6355752e7d0819af"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00004345",
+        "label": "potato (with skin, boiled)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:eddd5f13d328b10247ea7e9d0dce00130408c3fdb2c27f6094ba8e94129593d5"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-baked-sweet-potato",
+    "canonicalName": "烤红薯参考食材",
+    "aliases": [
+      "红薯",
+      "地瓜",
+      "烤红薯"
+    ],
+    "foodOnId": "FOODON:00003759",
+    "fdcId": 168483,
+    "fdcDescription": "Sweet potato, cooked, baked in skin, flesh, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 90,
+      "proteinG": 2.01,
+      "fatG": 0.15,
+      "carbsG": 20.7,
+      "fiberG": 3.3,
+      "sodiumMg": 36
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168483",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:a0d9520355885d46695177a5aae03f67a6430247b3ec4f121415d28b41964dbe"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00003759",
+        "label": "yellow variety sweet potato",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:e8857e86d7d2610f16727403c47f5e6737c2164067e5d0305a35ba24cd3cbb2f"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-sweet-corn",
+    "canonicalName": "熟甜玉米参考食材",
+    "aliases": [
+      "玉米",
+      "甜玉米",
+      "熟玉米"
+    ],
+    "foodOnId": "FOODON:00003785",
+    "fdcId": 168401,
+    "fdcDescription": "Corn, sweet, yellow, frozen, kernels on cob, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 94,
+      "proteinG": 3.11,
+      "fatG": 0.74,
+      "carbsG": 22.3,
+      "fiberG": 2.8,
+      "sodiumMg": 4
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168401",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:6d25cf4bba01cfa31e3be1665bf36fc4cb6d0641da94201ce902cf6c2598f6a9"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00003785",
+        "label": "FOODON:00003785",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:cca1614a15bd00a67d8e4f1ae0875f1abd995d852f7047c8397c0ebae4f72f68"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-millet",
+    "canonicalName": "熟小米参考食材",
+    "aliases": [
+      "小米",
+      "小米饭",
+      "熟小米"
+    ],
+    "foodOnId": "FOODON:00004438",
+    "fdcId": 168871,
+    "fdcDescription": "Millet, cooked",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 119,
+      "proteinG": 3.51,
+      "fatG": 1,
+      "carbsG": 23.7,
+      "fiberG": 1.3,
+      "sodiumMg": 2
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168871",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:e8a3380dc7c0fb6af3f02ae9ecc6a3b17b09fa29be196a851349393bec978b7e"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00004438",
+        "label": "common millet (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:3044d4247f63fc40f8936a6c815cc0cba3bc7194525f0ac756ba94aa2645d28a"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-roasted-chicken-thigh",
+    "canonicalName": "烤鸡腿肉参考食材",
+    "aliases": [
+      "鸡腿肉",
+      "熟鸡腿",
+      "烤鸡腿肉"
+    ],
+    "foodOnId": "FOODON:00003358",
+    "fdcId": 172388,
+    "fdcDescription": "Chicken, broilers or fryers, thigh, meat only, cooked, roasted",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 179,
+      "proteinG": 24.8,
+      "fatG": 8.15,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 106
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172388",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:5c448f2d6d2cc6341cf4131d3afd3294c82ffc4737e58f9cec7e5e6091c6151c"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00003358",
+        "label": "chicken thigh (debonned)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:e90b1a364ecdfe320c400857141833f00cae8fe1f171a360bb704d9b97bb7781"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-roasted-chicken-leg",
+    "canonicalName": "烤鸡小腿参考食材",
+    "aliases": [
+      "鸡小腿",
+      "鸡腿",
+      "烤鸡腿"
+    ],
+    "foodOnId": "FOODON:03311139",
+    "fdcId": 172376,
+    "fdcDescription": "Chicken, broilers or fryers, dark meat, drumstick, meat only, cooked, roasted",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 155,
+      "proteinG": 24.2,
+      "fatG": 5.7,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 128
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172376",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:77b52b390a02b16cd5e98c680e916f875998df5fab070d80f528cbbec851a6ca"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03311139",
+        "label": "FOODON:03311139",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:324afa8ae2161b211d50cc4a589a3b792683930dcd9c53cb65e9370e6549a5c3"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-roasted-pork-loin",
+    "canonicalName": "烤猪里脊参考食材",
+    "aliases": [
+      "猪里脊",
+      "里脊肉",
+      "熟猪肉"
+    ],
+    "foodOnId": "FOODON:00002570",
+    "fdcId": 168250,
+    "fdcDescription": "Pork, fresh, loin, tenderloin, separable lean only, cooked, roasted",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 143,
+      "proteinG": 26.2,
+      "fatG": 3.51,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 57
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168250",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:0279fc18b6e4c7570dc5e3c812b4b7d1a100c48334ad89c8f34165708b4721eb"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00002570",
+        "label": "pork loin",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:778c7354a65998a29149ea9f3d5ec4fafae7b55cf0d3b96ac42617548fb86e73"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-ground-pork",
+    "canonicalName": "熟猪肉馅参考食材",
+    "aliases": [
+      "猪肉馅",
+      "猪绞肉",
+      "熟肉馅"
+    ],
+    "foodOnId": "FOODON:03309969",
+    "fdcId": 167903,
+    "fdcDescription": "Pork, fresh, ground, cooked",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 297,
+      "proteinG": 25.7,
+      "fatG": 20.8,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 73
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:167903",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:42bd60ed620a4dcd0e9f832fd21ac851b1c777b1d2e82457f864a9c02cc614fa"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03309969",
+        "label": "pork (ground or minced)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:2235cea77195ef116a7faa250318b10ac83c98531876161d57ddaadf2e8acb11"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-ground-beef",
+    "canonicalName": "熟牛肉馅参考食材",
+    "aliases": [
+      "牛肉馅",
+      "牛绞肉",
+      "熟牛肉馅"
+    ],
+    "foodOnId": "FOODON:03310753",
+    "fdcId": 171794,
+    "fdcDescription": "Beef, ground, 90% lean meat / 10% fat, crumbles, cooked, pan-browned",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 230,
+      "proteinG": 28.4,
+      "fatG": 12,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 87
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171794",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:31f643d2694e7e2af4fa08cdf52126389da0601d140e61fc5ea5f4f79b2ad4b3"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03310753",
+        "label": "ground beef (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:7d4ed2fd77de919e8d6d627ec33fc827df059cd19e4af1d804f3cbd80754d839"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-grilled-beef-sirloin",
+    "canonicalName": "烤牛里脊参考食材",
+    "aliases": [
+      "牛里脊",
+      "西冷牛肉",
+      "熟牛肉"
+    ],
+    "foodOnId": "FOODON:03311468",
+    "fdcId": 172170,
+    "fdcDescription": "Beef, loin, top sirloin cap steak, boneless, separable lean only, trimmed to 1/8\" fat, all grades, cooked, grilled",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 181,
+      "proteinG": 28.3,
+      "fatG": 7.23,
+      "carbsG": 0.73,
+      "fiberG": 0,
+      "sodiumMg": 62
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172170",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:22208b5a7b4b5b07b9a63cbd302dc1eb960021a6d774dd25999dddd694f04da1"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03311468",
+        "label": "beef sirloin steak (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:9964abf8c8b46b0b05dea4a9bdfa46d97997e024986526e82246af0188561415"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-roasted-lamb-leg",
+    "canonicalName": "烤羊腿肉参考食材",
+    "aliases": [
+      "羊腿肉",
+      "熟羊肉",
+      "烤羊肉"
+    ],
+    "foodOnId": "FOODON:00005390",
+    "fdcId": 172516,
+    "fdcDescription": "Lamb, New Zealand, imported, frozen, leg, whole (shank and sirloin), separable lean only, cooked, roasted",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 181,
+      "proteinG": 27.7,
+      "fatG": 7.01,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 45
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172516",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:ecf85d1fde484af3f9c0ce1aadf5b7e0160197c3aa718ad0f342f770878f7f7b"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00005390",
+        "label": "lamb tunnel boned leg",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:8c6485d1bd6c019b8a5780baf0b71d09ae7bb6aefc8564425e2ce7ccb324d134"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-roasted-duck-meat",
+    "canonicalName": "烤鸭肉参考食材",
+    "aliases": [
+      "鸭肉",
+      "熟鸭肉",
+      "烤鸭肉"
+    ],
+    "foodOnId": "FOODON:00001284",
+    "fdcId": 172411,
+    "fdcDescription": "Duck, domesticated, meat only, cooked, roasted",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 201,
+      "proteinG": 23.5,
+      "fatG": 11.2,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 65
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172411",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:bf7ea2b8d5051bbb5344360d794bc3eeaa09bb65cc8bee2faf3a8aa58cf37f56"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00001284",
+        "label": "duck meat food product",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:d29a1d0410786e0f4068a3a459bf8a2e529459ba4c3caa686bb5069d1a399f0a"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-baked-salmon",
+    "canonicalName": "熟三文鱼参考食材",
+    "aliases": [
+      "三文鱼",
+      "鲑鱼",
+      "熟鲑鱼"
+    ],
+    "foodOnId": "FOODON:02022069",
+    "fdcId": 175168,
+    "fdcDescription": "Fish, salmon, Atlantic, farmed, cooked, dry heat",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 206,
+      "proteinG": 22.1,
+      "fatG": 12.4,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 61
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:175168",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:c77a7f67008f5d268c3a3d6de426f5936f0b6a826b8f3048b9f7a0ea3d12a002"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:02022069",
+        "label": "FOODON:02022069",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:03a8d19fb46316c34e1b29e32e126882efb8b2ab9b83d683cf056081af3f0c0d"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-tilapia",
+    "canonicalName": "熟罗非鱼参考食材",
+    "aliases": [
+      "罗非鱼",
+      "熟鱼肉",
+      "熟罗非鱼"
+    ],
+    "foodOnId": "FOODON:03412434",
+    "fdcId": 175177,
+    "fdcDescription": "Fish, tilapia, cooked, dry heat",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 128,
+      "proteinG": 26.2,
+      "fatG": 2.65,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 56
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:175177",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:25e3a5e9965c9cac19726b383f58d6bb1b91b8b9ece662e2691ee98d3478218c"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03412434",
+        "label": "tilapia",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:fc41a128696c9459f894a6a3119141991801d42e8760fbc9405a0fb21fb90e7a"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-cod",
+    "canonicalName": "熟鳕鱼参考食材",
+    "aliases": [
+      "鳕鱼",
+      "熟鳕鱼",
+      "鳕鱼肉"
+    ],
+    "foodOnId": "FOODON:03311026",
+    "fdcId": 171990,
+    "fdcDescription": "Fish, cod, Pacific, cooked, dry heat (may contain additives to retain moisture)",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 85,
+      "proteinG": 18.7,
+      "fatG": 0.5,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 372
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171990",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:a8536d81111fb1b01264b26fb231d2da8495c1616a40abbe938c87c58e08529a"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03311026",
+        "label": "codfish cooked",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:d9c0be52244079b5963fec386a76db29925f28054e5ab0175cd64e8eea65d8ce"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-shrimp",
+    "canonicalName": "熟虾仁参考食材",
+    "aliases": [
+      "虾仁",
+      "虾",
+      "熟虾"
+    ],
+    "foodOnId": "FOODON:00004418",
+    "fdcId": 171971,
+    "fdcDescription": "Crustaceans, shrimp, mixed species, cooked, moist heat (may contain additives to retain moisture)",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 119,
+      "proteinG": 22.8,
+      "fatG": 1.7,
+      "carbsG": 1.52,
+      "fiberG": 0,
+      "sodiumMg": 947
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171971",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:b171c1012f7cdc73793a205a8bd98dacc2d2a7ce78c0b476728c38b25cb12353"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00004418",
+        "label": "pink shrimp (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:57725e1c8b91635854feaf0f90bc834cdf720ae72439dbe1b1924478f2801012"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-canned-tuna-water",
+    "canonicalName": "水浸金枪鱼参考食材",
+    "aliases": [
+      "金枪鱼",
+      "水浸金枪鱼",
+      "吞拿鱼"
+    ],
+    "foodOnId": "FOODON:03308733",
+    "fdcId": 171986,
+    "fdcDescription": "Fish, tuna, light, canned in water, without salt, drained solids",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 116,
+      "proteinG": 25.5,
+      "fatG": 0.82,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 50
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171986",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:224a4dc81c47f53c45a19081a3a6ea8527247ffb9ba1a55286d27752cc27e05a"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03308733",
+        "label": "tuna (packed in water, canned)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:759eb3bcbc4676d373de0452d578d17113ab438ec69eaf037e5486e0d6022f84"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-whole-milk",
+    "canonicalName": "全脂牛奶参考食材",
+    "aliases": [
+      "全脂奶",
+      "牛奶",
+      "纯牛奶"
+    ],
+    "foodOnId": "FOODON:00005478",
+    "fdcId": 171265,
+    "fdcDescription": "Milk, whole, 3.25% milkfat, with added vitamin D",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 61,
+      "proteinG": 3.15,
+      "fatG": 3.25,
+      "carbsG": 4.8,
+      "fiberG": 0,
+      "sodiumMg": 43
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171265",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:857232f60a3166a6ae93968127a16599ef769def913815fc15c036e9e8025252"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00005478",
+        "label": "cow whole milk",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:d001603bf0c283915464ad61c59d40cbc5b3428000336101e4c62d4adccabd65"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-lowfat-milk",
+    "canonicalName": "低脂牛奶参考食材",
+    "aliases": [
+      "低脂奶",
+      "低脂牛奶",
+      "半脱脂奶"
+    ],
+    "foodOnId": "FOODON:00002815",
+    "fdcId": 170872,
+    "fdcDescription": "Milk, lowfat, fluid, 1% milkfat, with added vitamin A and vitamin D",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 42,
+      "proteinG": 3.37,
+      "fatG": 0.97,
+      "carbsG": 4.99,
+      "fiberG": 0,
+      "sodiumMg": 44
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170872",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:c724c2fffefc9d45bb245d6d97556acc661ee8b5514c90fe8e1767efac67b0e8"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00002815",
+        "label": "lowfat cow milk (1% fat)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:193e188b846e8504a742e904615d3516b9ae36c53410f4288492ba0a9f93572e"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-plain-yogurt",
+    "canonicalName": "原味酸奶参考食材",
+    "aliases": [
+      "原味酸奶",
+      "酸奶",
+      "无糖酸奶"
+    ],
+    "foodOnId": "FOODON:03301502",
+    "fdcId": 171284,
+    "fdcDescription": "Yogurt, plain, whole milk",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 61,
+      "proteinG": 3.47,
+      "fatG": 3.25,
+      "carbsG": 4.66,
+      "fiberG": 0,
+      "sodiumMg": 46
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171284",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:68c2d51f5f4adf9e7f15ebd668476e84c06d1a9cb2f6270390830f5de78417f5"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03301502",
+        "label": "yogurt (plain)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:ef2161b1f688b816dfb3baac9ed06bd244d60af0a2c6c1eae23d5f9cabcae1f3"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cheddar-cheese",
+    "canonicalName": "切达奶酪参考食材",
+    "aliases": [
+      "切达奶酪",
+      "芝士",
+      "奶酪"
+    ],
+    "foodOnId": "FOODON:03302458",
+    "fdcId": 173414,
+    "fdcDescription": "Cheese, cheddar (Includes foods for USDA's Food Distribution Program)",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 403,
+      "proteinG": 22.9,
+      "fatG": 33.3,
+      "carbsG": 3.37,
+      "fiberG": 0,
+      "sodiumMg": 653
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:173414",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:03e9decfb42e3c231038e6f60c170cb54076ff09e95a56249c9365f18780cafc"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03302458",
+        "label": "cheddar cheese",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:b58a5509985290136f8d6b6f487c7572a0dd4be93cc03552d19302b552e11db5"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-soybeans",
+    "canonicalName": "熟黄豆参考食材",
+    "aliases": [
+      "黄豆",
+      "大豆",
+      "熟黄豆"
+    ],
+    "foodOnId": "FOODON:00005597",
+    "fdcId": 174299,
+    "fdcDescription": "Soybeans, mature seeds, cooked, boiled, with salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 172,
+      "proteinG": 18.2,
+      "fatG": 8.97,
+      "carbsG": 8.36,
+      "fiberG": 6,
+      "sodiumMg": 237
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:174299",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:0a75f1f084582e30ffe2d290ff5c3a59a037122a0d7242d85fee49761303282b"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00005597",
+        "label": "soybean (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:3df23cc1940bc082db698ff1ee4a52ab27ab26309e0f10234639700d45cef519"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-lentils",
+    "canonicalName": "熟扁豆参考食材",
+    "aliases": [
+      "扁豆",
+      "小扁豆",
+      "熟扁豆"
+    ],
+    "foodOnId": "FOODON:00004634",
+    "fdcId": 172421,
+    "fdcDescription": "Lentils, mature seeds, cooked, boiled, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 116,
+      "proteinG": 9.02,
+      "fatG": 0.38,
+      "carbsG": 20.1,
+      "fiberG": 7.9,
+      "sodiumMg": 2
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172421",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:9322179cbce740c7e2817bc09d0cac99d0d418eef526d7e8cf5c643286946842"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00004634",
+        "label": "brown lentil (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:0fcad60e27b2905544a5985668eccff8a8bc06cdeb843ba5ab228531ab7b174a"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-chickpeas",
+    "canonicalName": "熟鹰嘴豆参考食材",
+    "aliases": [
+      "鹰嘴豆",
+      "鸡豆",
+      "熟鹰嘴豆"
+    ],
+    "foodOnId": "FOODON:03315134",
+    "fdcId": 173757,
+    "fdcDescription": "Chickpeas (garbanzo beans, bengal gram), mature seeds, cooked, boiled, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 164,
+      "proteinG": 8.86,
+      "fatG": 2.59,
+      "carbsG": 27.4,
+      "fiberG": 7.6,
+      "sodiumMg": 7
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:173757",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:a5cd12b0906e731b982c20cdbf7f20f07a07863e6ae08d4dd641f0cd488a08fc"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03315134",
+        "label": "chickpea (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:4e8b32fb35f2d717927c4fe4e7bebfd7df1694207dd368fdf8bec7898ac0444a"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-kidney-beans",
+    "canonicalName": "熟芸豆参考食材",
+    "aliases": [
+      "芸豆",
+      "红腰豆",
+      "熟腰豆"
+    ],
+    "foodOnId": "FOODON:00005619",
+    "fdcId": 173743,
+    "fdcDescription": "Beans, kidney, california red, mature seeds, cooked, boiled, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 124,
+      "proteinG": 9.13,
+      "fatG": 0.09,
+      "carbsG": 22.4,
+      "fiberG": 9.3,
+      "sodiumMg": 4
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:173743",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:5725c810a158521b90f5d4bc7f08c6f0bcd58581345229a60be9285ed6242157"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00005619",
+        "label": "kidney bean (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:70427c79f6d2a8eab8255ad5767ed97df1812d7eee1357b187d2da7b14ff0a29"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-black-beans",
+    "canonicalName": "熟黑豆参考食材",
+    "aliases": [
+      "黑豆",
+      "熟黑豆",
+      "黑芸豆"
+    ],
+    "foodOnId": "FOODON:00004376",
+    "fdcId": 173735,
+    "fdcDescription": "Beans, black, mature seeds, cooked, boiled, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 132,
+      "proteinG": 8.86,
+      "fatG": 0.54,
+      "carbsG": 23.7,
+      "fiberG": 8.7,
+      "sodiumMg": 1
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:173735",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:dfafe3683a7305ae99d12984eab5ff39707f118b47409a4978df3212d844edd4"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00004376",
+        "label": "black turtle bean (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:63fcf43909f237508147e26008e39eff5f143dd3fed186772215e223a4d75ce1"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-roasted-peanuts",
+    "canonicalName": "烤花生参考食材",
+    "aliases": [
+      "花生",
+      "花生仁",
+      "烤花生"
+    ],
+    "foodOnId": "FOODON:03306901",
+    "fdcId": 173806,
+    "fdcDescription": "Peanuts, all types, dry-roasted, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 587,
+      "proteinG": 24.4,
+      "fatG": 49.7,
+      "carbsG": 21.3,
+      "fiberG": 8.4,
+      "sodiumMg": 6
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:173806",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:4da51cfe4720a2ebbaa0c54429c9af3f2697cadf4776f443294f6ed6539b3d2e"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03306901",
+        "label": "peanut (roasted)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:24c3dbc51659a8445a05d7de9c96b15aa44436a2c692b8425c642be625af4a15"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-sesame-seeds",
+    "canonicalName": "芝麻籽参考食材",
+    "aliases": [
+      "芝麻",
+      "芝麻籽",
+      "白芝麻"
+    ],
+    "foodOnId": "FOODON:03310306",
+    "fdcId": 170150,
+    "fdcDescription": "Seeds, sesame seeds, whole, dried",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 573,
+      "proteinG": 17.7,
+      "fatG": 49.7,
+      "carbsG": 23.4,
+      "fiberG": 11.8,
+      "sodiumMg": 11
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170150",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:aad5d602110bc6b2f25e1d4a89f1afde022ca26abc9d67b53bfb1072dc2b3bfe"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03310306",
+        "label": "sesame seed",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:3b7ac0954c8d59101f69728a71c8b72e99d36eb836cb9b201a768535bdf329b6"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-roasted-almonds",
+    "canonicalName": "烤杏仁参考食材",
+    "aliases": [
+      "杏仁",
+      "巴旦木",
+      "烤杏仁"
+    ],
+    "foodOnId": "FOODON:03311210",
+    "fdcId": 170158,
+    "fdcDescription": "Nuts, almonds, dry roasted, without salt added",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 598,
+      "proteinG": 21,
+      "fatG": 52.5,
+      "carbsG": 21,
+      "fiberG": 10.9,
+      "sodiumMg": 3
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170158",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:98f5d11b2811e93d18531e8d4e039aed4f3257b7484ca768046808da654a696e"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03311210",
+        "label": "almond (dry, roasted)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:818fc68ba75169f99c9ae0d7010d1f02b8907fbbe7b8f8f1dbfa037fb45b96f2"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-spinach",
+    "canonicalName": "熟菠菜参考食材",
+    "aliases": [
+      "菠菜",
+      "熟菠菜",
+      "焯菠菜"
+    ],
+    "foodOnId": "FOODON:00003908",
+    "fdcId": 168463,
+    "fdcDescription": "Spinach, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 23,
+      "proteinG": 2.97,
+      "fatG": 0.26,
+      "carbsG": 3.75,
+      "fiberG": 2.4,
+      "sodiumMg": 70
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168463",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:a96f8ac61ec0bfe764011bf94bf7193dfd6b625014bbb297ac3020dbe61d9e10"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00003908",
+        "label": "FOODON:00003908",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:297239cc0bcb8dc41a9aa63af9a547a47bc123b10f2dd76971770b7b54722e7d"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-cabbage",
+    "canonicalName": "熟卷心菜参考食材",
+    "aliases": [
+      "卷心菜",
+      "圆白菜",
+      "熟白菜"
+    ],
+    "foodOnId": "FOODON:00001016",
+    "fdcId": 169976,
+    "fdcDescription": "Cabbage, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 23,
+      "proteinG": 1.27,
+      "fatG": 0.06,
+      "carbsG": 5.51,
+      "fiberG": 1.9,
+      "sodiumMg": 8
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169976",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:c1378956bf52a46cf7a780378b8ba89aa40cd6966b7dfddbe21b70df5374c8e2"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00001016",
+        "label": "cabbage food product",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:0f84be58b879397fe48410ed2f38cf0cac092f3bb67a3c792f06c92ace785641"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-bok-choy",
+    "canonicalName": "熟小白菜参考食材",
+    "aliases": [
+      "小白菜",
+      "青菜",
+      "熟小白菜"
+    ],
+    "foodOnId": "FOODON:00003897",
+    "fdcId": 170391,
+    "fdcDescription": "Cabbage, chinese (pak-choi), cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 12,
+      "proteinG": 1.56,
+      "fatG": 0.16,
+      "carbsG": 1.78,
+      "fiberG": 1,
+      "sodiumMg": 34
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170391",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:89cd95498fe7aec6f5d22e4b5f5d66d1437914af0b3112a4213228905cc6a2bb"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00003897",
+        "label": "shanghai bok choy leaf",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:3c329fa94c3e96205b4b937cf4c94e96685f8f911d9e42f10120ff11bf76cd5d"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-carrot",
+    "canonicalName": "熟胡萝卜参考食材",
+    "aliases": [
+      "胡萝卜",
+      "红萝卜",
+      "熟胡萝卜"
+    ],
+    "foodOnId": "FOODON:03311100",
+    "fdcId": 169984,
+    "fdcDescription": "Carrots, frozen, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 37,
+      "proteinG": 0.58,
+      "fatG": 0.68,
+      "carbsG": 7.73,
+      "fiberG": 3.3,
+      "sodiumMg": 59
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169984",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:76d220ee0ab27b7d703d5416729881ce8220f0be96ae11f7d8771439438aafa1"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03311100",
+        "label": "carrot (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:2a713bea36249f9cb9f322da159aa8c1e2c458eb545fd189807fd23f0672d271"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-raw-tomato",
+    "canonicalName": "生番茄参考食材",
+    "aliases": [
+      "番茄",
+      "西红柿",
+      "生番茄"
+    ],
+    "foodOnId": "FOODON:03309927",
+    "fdcId": 170457,
+    "fdcDescription": "Tomatoes, red, ripe, raw, year round average",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 18,
+      "proteinG": 0.88,
+      "fatG": 0.2,
+      "carbsG": 3.89,
+      "fiberG": 1.2,
+      "sodiumMg": 5
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170457",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:502ddcf71f7e81c6477b7edf9d9bd80a1a671af179344c4825a085efb3d0d90e"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03309927",
+        "label": "tomato (raw)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:a26ca8c45ddca6ebaf1a0efc97046cef7b9a506d96642b7404f1aa4fff4e799a"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-raw-cucumber",
+    "canonicalName": "生黄瓜参考食材",
+    "aliases": [
+      "黄瓜",
+      "青瓜",
+      "生黄瓜"
+    ],
+    "foodOnId": "FOODON:03306754",
+    "fdcId": 168409,
+    "fdcDescription": "Cucumber, with peel, raw",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 15,
+      "proteinG": 0.65,
+      "fatG": 0.11,
+      "carbsG": 3.63,
+      "fiberG": 0.5,
+      "sodiumMg": 2
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:168409",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:f27292f878591ceb3dd4f5c31611a8d38a4f42c3a2070d6f7a686d989b106176"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03306754",
+        "label": "cucumber (sliced, raw)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:7add5f7200107c3a780e8e7711fd7211439223abe0d063ca3c1700999c14f8df"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-eggplant",
+    "canonicalName": "熟茄子参考食材",
+    "aliases": [
+      "茄子",
+      "熟茄子",
+      "紫茄子"
+    ],
+    "foodOnId": "FOODON:03309715",
+    "fdcId": 169229,
+    "fdcDescription": "Eggplant, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 35,
+      "proteinG": 0.83,
+      "fatG": 0.23,
+      "carbsG": 8.73,
+      "fiberG": 2.5,
+      "sodiumMg": 1
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169229",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:15b794a616d78e14cb1ff63da7d1fabe7406eb2c48f7f47b4996281be96c4a58"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03309715",
+        "label": "eggplant (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:8adaf8767879e2d9d88b91417da9f8274696c6bb8ae099ff66277bb61d8fad02"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-green-beans",
+    "canonicalName": "熟四季豆参考食材",
+    "aliases": [
+      "四季豆",
+      "豆角",
+      "熟豆角"
+    ],
+    "foodOnId": "FOODON:00002766",
+    "fdcId": 169141,
+    "fdcDescription": "Beans, snap, green, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 35,
+      "proteinG": 1.89,
+      "fatG": 0.28,
+      "carbsG": 7.88,
+      "fiberG": 3.2,
+      "sodiumMg": 1
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169141",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:8433f01f060d1e8ffa0dddde57690d6752b66bc1738090eee7550403716c2fdd"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00002766",
+        "label": "FOODON:00002766",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:85bc1508163bc7f2f47b3005b857daebaf5c54645f73343a7a91c7ca7637749a"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-green-peas",
+    "canonicalName": "熟青豌豆参考食材",
+    "aliases": [
+      "青豆",
+      "豌豆",
+      "熟豌豆"
+    ],
+    "foodOnId": "FOODON:03311255",
+    "fdcId": 170017,
+    "fdcDescription": "Peas, green, frozen, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 78,
+      "proteinG": 5.15,
+      "fatG": 0.27,
+      "carbsG": 14.3,
+      "fiberG": 4.5,
+      "sodiumMg": 72
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170017",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:e5dcc091a8436362a4c12fb82cbe309c703d3f19775a6fc63e57e5605406f016"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03311255",
+        "label": "green pea (cooked)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:60e2f98f4c3840b90adcb5228c8c30595a7fb355067cefaaeebc4ddb2750774d"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-raw-red-pepper",
+    "canonicalName": "生红甜椒参考食材",
+    "aliases": [
+      "红甜椒",
+      "彩椒",
+      "红椒"
+    ],
+    "foodOnId": "FOODON:03315874",
+    "fdcId": 170108,
+    "fdcDescription": "Peppers, sweet, red, raw",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 26,
+      "proteinG": 0.99,
+      "fatG": 0.3,
+      "carbsG": 6.03,
+      "fiberG": 2.1,
+      "sodiumMg": 4
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170108",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:4bc66099ff9ab6d64e83b7f5e0b56805b53e7ece83bb60ccee5d59d90063fc35"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03315874",
+        "label": "red bell pepper (raw)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:b9dad735fd43ee07d699b6550ee1006bf189281c8a5979a5db672a754c4d4937"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-mushrooms",
+    "canonicalName": "熟蘑菇参考食材",
+    "aliases": [
+      "蘑菇",
+      "口蘑",
+      "熟蘑菇"
+    ],
+    "foodOnId": "FOODON:03315123",
+    "fdcId": 169252,
+    "fdcDescription": "Mushrooms, white, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 28,
+      "proteinG": 2.17,
+      "fatG": 0.47,
+      "carbsG": 5.29,
+      "fiberG": 2.2,
+      "sodiumMg": 2
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169252",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:69a7ee0b0510090d7bb565bb928a03961054e2b64af454b2b12267147b868fb8"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03315123",
+        "label": "mushroom (cooked, canned)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:c074cb4607d836d8b983013141ee0a7c8282f9ce8ecbc49431d0047c3a9f5b43"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-onion",
+    "canonicalName": "熟洋葱参考食材",
+    "aliases": [
+      "洋葱",
+      "熟洋葱",
+      "葱头"
+    ],
+    "foodOnId": "FOODON:03316347",
+    "fdcId": 170001,
+    "fdcDescription": "Onions, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 44,
+      "proteinG": 1.36,
+      "fatG": 0.19,
+      "carbsG": 10.2,
+      "fiberG": 1.4,
+      "sodiumMg": 3
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170001",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:9cdd674d2e8e810a99af91d50dbbee8bccfa9d84485688280f29fe933b1b11b3"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03316347",
+        "label": "FOODON:03316347",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:70798418d23ed691898a9654239ad245cea00c03e67577f7280dbc7f18ae9176"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-cooked-cauliflower",
+    "canonicalName": "熟菜花参考食材",
+    "aliases": [
+      "菜花",
+      "花椰菜",
+      "熟菜花"
+    ],
+    "foodOnId": "FOODON:00001703",
+    "fdcId": 170397,
+    "fdcDescription": "Cauliflower, cooked, boiled, drained, without salt",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 23,
+      "proteinG": 1.84,
+      "fatG": 0.45,
+      "carbsG": 4.11,
+      "fiberG": 2.3,
+      "sodiumMg": 15
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:170397",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:15a487ea2413ad564007e308ff8fc447f037740280be2f19910e14c2f951140c"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00001703",
+        "label": "FOODON:00001703",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:c3a58d9c6cde74ee81420576d42cc6f92d61437e3b547adf3f3082d860ddde12"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-soybean-oil",
+    "canonicalName": "大豆油参考食材",
+    "aliases": [
+      "大豆油",
+      "豆油",
+      "食用大豆油"
+    ],
+    "foodOnId": "FOODON:03302776",
+    "fdcId": 171411,
+    "fdcDescription": "Oil, soybean, salad or cooking",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 884,
+      "proteinG": 0,
+      "fatG": 100,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 0
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171411",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:06a11954dc6729ea2cb07bd414c18300f96e2f320005c52a6352686c863a42c9"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03302776",
+        "label": "soybean oil",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:3ea7aa6a8c8c9d020ac292eeed515593161fce8432661dc7c6d247e408122845"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-canola-oil",
+    "canonicalName": "菜籽油参考食材",
+    "aliases": [
+      "菜籽油",
+      "芥花油",
+      "油菜籽油"
+    ],
+    "foodOnId": "FOODON:03302578",
+    "fdcId": 172336,
+    "fdcDescription": "Oil, canola",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 884,
+      "proteinG": 0,
+      "fatG": 100,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 0
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:172336",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:f66db856841d1377364fa525e79a468e6fb1b81fb4d2116fef9c969812421082"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03302578",
+        "label": "canola oil",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:6446be7f3de6579f3264283a58fb3835c7c1738ea1975cc8a0605ab85a1aec80"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-peanut-oil",
+    "canonicalName": "花生油参考食材",
+    "aliases": [
+      "花生油",
+      "食用花生油",
+      "落花生油"
+    ],
+    "foodOnId": "FOODON:03309857",
+    "fdcId": 171410,
+    "fdcDescription": "Oil, peanut, salad or cooking",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 884,
+      "proteinG": 0,
+      "fatG": 100,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 0
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171410",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:e5234e40967c3cc7e90273f84efd60f94f36bcd48bb6fbf6c4c50a7c43419797"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03309857",
+        "label": "peanut oil",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:595f31715b7047f37dfb3c1977fdf6887ea7cafdde9818b372000da5f3e537f5"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-olive-oil",
+    "canonicalName": "橄榄油参考食材",
+    "aliases": [
+      "橄榄油",
+      "初榨橄榄油",
+      "食用橄榄油"
+    ],
+    "foodOnId": "FOODON:03301826",
+    "fdcId": 171413,
+    "fdcDescription": "Oil, olive, salad or cooking",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 884,
+      "proteinG": 0,
+      "fatG": 100,
+      "carbsG": 0,
+      "fiberG": 0,
+      "sodiumMg": 2
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:171413",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:15337e3ea6dbb8f209bfcde944a1013aad583ff812d1f8cec08f541641bb69e8"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03301826",
+        "label": "olive oil",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:9bb143eb6daefc355ca69a5d01a7f12e322633f925471a67a396ca632c1ef1ed"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-soy-sauce",
+    "canonicalName": "酱油参考食材",
+    "aliases": [
+      "酱油",
+      "生抽",
+      "普通酱油"
+    ],
+    "foodOnId": "FOODON:00001235",
+    "fdcId": 174277,
+    "fdcDescription": "Soy sauce made from soy and wheat (shoyu)",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 53,
+      "proteinG": 8.14,
+      "fatG": 0.57,
+      "carbsG": 4.93,
+      "fiberG": 0.8,
+      "sodiumMg": 5490
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:174277",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:a43442d470af0b0ed21b5ae7f52197adbf6f40ebaacafd10c01a17ce9a376e6b"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:00001235",
+        "label": "soy sauce food product",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:b13a5808425b1b9d1e42b4a4b0235da1c5a8d8c9ca2ec05b7d1e1597f6611fb0"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  },
+  {
+    "id": "reference-granulated-sugar",
+    "canonicalName": "白砂糖参考食材",
+    "aliases": [
+      "白砂糖",
+      "白糖",
+      "砂糖"
+    ],
+    "foodOnId": "FOODON:03301073",
+    "fdcId": 169655,
+    "fdcDescription": "Sugars, granulated",
+    "dataType": "SR Legacy",
+    "basisGrams": 100,
+    "nutrients": {
+      "caloriesKcal": 387,
+      "proteinG": 0,
+      "fatG": 0,
+      "carbsG": 100,
+      "fiberG": 0,
+      "sodiumMg": 1
+    },
+    "sourceIds": [
+      "usda-fdc",
+      "foodon"
+    ],
+    "provenance": {
+      "fdc": {
+        "sourceId": "usda-fdc",
+        "externalId": "FDC:169655",
+        "sourceVersion": "FoodData Central SR Legacy JSON snapshot 2018-04, retrieved 2026-07-28",
+        "license": "CC0-1.0",
+        "checksum": "sha256:67a15525ebd7182eba1c63a445c5786c2ade764874092ece0f53e704c974a3e3"
+      },
+      "foodOn": {
+        "sourceId": "foodon",
+        "externalId": "FOODON:03301073",
+        "label": "sugar (granulated)",
+        "sourceVersion": "FoodOn commit 922f4afd9bacd736d620ab8c994aa60b14aa2ee7",
+        "license": "CC-BY-4.0",
+        "checksum": "sha256:5dd668c3f3499b079e4edebc8faf5d2e902a00e44752fbfdec18dea471dd473c"
+      }
+    },
+    "factStatus": "reference_only",
+    "campusDishFactPolicy": "must_not_overwrite",
+    "retrievedAt": "2026-07-27T17:59:39.035Z"
+  }
+]

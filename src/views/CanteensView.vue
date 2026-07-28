@@ -134,7 +134,7 @@
         >
           <div class="stall-card-head">
             <strong>{{ stall.name }}</strong>
-            <span class="rating">{{ stall.rating.toFixed(1) }}</span>
+            <span class="rating">{{ Number(stall.rating) > 0 ? Number(stall.rating).toFixed(1) : '暂无评分' }}</span>
           </div>
           <small class="muted">{{ stall.category }} · 人均 ¥{{ stall.avgPrice }}</small>
           <p class="muted">{{ stall.description }}</p>
@@ -185,7 +185,7 @@
       <p class="muted">{{ selectedStall?.category }} · 人均 ¥{{ selectedStall?.avgPrice }} · {{ selectedStall?.description }}</p>
       <div class="meta-row">
         <span class="pill" :class="selectedStall?.open ? 'open-tag' : 'closed-tag'">{{ selectedStall?.open ? '营业中' : '已关闭' }}</span>
-        <span class="pill">⭐ {{ selectedStall?.rating?.toFixed(1) }}</span>
+        <span class="pill">{{ Number(selectedStall?.rating) > 0 ? `⭐ ${Number(selectedStall.rating).toFixed(1)}` : '暂无评分' }}</span>
         <span class="pill">{{ stallDishes.length }} 个菜品</span>
       </div>
       <RouterLink class="primary go-dishes-btn" :to="{ path: '/dishes', query: { stall: selectedStallId } }">
@@ -201,10 +201,10 @@
         </div>
         <div class="dish-preview-info">
           <strong>{{ dish.name }}</strong>
-          <small class="muted">{{ dish.cuisine }} · {{ dish.taste }} · ¥{{ dish.price }}</small>
-          <small class="muted">{{ dish.nutrition?.calories || 0 }} kcal · 蛋白 {{ dish.nutrition?.protein || 0 }}g</small>
+          <small class="muted">{{ dish.cuisine }} · {{ dish.taste || '口味待核验' }} · {{ dishPriceText(dish) }}</small>
+          <small class="muted">{{ dishNutritionPresentation(dish).label }}</small>
           <div class="meta-row">
-            <span class="pill">⭐ {{ (dish.rating || 0).toFixed(1) }}</span>
+            <span class="pill">{{ dishRatingText(dish) }}</span>
             <span v-for="tag in (dish.tags || []).slice(0, 2)" :key="tag" class="pill">{{ tag }}</span>
           </div>
         </div>
@@ -217,6 +217,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import { dishNutritionPresentation, dishPriceText, dishRatingText } from '../domain/dishPresentation.js';
 import { validateReviewForm } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 

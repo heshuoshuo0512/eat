@@ -1,17 +1,21 @@
 <template>
   <sc-page-shell back title="发布帖子" subtitle="关联真实食堂或菜品" tone="community">
     <view class="publish-form panel-card">
-      <sc-segmented-control v-model="form.targetType" :options="targetOptions" block />
-      <view class="form-stack">
+      <view class="form-main">
+        <sc-segmented-control v-model="form.targetType" :options="targetOptions" block />
+        <view class="form-stack">
         <label><text>食堂</text><picker :range="store.canteens.value" range-key="name" :value="canteenIndex" @change="selectCanteen"><view class="picker-box">{{ selectedCanteen?.name||'请选择食堂' }}<text>⌄</text></view></picker></label>
         <label v-if="form.targetType==='dish'"><text>档口</text><picker :range="availableStalls" range-key="name" :value="stallIndex" @change="selectStall"><view class="picker-box">{{ selectedStall?.name||'请选择档口' }}<text>⌄</text></view></picker></label>
         <label v-if="form.targetType==='dish'"><text>菜品</text><picker :range="availableDishes" range-key="name" :value="dishIndex" @change="selectDish"><view class="picker-box">{{ selectedDish?.name||'请选择菜品' }}<text>⌄</text></view></picker></label>
         <label><text>帖子内容</text><textarea v-model="form.content" class="content-input" maxlength="600" placeholder="味道、份量、排队体验或搭配建议" /><text class="ui-small">{{ form.content.length }}/600</text></label>
-        <view v-if="form.targetType==='dish'" class="rating-field"><text>菜品评分（可选）</text><view><button v-for="score in 5" :key="score" :class="{active:form.rating===score}" @tap="form.rating=form.rating===score?0:score"><view>{{ score }}</view></button></view></view>
-        <view class="image-field"><text>图片（可选）</text><image v-if="imagePath" class="image-preview" :src="imagePath" mode="aspectFill" /><button class="secondary-btn" @tap="chooseImage">{{ imagePath?'重新选择':'选择图片' }}</button><button v-if="imagePath" class="ghost-btn" @tap="imagePath=''">移除图片</button></view>
+        </view>
       </view>
-      <button class="primary-btn submit-button" :loading="submitting" :disabled="submitting" @tap="submit">提交审核</button>
-      <text v-if="message" class="message" :class="{error:isError}">{{ message }}</text>
+      <view class="form-media">
+        <view v-if="form.targetType==='dish'" class="rating-field"><text>菜品评分（可选）</text><view><button v-for="score in 5" :key="score" :class="{active:form.rating===score}" @tap="form.rating=form.rating===score?0:score">{{ score }}</button></view></view>
+        <view class="image-field"><text>图片（可选）</text><image v-if="imagePath" class="image-preview" :src="imagePath" mode="aspectFill" /><view v-else class="image-empty"><sc-icon name="camera" :size="20" tone="muted" /><text>添加现场照片</text></view><view class="image-actions"><button class="secondary-btn" @tap="chooseImage">{{ imagePath?'重新选择':'选择图片' }}</button><button v-if="imagePath" class="ghost-btn" @tap="imagePath=''">移除图片</button></view></view>
+        <button class="primary-btn submit-button" :loading="submitting" :disabled="submitting" @tap="submit">提交审核</button>
+        <text v-if="message" class="message" :class="{error:isError}">{{ message }}</text>
+      </view>
     </view>
   </sc-page-shell>
 </template>
@@ -30,20 +34,27 @@ async function submit(){const targetId=form.targetType==='dish'?dishId.value:can
 </script>
 
 <style scoped>
-.publish-form { padding:24rpx; }
-.form-stack { display:flex; flex-direction:column; gap:22rpx; margin-top:22rpx; }
-.form-stack label>text,.rating-field>text,.image-field>text { display:block; margin-bottom:9rpx; color:var(--ink-2); font-size:24rpx; font-weight:500; }
-.picker-box { display:flex; align-items:center; justify-content:space-between; min-height:88rpx; padding:0 18rpx; border:1rpx solid var(--line); border-radius:12rpx; color:var(--ink); background:var(--surface-soft); font-size:26rpx; }
-.content-input { width:100%; min-height:224rpx; padding:18rpx; border:1rpx solid var(--line); border-radius:12rpx; background:var(--surface-soft); color:var(--ink); font-size:26rpx; line-height:1.58; box-sizing:border-box; }
-.form-stack label .ui-small { display:block; margin-top:5rpx; color:var(--muted); font-size:22rpx; text-align:right; }
-.rating-field>view { display:grid; grid-template-columns:repeat(5,1fr); gap:2rpx; }
-.rating-field button { display:flex; align-items:center; justify-content:center; min-height:88rpx; padding:0 3rpx; color:var(--muted); background:transparent; font-size:24rpx; font-weight:500; }
-.rating-field button>view { display:flex; align-items:center; justify-content:center; width:100%; min-height:64rpx; border:1rpx solid var(--line); border-radius:10rpx; background:var(--surface); line-height:1; box-sizing:border-box; }
-.rating-field button.active>view { color:#fff; border-color:var(--rating); background:var(--rating); transform:scale(.98); }
-.image-field { display:grid; grid-template-columns:1fr 1fr; gap:10rpx; }
-.image-field>text,.image-preview { grid-column:1/3; }
-.image-preview { width:100%; height:360rpx; border-radius:var(--radius); background:var(--surface-soft); }
-.submit-button { margin-top:24rpx; }
-.message { display:block; margin-top:16rpx; color:var(--brand); font-size:24rpx; text-align:center; }
+.publish-form { display:grid; gap:20px; padding:16px; }
+.form-main,.form-media { min-width:0; }
+.form-stack { display:flex; flex-direction:column; gap:16px; margin-top:16px; }
+.form-stack label>text,.rating-field>text,.image-field>text { display:block; margin-bottom:7px; color:var(--ink-2); font-size:14px; font-weight:500; }
+.picker-box { display:flex; min-height:44px; padding:0 12px; align-items:center; justify-content:space-between; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface); font-size:14px; box-sizing:border-box; }
+.content-input { width:100%; min-height:160px; padding:12px; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface); font-size:14px; line-height:1.58; box-sizing:border-box; }
+.form-stack label .ui-small { margin-top:4px; font-size:12px; text-align:right; }
+.rating-field { margin-bottom:16px; }
+.rating-field>view { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px; }
+.rating-field button { display:flex; min-height:44px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:var(--radius); color:var(--muted); background:var(--surface-soft); font-size:14px; font-weight:500; }
+.rating-field button.active { color:#fff; border-color:var(--module-accent); background:var(--module-accent); }
+.image-field { display:flex; flex-direction:column; }
+.image-preview,.image-empty { width:100%; height:220px; border-radius:var(--radius); background:var(--surface-soft); }
+.image-preview { display:block; }
+.image-empty { display:flex; align-items:center; justify-content:center; gap:8px; border:1px dashed var(--line); color:var(--muted); font-size:14px; box-sizing:border-box; }
+.image-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+.submit-button { width:100%; margin-top:16px; }
+.message { display:block; margin-top:12px; color:var(--ink-2); font-size:14px; text-align:center; }
 .message.error { color:var(--danger); }
+@media (min-width:768px) {
+  .publish-form { grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:24px; padding:24px; align-items:start; }
+  .form-media { position:sticky; top:72px; }
+}
 </style>

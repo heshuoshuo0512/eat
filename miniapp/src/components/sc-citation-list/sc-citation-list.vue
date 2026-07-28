@@ -21,19 +21,19 @@ function scoreText(value) { const number = Number(value); return Number.isFinite
 </script>
 
 <style scoped>
-.citation-panel { margin:24rpx 0; padding:22rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
-.citation-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16rpx; }
+.citation-panel { margin:16px 0; padding:16px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.citation-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 .citation-kicker,.citation-title { display:block; }
-.citation-kicker { color:var(--info); font-size:22rpx; font-weight:500; }
-.citation-title { margin-top:3rpx; color:var(--ink); font-size:28rpx; font-weight:600; }
-.count { min-height:42rpx; padding:0 10rpx; border-radius:10rpx; color:var(--info); background:var(--info-soft); font-size:22rpx; line-height:42rpx; }
-.citation-list { margin-top:12rpx; }
-.citation-row { display:flex; align-items:center; justify-content:space-between; gap:16rpx; width:100%; min-height:96rpx; padding:14rpx 0; border-bottom:1rpx solid var(--line); background:transparent; text-align:left; }
+.citation-kicker { color:var(--muted); font-size:12px; font-weight:500; }
+.citation-title { margin-top:3px; color:var(--ink); font-size:16px; font-weight:600; }
+.count { min-height:24px; padding:0 8px; border-radius:999px; color:var(--ink-2); background:var(--surface-soft); font-size:12px; line-height:24px; }
+.citation-list { margin-top:8px; }
+.citation-row { display:flex; width:100%; min-height:56px; padding:10px 0; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); background:transparent; text-align:left; }
 .citation-row view { flex:1; min-width:0; }
 .citation-name,.citation-snippet { display:block; }
-.citation-name { color:var(--ink); font-size:26rpx; font-weight:500; }
-.citation-snippet { overflow:hidden; margin-top:5rpx; color:var(--muted); font-size:22rpx; white-space:nowrap; text-overflow:ellipsis; }
-.citation-score { flex:0 0 auto; color:var(--info); font-size:22rpx; }
-.toggle { display:flex; align-items:center; justify-content:center; width:100%; min-height:64rpx; color:var(--brand); background:transparent; font-size:24rpx; font-weight:500; }
-.empty-copy { display:block; margin-top:16rpx; color:var(--muted); font-size:24rpx; }
+.citation-name { color:var(--ink); font-size:14px; font-weight:500; }
+.citation-snippet { overflow:hidden; margin-top:4px; color:var(--muted); font-size:12px; white-space:nowrap; text-overflow:ellipsis; }
+.citation-score { flex:0 0 auto; color:var(--ink-2); font-size:12px; }
+.toggle { display:flex; width:100%; min-height:44px; align-items:center; justify-content:center; color:var(--ink); background:transparent; font-size:14px; font-weight:500; }
+.empty-copy { display:block; margin-top:12px; color:var(--muted); font-size:14px; }
 </style>

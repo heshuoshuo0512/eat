@@ -1,0 +1,47 @@
+name: Knowledge source review
+
+on:
+  schedule:
+    - cron: '23 2 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-review:
+    name: Validate snapshots and check upstream changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout approved snapshots
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate approved knowledge bundle
+        run: npm run validate:knowledge-kb
+
+      - name: Check registered upstream sources
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run check:knowledge-sources -- --output=.rag-evals/monthly-knowledge-source-check.json
+
+      - name: Upload review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-knowledge-source-check
+          path: .rag-evals/monthly-knowledge-source-check.json
+          if-no-files-found: error
+          retention-days: 90
+
+      # This workflow is intentionally read-only. Changed sources remain review_required
+      # in the report; only a separately reviewed commit can replace an approved snapshot.

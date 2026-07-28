@@ -26,8 +26,9 @@
     { "path": "pages/terms/terms", "style": { "navigationBarTitleText": "用户服务协议", "navigationStyle": "custom" } }
   ],
   "tabBar": {
-    "color": "#66736c",
-    "selectedColor": "#237a57",
+    "custom": true,
+    "color": "#858991",
+    "selectedColor": "#e23d4a",
     "backgroundColor": "#ffffff",
     "borderStyle": "white",
     "list": [
@@ -40,11 +41,14 @@
   "globalStyle": {
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "智慧食堂",
-    "navigationBarBackgroundColor": "#f6f7f5",
-    "backgroundColor": "#f6f7f5"
+    "navigationBarBackgroundColor": "#f7f8fa",
+    "backgroundColor": "#f7f8fa"
   },
   "easycom": {
     "autoscan": true,
-    "custom": { "sc-(.*)": "@/components/sc-$1/sc-$1.vue" }
+    "custom": {
+      "sc-(.*)": "@/components/sc-$1/sc-$1.vue",
+      "^wd-(.*)": "@wot-ui/ui/components/wd-$1/wd-$1.vue"
+    }
   }
 }

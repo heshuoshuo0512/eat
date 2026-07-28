@@ -11,13 +11,32 @@ import { clientIpFromRequest } from './network.js';
 import { handleAuthSessionRoute } from './modules/auth/routes.js';
 import { syncLegacyUserIdentities } from './modules/auth/identityService.js';
 import { createAuthSession, revokeAllUserSessions, validateAccessSession } from './modules/auth/sessionService.js';
-import { buildStudentMealAnalysis } from './mealVision.js';
-import { buildKnowledgeAnswer, runDishSearchWorkflow, runMealRecommendationWorkflow } from './retrievalService.js';
+import {
+  addDishReferenceImage,
+  analyzeTrustworthyMeal,
+  confirmMealVisionAnalysis,
+  createDishRecipeVersion,
+  getMealVisionMetrics,
+  listDishRecipeVersions,
+  listDishReferenceImages,
+  reindexDishReferenceImages,
+  updateDishReferenceImage,
+} from './visionMealService.js';
+import {
+  buildKnowledgeAnswer,
+  matchFoodCompositionReferencesForQuery,
+  retrieveRoutedKnowledge,
+  runDishSearchWorkflow,
+  runMealRecommendationWorkflow,
+} from './retrievalService.js';
 import { CAMPUS_KNOWLEDGE_SOURCE_TYPE, GLOBAL_KNOWLEDGE_TENANT_ID } from './campusDiningKnowledgeBase.js';
+import { CAMPUS_POLICY_SOURCE_TYPE } from './knowledgeGovernance.js';
+import { loadFoodCompositionReferences } from './healthKnowledgeBase.js';
 import { FACT_STATUSES, SAFETY_STATUSES, normalizeSafetyDeclarations } from './diningFacts.js';
 import { businessDate, businessDayUtcRange } from './time.js';
 import { enqueueOutboxEvent, outboxBacklog } from './outbox.js';
 import { createRuntimeMetrics } from './metrics.js';
+import { normalizeDishPricing, PRICING_MODES } from './dishPricing.js';
 import {
   RETRIEVAL_INDEX_VERSION,
   getRetrievalIndexStatus,
@@ -66,7 +85,7 @@ const ADMIN_CATALOG_REGIONS = [
   { id: 'campus-main', name: '综合餐饮楼', position: 'top-left', venueType: 'dining_complex', areaType: 'restaurant', areaLabel: '餐厅' },
   { id: 'north-zone', name: '北苑食堂', position: 'top-right', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' },
   { id: 'south-zone', name: '南湖食堂', position: 'bottom-left', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' },
-  { id: 'east-zone', name: '东苑食堂', position: 'bottom-right', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' }
+  { id: 'east-zone', name: '东区餐饮与服务区', position: 'bottom-right', venueType: 'dining_service_zone', areaType: 'dining_area', areaLabel: '餐饮区域' }
 ];
 
 function isAdminCatalogVenueId(value) {
@@ -344,6 +363,12 @@ function requireFields(payload, fields) {
 
 function splitList(value) {
   return Array.isArray(value) ? value.filter(Boolean) : String(value || '').split(/[，,]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function parseJsonField(value, fallback) {
+  if (value && typeof value === 'object') return value;
+  if (value == null || value === '') return fallback;
+  try { return JSON.parse(value); } catch { return fallback; }
 }
 
 function getClientIp(req) {
@@ -885,7 +910,8 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   requireFields(body, ['stallId', 'name', 'price', 'taste', 'cuisine', 'ingredients', 'tags', 'nutrition']);
   const normalizedId = String(id || '').trim();
   const stallId = String(body.stallId || '').trim();
-  const conflictingRecord = await db.prepare('SELECT tenant_id, stall_id FROM dishes WHERE id = ?').get(normalizedId);
+  const conflictingRecord = await db.prepare(`SELECT tenant_id, stall_id, pricing_mode, price_display, pricing_json,
+      aliases_json, semantic_labels_json, source_ref_json, rating, review_count, sales FROM dishes WHERE id = ?`).get(normalizedId);
   if (conflictingRecord && conflictingRecord.tenant_id !== tenantId) {
     throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), {
       status: 409,
@@ -936,10 +962,28 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   if (synthetic && (process.env.NODE_ENV === 'production' || process.env.ALLOW_SYNTHETIC_DATA !== '1')) {
     throw Object.assign(new Error('模拟菜品只能写入本地实验数据库'), { status: 403, code: 'SYNTHETIC_DATA_FORBIDDEN' });
   }
+  const hasPricing = ['pricing', 'pricingMode', 'priceDisplay'].some((key) => Object.prototype.hasOwnProperty.call(body, key));
+  const pricing = normalizeDishPricing(hasPricing ? body : {
+    pricingMode: conflictingRecord?.pricing_mode,
+    priceDisplay: conflictingRecord?.price_display,
+    pricing: conflictingRecord?.pricing_json,
+  }, body.price);
+  if (!PRICING_MODES.includes(pricing.mode)) {
+    throw Object.assign(new Error('不支持的菜品计价方式'), { status: 400, code: 'INVALID_PRICING_MODE' });
+  }
+  const rating = body.rating == null ? Number(conflictingRecord?.rating ?? 0) : Number(body.rating);
+  const reviewCount = body.reviewCount == null ? Number(conflictingRecord?.review_count ?? 0) : Number(body.reviewCount);
+  const sales = body.sales == null ? Number(conflictingRecord?.sales ?? 0) : Number(body.sales);
+  if (!Number.isFinite(rating) || rating < 0 || rating > 5) {
+    throw Object.assign(new Error('菜品评分需要在 0-5 之间'), { status: 400, code: 'INVALID_DISH_RATING' });
+  }
+  if (!Number.isInteger(reviewCount) || reviewCount < 0 || !Number.isInteger(sales) || sales < 0) {
+    throw Object.assign(new Error('评价数和销量必须是非负整数'), { status: 400, code: 'INVALID_DISH_COUNTER' });
+  }
   await db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, status, allergens_json, dietary_labels_json, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, dietary_labels_json=excluded.dietary_labels_json, updated_at=excluded.updated_at WHERE dishes.tenant_id=excluded.tenant_id`)
-    .run(normalizedId, tenantId, stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, Number(body.rating || 4.5), Number(body.reviewCount || 0), Number(body.sales || 0), body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', status, serializeJson(splitList(body.allergens || [])), serializeJson(dietaryLabels), now(), now());
+    .run(normalizedId, tenantId, stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, rating, reviewCount, sales, body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', status, serializeJson(splitList(body.allergens || [])), serializeJson(dietaryLabels), now(), now());
   const savedRecord = await db.prepare('SELECT tenant_id FROM dishes WHERE id = ?').get(normalizedId);
   if (!savedRecord || savedRecord.tenant_id !== tenantId) {
     throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), { status: 409, code: 'DISH_ID_TENANT_CONFLICT' });
@@ -965,6 +1009,18 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
       body.factExpiresAt || null,
       String(body.dataVersion || 'manual-v1').trim() || 'manual-v1',
       synthetic ? 1 : 0,
+      tenantId,
+      normalizedId,
+    );
+  await db.prepare(`UPDATE dishes SET pricing_mode = ?, price_display = ?, pricing_json = ?, aliases_json = ?,
+      semantic_labels_json = ?, source_ref_json = ? WHERE tenant_id = ? AND id = ?`)
+    .run(
+      pricing.mode,
+      pricing.display,
+      serializeJson(pricing),
+      serializeJson(Object.prototype.hasOwnProperty.call(body, 'aliases') ? splitList(body.aliases) : parseJsonField(conflictingRecord?.aliases_json, [])),
+      serializeJson(Object.prototype.hasOwnProperty.call(body, 'semanticLabels') ? splitList(body.semanticLabels) : parseJsonField(conflictingRecord?.semantic_labels_json, [])),
+      serializeJson(Object.prototype.hasOwnProperty.call(body, 'sourceRef') ? body.sourceRef : parseJsonField(conflictingRecord?.source_ref_json, {})),
       tenantId,
       normalizedId,
     );
@@ -1021,6 +1077,20 @@ function normalizeImportRow(row, index) {
     stallId: String(get('stallId', 'stall_id', '档口ID') || '').trim(),
     name: String(get('name', '菜名', '菜品名称') || '').trim(),
     price: Number(get('price', '价格')),
+    pricingMode: String(get('pricingMode', 'pricing_mode', '计价方式') || 'fixed').trim(),
+    priceDisplay: String(get('priceDisplay', 'price_display', '价格展示') || '').trim(),
+    pricing: (() => {
+      const value = get('pricing', 'pricing_json', '结构化价格');
+      if (!value) return {};
+      try { return typeof value === 'object' ? value : JSON.parse(String(value)); } catch { return { raw: String(value) }; }
+    })(),
+    aliases: splitList(get('aliases', 'aliases_json', '别名')),
+    semanticLabels: splitList(get('semanticLabels', 'semantic_labels_json', '语义标签')),
+    sourceRef: (() => {
+      const value = get('sourceRef', 'source_ref_json', '来源引用');
+      if (!value) return {};
+      try { return typeof value === 'object' ? value : JSON.parse(String(value)); } catch { return { raw: String(value) }; }
+    })(),
     taste: String(get('taste', '口味') || '').trim(),
     cuisine: String(get('cuisine', '菜系') || '').trim(),
     ingredients: splitList(get('ingredients', '食材')),
@@ -1304,18 +1374,20 @@ async function retrievalIndexQuery(db, user, { query, tenantId, limit, candidate
   const requestedTypes = sourceTypes || (sourceType ? [sourceType] : undefined);
   const normalizedTypes = requestedTypes ? [...new Set(requestedTypes.flatMap((type) => {
     if (type === 'health') return ['health_knowledge'];
-    if (type === 'knowledge') return ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE];
+    if (type === 'knowledge') return ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE, CAMPUS_POLICY_SOURCE_TYPE];
     if (['campus', 'campus_knowledge'].includes(type)) return [CAMPUS_KNOWLEDGE_SOURCE_TYPE];
+    if (['policy', 'campus_faq'].includes(type)) return [CAMPUS_POLICY_SOURCE_TYPE];
     return [type];
   }))] : undefined;
   const activeTenantId = tenantId || tenantIdFor(user);
-  const knowledgeTypes = (normalizedTypes || []).filter((type) => ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE].includes(type));
+  const globalKnowledgeTypes = (normalizedTypes || ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE])
+    .filter((type) => ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE].includes(type));
   const searchOptions = { limit, ...(quotaExhausted ? { embeddingProvider: null } : {}) };
   const searches = [searchRetrievalIndex(db, query, { tenantId: activeTenantId, sourceTypes: normalizedTypes, ...searchOptions })];
-  if (knowledgeTypes.length && activeTenantId !== GLOBAL_KNOWLEDGE_TENANT_ID) {
+  if (globalKnowledgeTypes.length && activeTenantId !== GLOBAL_KNOWLEDGE_TENANT_ID) {
     searches.push(searchRetrievalIndex(db, query, {
       tenantId: GLOBAL_KNOWLEDGE_TENANT_ID,
-      sourceTypes: knowledgeTypes,
+      sourceTypes: globalKnowledgeTypes,
       ...searchOptions,
     }));
   }
@@ -1363,12 +1435,20 @@ async function retrievalIndexQuery(db, user, { query, tenantId, limit, candidate
   };
 }
 
+let foodCompositionReferenceCache = null;
+
+function lookupFoodCompositionReferences({ query, limit = 5 }) {
+  if (!foodCompositionReferenceCache) foodCompositionReferenceCache = loadFoodCompositionReferences();
+  return matchFoodCompositionReferencesForQuery(query, foodCompositionReferenceCache, limit);
+}
+
 function retrievalWorkflowDependencies(db, user) {
   return {
     db,
     indexVersion: RETRIEVAL_INDEX_VERSION,
     semanticSearch: (request) => retrievalIndexQuery(db, user, request),
     knowledgeSearch: (request) => retrievalIndexQuery(db, user, request),
+    foodCompositionLookup: lookupFoodCompositionReferences,
     interpretQuery: async ({ query, tenantId }) => {
       const quota = await aiQuotaStatus(db, tenantId);
       if (quota.quota > 0 && quota.remaining <= 0) return { filters: {}, warning: { code: 'AI_QUOTA_EXHAUSTED', message: 'AI 额度已用完，跳过语义补充。' } };
@@ -1484,32 +1564,49 @@ function recommendationAnswer(result) {
 }
 
 function dishEvidenceFromSearch(result) {
-  return (result.items || []).map((dish) => ({
-    id: `dish:${dish.id}`,
-    sourceId: dish.id,
-    sourceType: 'dish',
-    title: dish.name,
-    name: dish.name,
-    content: [
-      dish.name,
-      dish.description,
-      ...(dish.ingredients || []),
-      ...(dish.tags || []),
-      dish.halal ? '清真' : '',
-      [dish.canteenName, dish.stallName].filter(Boolean).join(' > '),
-      `${dish.nutrition?.calories || 0} kcal，蛋白质 ${dish.nutrition?.protein || 0} g`
-    ].filter(Boolean).join('；'),
-    snippet: `${dish.canteenName || '食堂'} · ${dish.stallName || '档口'} · ¥${dish.availability?.price ?? dish.price}`,
-    score: dish.retrievalScore,
-    metadata: {
-      orderable: dish.availability?.orderable,
-      menuItemId: dish.availability?.menuItemId || null,
-      safetyStatus: dish.safety?.status || 'not_applicable',
-      unknownAllergens: dish.safety?.unknownAllergens || [],
-      confidenceLevel: dish.confidence?.level || 'low',
-      dataVersion: dish.dataQuality?.dataVersion || null,
-    }
-  }));
+  return (result.items || []).map((dish) => {
+    const nutritionFactStatus = dish.facts?.factStatus?.nutrition || 'unknown';
+    const hasKnownNutrition = nutritionFactStatus !== 'unknown'
+      && Number.isFinite(Number(dish.nutrition?.calories))
+      && Number.isFinite(Number(dish.nutrition?.protein));
+    const nutritionText = hasKnownNutrition
+      ? `${Number(dish.nutrition.calories)} kcal，蛋白质 ${Number(dish.nutrition.protein)} g`
+      : '营养数据待核验';
+    const availabilityStatus = dish.availability?.status || 'unknown';
+    const supplyConfirmed = Boolean(dish.availability?.menuItemId);
+    return ({
+      id: `dish:${dish.id}`,
+      sourceId: dish.id,
+      sourceType: 'dish',
+      title: dish.name,
+      name: dish.name,
+      content: [
+        dish.name,
+        dish.description,
+        ...(dish.ingredients || []),
+        ...(dish.tags || []),
+        dish.halal ? '清真' : '',
+        [dish.canteenName, dish.stallName].filter(Boolean).join(' > '),
+        nutritionText,
+      ].filter(Boolean).join('；'),
+      snippet: `${dish.canteenName || '食堂'} · ${dish.stallName || '档口'} · ${dish.availability?.priceDisplay || dish.priceDisplay || `¥${dish.availability?.price ?? dish.price}`}`,
+      score: dish.retrievalScore,
+      metadata: {
+        orderable: dish.availability?.orderable,
+        menuItemId: dish.availability?.menuItemId || null,
+        price: dish.availability?.price ?? dish.price,
+        priceDisplay: dish.availability?.priceDisplay || dish.priceDisplay || null,
+        availabilityStatus,
+        supplyConfirmed,
+        safetyStatus: dish.safety?.status || 'not_applicable',
+        unknownAllergens: dish.safety?.unknownAllergens || [],
+        nutritionFactStatus,
+        confidenceLevel: dish.confidence?.level || 'low',
+        dataVersion: dish.dataQuality?.dataVersion || null,
+        evidenceType: 'tenant_dish_fact',
+      }
+    });
+  });
 }
 
 async function executeDishSearch(db, user, body = {}) {
@@ -2241,12 +2338,21 @@ async function runCanteenAgent(db, user, body) {
     toolResults['rag.meal_advisor'] = toolResults['meal.recommend'];
   } else if (intent === 'knowledge_qa') {
     const args = routedToolArguments(toolRouting, 'knowledge.search');
-    const search = await runAgentTool(registry, 'knowledge.search', user, steps, toolResults, async () => retrievalIndexQuery(db, user, {
-      query: args.query || effectiveQuery,
-      tenantId,
-      limit: args.limit || 5,
-      sourceTypes: ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE]
-    }));
+    const search = await runAgentTool(registry, 'knowledge.search', user, steps, toolResults, async () => {
+      const routed = await retrieveRoutedKnowledge({
+        query: args.query || effectiveQuery,
+        tenantId,
+        limit: args.limit || 5,
+      }, {
+        knowledgeSearch: (request) => retrievalIndexQuery(db, user, request),
+        foodCompositionLookup: lookupFoodCompositionReferences,
+      });
+      return {
+        items: routed.results,
+        warnings: routed.degradedReasons.map((message) => ({ code: 'KNOWLEDGE_RETRIEVAL_DEGRADED', message })),
+        meta: { trace: routed.trace },
+      };
+    });
     knowledge = buildKnowledgeAnswer({ query: effectiveQuery, results: search.items });
     toolResults['knowledge.search'] = { ...search, answer: knowledge.answer };
   }
@@ -2308,6 +2414,7 @@ async function runCanteenAgent(db, user, body) {
   toolResults.grounding = {
     answerSource: groundedGeneration.answer ? 'llm_grounded' : 'deterministic',
     citationIds: groundedGeneration.citationIds,
+    evidenceClasses: groundedGeneration.evidenceClasses || [],
     fallbackReason: groundedGeneration.answer ? null : groundedGeneration.reason,
     model: groundedGeneration.model || null,
   };
@@ -2317,6 +2424,7 @@ async function runCanteenAgent(db, user, body) {
     answer,
     answerSource: groundedGeneration.answer ? 'llm_grounded' : 'deterministic',
     answerCitationIds: groundedGeneration.citationIds,
+    answerEvidenceClasses: groundedGeneration.evidenceClasses || [],
     intent,
     steps,
     toolResults,
@@ -2792,18 +2900,27 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const startedAt = Date.now();
         const status = getAiProviderStatus();
         try {
-          const tenantId = tenantIdFor(activeUser);
-          const suggestion = await identifyDishFromImage({ ...(await readBody(req, MAX_IMAGE_BODY_BYTES)), purpose: 'student' });
-          const profile = await getProfile(db, activeUser.id, tenantId);
-          const pool = await recommendationDishPool(db, tenantId, profile);
-          const analysis = buildStudentMealAnalysis({ suggestion, dishes: pool.dishes, stalls: await listStalls(db, tenantId), canteens: await listCanteens(db, tenantId), profile, menuSource: pool.source });
-          await audit(db, activeUser, 'VISION_ANALYZE', 'meal', suggestion.name || 'pending');
-          await recordAiUsage(db, activeUser, { feature: 'student-vision', provider: status.source, model: status.visionModel, status: 'success', imageCount: 1, outputTokens: estimateTokens(JSON.stringify(suggestion)), latencyMs: Date.now() - startedAt });
+          const analysis = await analyzeTrustworthyMeal({
+            db,
+            user: activeUser,
+            body: await readBody(req, MAX_IMAGE_BODY_BYTES),
+            model: status.visionModel,
+          });
+          await audit(db, activeUser, 'VISION_ANALYZE', 'meal_vision_analysis', analysis.analysisId);
+          await recordAiUsage(db, activeUser, { feature: 'student-vision', provider: status.source, model: status.visionModel, status: 'success', imageCount: 1, outputTokens: estimateTokens(JSON.stringify(analysis.observation)), latencyMs: Date.now() - startedAt });
           return send(res, 200, analysis);
         } catch (error) {
           await recordAiUsage(db, activeUser, { feature: 'student-vision', provider: status.source, model: status.visionModel, status: 'failure', imageCount: 1, latencyMs: Date.now() - startedAt, error: error.message });
           throw error;
         }
+      }
+
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'vision' && pathParts[2] === 'analyses' && pathParts[3] && pathParts[4] === 'confirm') {
+        const activeUser = await requireCapability(db, req, 'agent:use');
+        const analysisId = decodeURIComponent(pathParts[3]);
+        const result = await confirmMealVisionAnalysis({ db, user: activeUser, analysisId, body: await readBody(req) });
+        await audit(db, activeUser, 'VISION_CONFIRM', 'meal_vision_analysis', analysisId, { dishId: result.selectedDish?.id || null, feedbackType: result.feedbackType });
+        return send(res, 200, result);
       }
 
       if (method === 'GET' && pathParts[0] === 'api' && pathParts[1] === 'uploads' && pathParts[2] && pathParts[3] === 'content') {
@@ -3127,6 +3244,69 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
           await recordAiUsage(db, activeUser, { feature: 'admin-vision-import', provider: status.source, model: status.visionModel, status: 'failure', imageCount: 1, latencyMs: Date.now() - startedAt, error: error.message });
           throw error;
         }
+      }
+
+      if ((method === 'GET' || method === 'POST')
+        && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'dishes'
+        && pathParts[3] && pathParts[4] === 'reference-images') {
+        const activeUser = await requireCapability(db, req, 'dish:write');
+        const dishId = decodeURIComponent(pathParts[3]);
+        const tenantId = tenantIdFor(activeUser);
+        const dish = await db.prepare('SELECT id FROM dishes WHERE tenant_id = ? AND id = ?').get(tenantId, dishId);
+        if (!dish) throw Object.assign(new Error('菜品不存在'), { status: 404 });
+        if (method === 'GET') return send(res, 200, { images: await listDishReferenceImages(db, tenantId, dishId) });
+        const image = await addDishReferenceImage({ db, user: activeUser, dishId, body: await readBody(req) });
+        await audit(db, activeUser, 'CREATE', 'dish_reference_image', image.id, { dishId, purpose: image.purpose });
+        return send(res, 201, { image, images: await listDishReferenceImages(db, tenantId, dishId) });
+      }
+
+      if ((method === 'GET' || method === 'POST')
+        && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'dishes'
+        && pathParts[3] && pathParts[4] === 'recipes') {
+        const activeUser = await requireCapability(db, req, 'dish:write');
+        const dishId = decodeURIComponent(pathParts[3]);
+        const tenantId = tenantIdFor(activeUser);
+        if (method === 'GET') return send(res, 200, { recipes: await listDishRecipeVersions(db, tenantId, dishId) });
+        const recipe = await createDishRecipeVersion({ db, user: activeUser, dishId, body: await readBody(req) });
+        await audit(db, activeUser, recipe.status === 'approved' ? 'APPROVE' : 'CREATE', 'dish_recipe_version', recipe.recipeId, { dishId, version: recipe.version });
+        return send(res, 201, recipe);
+      }
+
+      if ((method === 'PUT' || method === 'DELETE')
+        && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'vision'
+        && pathParts[3] === 'reference-images' && pathParts[4]) {
+        const activeUser = await requireCapability(db, req, 'dish:write');
+        const referenceImageId = decodeURIComponent(pathParts[4]);
+        const tenantId = tenantIdFor(activeUser);
+        if (method === 'DELETE') {
+          const existing = await db.prepare('SELECT dish_id FROM dish_reference_images WHERE tenant_id = ? AND id = ?').get(tenantId, referenceImageId);
+          if (!existing) throw Object.assign(new Error('参考图不存在'), { status: 404 });
+          await db.prepare('DELETE FROM dish_reference_images WHERE tenant_id = ? AND id = ?').run(tenantId, referenceImageId);
+          await audit(db, activeUser, 'DELETE', 'dish_reference_image', referenceImageId, { dishId: existing.dish_id });
+          return send(res, 200, { deleted: true, images: await listDishReferenceImages(db, tenantId, existing.dish_id) });
+        }
+        const image = await updateDishReferenceImage({ db, user: activeUser, referenceImageId, body: await readBody(req) });
+        await audit(db, activeUser, 'UPDATE', 'dish_reference_image', referenceImageId, { qualityStatus: image.qualityStatus, purpose: image.purpose });
+        return send(res, 200, { image });
+      }
+
+      if (method === 'POST' && url.pathname === '/api/admin/vision/reindex') {
+        const activeUser = await requireCapability(db, req, 'dish:write');
+        const body = await readBody(req);
+        const result = await reindexDishReferenceImages({
+          db,
+          user: activeUser,
+          dishId: String(body.dishId || '').trim() || null,
+          limit: body.limit,
+        });
+        await audit(db, activeUser, 'REINDEX', 'dish_reference_image', body.dishId || null, { indexed: result.indexed, failed: result.failed });
+        return send(res, 200, result);
+      }
+
+      if (method === 'GET' && url.pathname === '/api/admin/vision/metrics') {
+        const activeUser = await requireCapability(db, req, 'ai:configure');
+        const days = Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30));
+        return send(res, 200, await getMealVisionMetrics(db, tenantIdFor(activeUser), { days }));
       }
 
       if ((method === 'PUT' || method === 'DELETE') && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'dishes' && pathParts[3]) {
@@ -3509,12 +3689,22 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const activeUser = await requireCapability(db, req, 'dish:write');
         const tenantId = tenantIdFor(activeUser);
         const body = await readBody(req);
+        const sourceTypes = Array.isArray(body.sourceTypes) && body.sourceTypes.length
+          ? body.sourceTypes
+          : ['dish', 'stall', CAMPUS_POLICY_SOURCE_TYPE];
+        const globalOnly = sourceTypes.filter((type) => ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE].includes(type));
+        if (globalOnly.length) {
+          throw Object.assign(new Error(`全局知识请通过受控任务重建：${globalOnly.join('、')}`), {
+            status: 400,
+            code: 'GLOBAL_KNOWLEDGE_REINDEX_REQUIRED',
+          });
+        }
         await getAiSettings(db, activeUser).catch(() => {});
         const quota = await aiQuotaStatus(db, tenantId);
         const quotaExhausted = quota.quota > 0 && quota.remaining <= 0;
         const result = await reindexRetrieval(db, {
           tenantId,
-          sourceTypes: body.sourceTypes,
+          sourceTypes,
           prune: body.prune !== false,
           ...(quotaExhausted ? { embeddingProvider: null } : {})
         });
@@ -3819,8 +4009,12 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         }
         await requireCatalogDiningArea(db, { tenantId, canteenId });
         await validateStallParent(db, { tenantId, stallId, canteenId, parentId });
+        const rating = body.rating == null || body.rating === '' ? 0 : Number(body.rating);
+        if (!Number.isFinite(rating) || rating < 0 || rating > 5) {
+          throw Object.assign(new Error('档口评分需要在 0-5 之间'), { status: 400, code: 'INVALID_STALL_RATING' });
+        }
         await db.prepare('INSERT INTO stalls (id, tenant_id, canteen_id, parent_id, floor, name, category, rating, avg_price, open, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(stallId, tenantId, canteenId, parentId, body.floor, String(body.name).trim(), String(body.category).trim(), Number(body.rating || 4.5), Number(body.avgPrice || 0), body.open !== false ? 1 : 0, body.description || '', now(), now());
+          .run(stallId, tenantId, canteenId, parentId, body.floor, String(body.name).trim(), String(body.category).trim(), rating, Number(body.avgPrice || 0), body.open !== false ? 1 : 0, body.description || '', now(), now());
         await audit(db, activeUser, 'CREATE', 'stall', stallId);
         await invalidateRankings();
         return send(res, 201, { ...(await snapshot(db, activeUser)), savedId: stallId });

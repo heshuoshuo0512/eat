@@ -218,5 +218,8 @@ export const apiClient = {
   },
   analyzeMealImage(payload) {
     return request('/api/vision/meal-analyze', { method: 'POST', body: payload, timeoutMs: 60000 });
+  },
+  confirmMealVision(analysisId, payload) {
+    return request(`/api/vision/analyses/${encodeURIComponent(analysisId)}/confirm`, { method: 'POST', body: payload });
   }
 };

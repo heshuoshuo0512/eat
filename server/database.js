@@ -6,6 +6,7 @@ import { canteens as seedCanteens, dishes as seedDishes, reviews as seedReviews,
 import { hashPassword, resolveUploadReference } from './security.js';
 import { runMigrations } from './migrations.js';
 import { businessDate } from './time.js';
+import { normalizeDishPricing } from './dishPricing.js';
 
 const DEFAULT_DB_PATH = resolve('data/smart-canteen.sqlite');
 const pgRequestContext = new AsyncLocalStorage();
@@ -82,8 +83,9 @@ function migrate(db) {
       parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT,
       floor TEXT NOT NULL,
       name TEXT NOT NULL,
+      aliases_json TEXT NOT NULL DEFAULT '[]',
       category TEXT NOT NULL,
-      rating REAL NOT NULL DEFAULT 4.5 CHECK(rating BETWEEN 0 AND 5),
+      rating REAL NOT NULL DEFAULT 0 CHECK(rating BETWEEN 0 AND 5),
       avg_price REAL NOT NULL DEFAULT 0,
       open INTEGER NOT NULL DEFAULT 1,
       description TEXT NOT NULL,
@@ -108,7 +110,7 @@ function migrate(db) {
       protein REAL NOT NULL DEFAULT 0,
       fat REAL NOT NULL DEFAULT 0,
       carbs REAL NOT NULL DEFAULT 0,
-      rating REAL NOT NULL DEFAULT 4.5 CHECK(rating BETWEEN 0 AND 5),
+      rating REAL NOT NULL DEFAULT 0 CHECK(rating BETWEEN 0 AND 5),
       review_count INTEGER NOT NULL DEFAULT 0,
       sales INTEGER NOT NULL DEFAULT 0,
       image TEXT NOT NULL DEFAULT '🍽️',
@@ -132,6 +134,171 @@ function migrate(db) {
       synthetic INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS data_import_batches (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      entity_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','validated','approved','published','archived','rejected')),
+      source_name TEXT NOT NULL DEFAULT '',
+      row_count INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT,
+      reviewed_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS catalog_import_rows (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      batch_id TEXT NOT NULL REFERENCES data_import_batches(id) ON DELETE CASCADE,
+      source_hash TEXT NOT NULL,
+      source_name TEXT NOT NULL,
+      source_locator TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT,
+      status TEXT NOT NULL CHECK(status IN ('accepted','review_required','excluded')),
+      raw_text TEXT NOT NULL DEFAULT '',
+      normalized_json TEXT NOT NULL DEFAULT '{}',
+      issues_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS dish_ai_annotations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      batch_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      annotation_json TEXT NOT NULL DEFAULT '{}',
+      field_confidence_json TEXT NOT NULL DEFAULT '{}',
+      linked_concept_ids_json TEXT NOT NULL DEFAULT '[]',
+      source_ids_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'generated' CHECK(status IN ('generated','schema_validated','approved','rejected')),
+      error TEXT,
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, dish_id, batch_id, input_hash)
+    );
+
+    CREATE TABLE IF NOT EXISTS dish_reference_images (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      upload_id TEXT NOT NULL REFERENCES uploads(id) ON DELETE CASCADE,
+      purpose TEXT NOT NULL DEFAULT 'reference' CHECK(purpose IN ('reference','evaluation')),
+      angle TEXT NOT NULL DEFAULT '',
+      batch_key TEXT NOT NULL DEFAULT '',
+      quality_status TEXT NOT NULL DEFAULT 'pending' CHECK(quality_status IN ('pending','approved','rejected')),
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, dish_id, upload_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS dish_image_embeddings (
+      reference_image_id TEXT PRIMARY KEY REFERENCES dish_reference_images(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      model TEXT NOT NULL,
+      dimension INTEGER NOT NULL DEFAULT 768,
+      embedding_json TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','ready','failed')),
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS dish_recipe_versions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      version TEXT NOT NULL,
+      basis TEXT NOT NULL DEFAULT 'per_serving' CHECK(basis IN ('per_serving','per_100g')),
+      serving_weight_grams REAL,
+      yield_weight_grams REAL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','approved','archived')),
+      notes TEXT NOT NULL DEFAULT '',
+      source_ids_json TEXT NOT NULL DEFAULT '[]',
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, dish_id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS dish_recipe_ingredients (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      recipe_version_id TEXT NOT NULL REFERENCES dish_recipe_versions(id) ON DELETE CASCADE,
+      food_reference_id TEXT NOT NULL,
+      ingredient_name TEXT NOT NULL,
+      raw_weight_grams REAL NOT NULL CHECK(raw_weight_grams > 0),
+      edible_ratio REAL NOT NULL DEFAULT 1 CHECK(edible_ratio > 0 AND edible_ratio <= 1),
+      retention_factor REAL NOT NULL DEFAULT 1 CHECK(retention_factor > 0 AND retention_factor <= 1.5),
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS dish_nutrition_versions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      recipe_version_id TEXT REFERENCES dish_recipe_versions(id) ON DELETE SET NULL,
+      version TEXT NOT NULL,
+      basis TEXT NOT NULL DEFAULT 'per_serving' CHECK(basis IN ('per_serving','per_100g')),
+      portion_grams REAL,
+      status TEXT NOT NULL DEFAULT 'unknown' CHECK(status IN ('unknown','estimated','verified')),
+      source_type TEXT NOT NULL DEFAULT 'recipe' CHECK(source_type IN ('recipe','manual','lab','vision')),
+      nutrient_ranges_json TEXT NOT NULL DEFAULT '{}',
+      source_ids_json TEXT NOT NULL DEFAULT '[]',
+      reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, dish_id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS meal_vision_analyses (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL DEFAULT 'single_dish' CHECK(mode IN ('single_dish')),
+      context_json TEXT NOT NULL DEFAULT '{}',
+      portion_json TEXT NOT NULL DEFAULT '{}',
+      observation_json TEXT NOT NULL DEFAULT '{}',
+      candidates_json TEXT NOT NULL DEFAULT '[]',
+      match_status TEXT NOT NULL DEFAULT 'unresolved' CHECK(match_status IN ('auto_matched','needs_confirmation','unresolved')),
+      selected_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL,
+      nutrition_json TEXT NOT NULL DEFAULT '{}',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      model TEXT NOT NULL DEFAULT '',
+      image_hash TEXT NOT NULL,
+      latency_ms INTEGER NOT NULL DEFAULT 0,
+      confirmed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS meal_vision_feedback (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      analysis_id TEXT NOT NULL REFERENCES meal_vision_analyses(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      feedback_type TEXT NOT NULL CHECK(feedback_type IN ('confirmed','corrected','unresolved')),
+      confirmed_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL,
+      rejected_candidate_ids_json TEXT NOT NULL DEFAULT '[]',
+      portion_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      UNIQUE(tenant_id, analysis_id, user_id)
     );
 
     CREATE TABLE IF NOT EXISTS reviews (
@@ -476,6 +643,12 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_session ON auth_refresh_tokens(session_id, status);
     CREATE INDEX IF NOT EXISTS idx_outbox_claim ON outbox_events(status, available_at, created_at);
     CREATE INDEX IF NOT EXISTS idx_outbox_tenant_created ON outbox_events(tenant_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_dish_reference_images_dish ON dish_reference_images(tenant_id, dish_id, purpose, quality_status);
+    CREATE INDEX IF NOT EXISTS idx_dish_image_embeddings_dish ON dish_image_embeddings(tenant_id, dish_id, status);
+    CREATE INDEX IF NOT EXISTS idx_dish_recipe_versions_dish ON dish_recipe_versions(tenant_id, dish_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_dish_nutrition_versions_dish ON dish_nutrition_versions(tenant_id, dish_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_meal_vision_analyses_user ON meal_vision_analyses(tenant_id, user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_meal_vision_feedback_analysis ON meal_vision_feedback(tenant_id, analysis_id);
   `);
 
   // Add embedding_json column for RAG embedding storage (idempotent)
@@ -494,6 +667,7 @@ function migrate(db) {
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN expires_at TEXT"); } catch {}
   try { db.exec("ALTER TABLE agent_actions ADD COLUMN payload_hash TEXT NOT NULL DEFAULT ''"); } catch {}
   try { db.exec('ALTER TABLE stalls ADD COLUMN parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT'); } catch {}
+  try { db.exec("ALTER TABLE stalls ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE audit_logs ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
   for (const [table, column] of [
     ['users', "tenant_id TEXT NOT NULL DEFAULT 'default'"],
@@ -529,6 +703,13 @@ function migrate(db) {
   try { db.exec("ALTER TABLE dishes ADD COLUMN fact_expires_at TEXT"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN data_version TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN synthetic INTEGER NOT NULL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN pricing_mode TEXT NOT NULL DEFAULT 'fixed'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN price_display TEXT NOT NULL DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN pricing_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN semantic_labels_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN source_ref_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
+  db.exec("UPDATE dishes SET price_display = CAST(price AS TEXT) || '元' WHERE price_display IS NULL OR price_display = ''");
   const legacySafetyRows = db.prepare("SELECT id, allergens_json, safety_declarations_json FROM dishes WHERE safety_declarations_json IS NULL OR safety_declarations_json = '[]'").all();
   const updateLegacySafety = db.prepare('UPDATE dishes SET safety_declarations_json = ? WHERE id = ?');
   for (const row of legacySafetyRows) {
@@ -653,6 +834,12 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_user ON user_dish_preferences(tenant_id, user_id);
     CREATE INDEX IF NOT EXISTS idx_user_dish_prefs_dish ON user_dish_preferences(tenant_id, dish_id);
     CREATE INDEX IF NOT EXISTS idx_canteens_parent ON canteens(tenant_id, parent_id);
+    CREATE INDEX IF NOT EXISTS idx_import_batches_tenant_status ON data_import_batches(tenant_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_catalog_import_rows_batch ON catalog_import_rows(tenant_id, batch_id, status);
+    CREATE INDEX IF NOT EXISTS idx_dish_ai_annotations_tenant_status ON dish_ai_annotations(tenant_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_dish_ai_annotations_dish ON dish_ai_annotations(tenant_id, dish_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_import_rows_source
+      ON catalog_import_rows(batch_id, source_hash, source_locator, entity_type, COALESCE(entity_id, ''));
   `);
 }
 
@@ -662,6 +849,7 @@ function seed(db) {
     db.prepare('INSERT INTO tenants (id, name, status, plan, ai_quota, storage_quota_mb, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run('default', '默认校园', 'active', 'enterprise', 1000, 10240, now, now);
   }
+  if (['0', 'false', 'off', 'none'].includes(String(process.env.ENABLE_DEMO_SEED || '1').toLowerCase())) return;
   const users = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
   if (users === 0) {
     const insertUser = db.prepare('INSERT INTO users (id, username, password_hash, nickname, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -726,6 +914,14 @@ function seed(db) {
   for (const item of seedDishes) {
     if (item.imageUrl) updateSeedImage.run(item.imageUrl, item.id, '');
   }
+
+  // Demo nutrition values are authored fixture estimates, not unknown zero placeholders.
+  const markSeedNutritionEstimated = db.prepare(`UPDATE dishes
+    SET nutrition_fact_status = 'estimated',
+        fact_source = CASE WHEN fact_source = 'legacy' THEN 'demo_seed' ELSE fact_source END,
+        data_version = CASE WHEN data_version = 'legacy' THEN 'demo-seed-v1' ELSE data_version END
+    WHERE id = ? AND nutrition_fact_status = 'unknown'`);
+  for (const item of seedDishes) markSeedNutritionEstimated.run(item.id);
 
   // Backfill expanded nutrition columns on existing dishes
   for (const item of seedDishes) {
@@ -812,6 +1008,7 @@ export function rowToStall(row) {
     parentId: row.parent_id || null,
     floor: row.floor,
     name: row.name,
+    aliases: parseJson(row.aliases_json, []),
     category: row.category,
     rating: row.rating,
     avgPrice: row.avg_price,
@@ -821,11 +1018,19 @@ export function rowToStall(row) {
 }
 
 export function rowToDish(row) {
+  const pricing = normalizeDishPricing({
+    pricingMode: row.pricing_mode,
+    priceDisplay: row.price_display,
+    pricing: parseJson(row.pricing_json, {}),
+  }, row.price);
   return {
     id: row.id,
     stallId: row.stall_id,
     name: row.name,
     price: row.price,
+    pricingMode: pricing.mode,
+    priceDisplay: pricing.display,
+    pricing,
     taste: row.taste,
     cuisine: row.cuisine,
     ingredients: parseJson(row.ingredients_json, []),
@@ -856,6 +1061,9 @@ export function rowToDish(row) {
     factExpiresAt: row.fact_expires_at || null,
     dataVersion: row.data_version || 'legacy',
     synthetic: Boolean(row.synthetic),
+    aliases: parseJson(row.aliases_json, []),
+    semanticLabels: parseJson(row.semantic_labels_json, []),
+    sourceRef: parseJson(row.source_ref_json, {}),
     regionalTaste: row.regional_taste || '',
     rating: row.rating,
     reviewCount: row.review_count,

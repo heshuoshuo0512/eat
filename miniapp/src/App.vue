@@ -12,9 +12,12 @@ onLaunch(() => {
 <style>
 @import './styles/main.css';
 
-page { min-height:100%; background:#f6f7f5; color:#17211b; font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',Arial,sans-serif; font-size:28rpx; }
+page { min-height:100%; background:#f7f8fa; color:#181a1f; font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',Arial,sans-serif; font-size:14px; }
 button { box-sizing:border-box; font-family:inherit; }
 button::after { border:0; }
-.uni-tabbar { padding-bottom:env(safe-area-inset-bottom); background:#fff !important; border-top:1rpx solid #e5eae7; }
-.uni-tabbar__label { font-weight:500; }
+.uni-tabbar { padding-bottom:env(safe-area-inset-bottom); background:#ffffff !important; border-top:1px solid #e6e8ec; box-shadow:0 -6px 24px rgba(24,26,31,.06); }
+.uni-tabbar__label { font-weight:500; letter-spacing:0; }
+/* #ifdef H5 */
+.uni-tabbar { display:none !important; }
+/* #endif */
 </style>

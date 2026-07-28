@@ -72,8 +72,9 @@ CREATE TABLE IF NOT EXISTS stalls (
   parent_id TEXT REFERENCES stalls(id) ON DELETE RESTRICT,
   floor TEXT NOT NULL,
   name TEXT NOT NULL,
+  aliases_json TEXT NOT NULL DEFAULT '[]',
   category TEXT NOT NULL,
-  rating REAL NOT NULL DEFAULT 4.5 CHECK(rating BETWEEN 0 AND 5),
+  rating REAL NOT NULL DEFAULT 0 CHECK(rating BETWEEN 0 AND 5),
   avg_price REAL NOT NULL DEFAULT 0,
   open INTEGER NOT NULL DEFAULT 1,
   description TEXT NOT NULL,
@@ -88,12 +89,18 @@ CREATE TABLE IF NOT EXISTS dishes (
   stall_id TEXT NOT NULL REFERENCES stalls(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   price REAL NOT NULL CHECK(price >= 0),
+  pricing_mode TEXT NOT NULL DEFAULT 'fixed' CHECK(pricing_mode IN ('fixed','per_weight','per_unit','per_person','variants','tiered')),
+  price_display TEXT NOT NULL DEFAULT '',
+  pricing_json TEXT NOT NULL DEFAULT '{}',
   taste TEXT NOT NULL,
   cuisine TEXT NOT NULL,
   ingredients_json TEXT NOT NULL DEFAULT '[]',
   seasonings_json TEXT NOT NULL DEFAULT '[]',
   additives_json TEXT NOT NULL DEFAULT '[]',
   tags_json TEXT NOT NULL DEFAULT '[]',
+  aliases_json TEXT NOT NULL DEFAULT '[]',
+  semantic_labels_json TEXT NOT NULL DEFAULT '[]',
+  source_ref_json TEXT NOT NULL DEFAULT '{}',
   halal INTEGER NOT NULL DEFAULT 0,
   meal_types_json TEXT NOT NULL DEFAULT '["lunch","dinner"]',
   calories REAL NOT NULL DEFAULT 0,
@@ -105,7 +112,7 @@ CREATE TABLE IF NOT EXISTS dishes (
   sugar REAL NOT NULL DEFAULT 0,
   calcium REAL NOT NULL DEFAULT 0,
   iron REAL NOT NULL DEFAULT 0,
-  rating REAL NOT NULL DEFAULT 4.5 CHECK(rating BETWEEN 0 AND 5),
+  rating REAL NOT NULL DEFAULT 0 CHECK(rating BETWEEN 0 AND 5),
   review_count INTEGER NOT NULL DEFAULT 0,
   sales INTEGER NOT NULL DEFAULT 0,
   image TEXT NOT NULL DEFAULT '🍽️',
@@ -528,6 +535,44 @@ CREATE TABLE IF NOT EXISTS data_import_batches (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS catalog_import_rows (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  batch_id TEXT NOT NULL REFERENCES data_import_batches(id) ON DELETE CASCADE,
+  source_hash TEXT NOT NULL,
+  source_name TEXT NOT NULL,
+  source_locator TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT,
+  status TEXT NOT NULL CHECK(status IN ('accepted','review_required','excluded')),
+  raw_text TEXT NOT NULL DEFAULT '',
+  normalized_json TEXT NOT NULL DEFAULT '{}',
+  issues_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dish_ai_annotations (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+  batch_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  annotation_json TEXT NOT NULL DEFAULT '{}',
+  field_confidence_json TEXT NOT NULL DEFAULT '{}',
+  linked_concept_ids_json TEXT NOT NULL DEFAULT '[]',
+  source_ids_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'generated'
+    CHECK(status IN ('generated','schema_validated','approved','rejected')),
+  error TEXT,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(tenant_id, dish_id, batch_id, input_hash)
+);
+
 CREATE TABLE IF NOT EXISTS campus_posts (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -603,6 +648,11 @@ CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_tenant_family ON auth_refresh
 CREATE INDEX IF NOT EXISTS idx_outbox_claim ON outbox_events(status, available_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_tenant_created ON outbox_events(tenant_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_import_batches_tenant_status ON data_import_batches(tenant_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_catalog_import_rows_batch ON catalog_import_rows(tenant_id, batch_id, status);
+CREATE INDEX IF NOT EXISTS idx_dish_ai_annotations_tenant_status ON dish_ai_annotations(tenant_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_dish_ai_annotations_dish ON dish_ai_annotations(tenant_id, dish_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_import_rows_source
+  ON catalog_import_rows(batch_id, source_hash, source_locator, entity_type, COALESCE(entity_id, ''));
 CREATE INDEX IF NOT EXISTS idx_campus_posts_tenant_status ON campus_posts(tenant_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_campus_posts_user ON campus_posts(tenant_id, user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_retrieval_index_runs_tenant_started ON retrieval_index_runs(tenant_id, started_at DESC);

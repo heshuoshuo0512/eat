@@ -38,7 +38,7 @@
             <p>{{ region.description }}</p>
             <div class="region-card-meta">
               <span>{{ region.count }} 道菜</span>
-              <span>⭐ {{ region.averageRating.toFixed(1) }}</span>
+              <span>{{ region.averageRating > 0 ? `⭐ ${region.averageRating.toFixed(1)}` : '暂无评分' }}</span>
               <span>热度 {{ formatSales(region.totalSales) }}</span>
             </div>
           </div>
@@ -63,7 +63,7 @@
         <p class="hero-copy">{{ selectedRegion.description }}</p>
         <div class="metric-grid compact region-stats">
           <article><strong>{{ selectedRegion.count }}</strong><span>道菜</span></article>
-          <article><strong>{{ selectedRegion.averageRating.toFixed(1) }}</strong><span>平均评分</span></article>
+          <article><strong>{{ selectedRegion.averageRating > 0 ? selectedRegion.averageRating.toFixed(1) : '暂无评分' }}</strong><span>平均评分</span></article>
           <article><strong>{{ formatSales(selectedRegion.totalSales) }}</strong><span>总热度</span></article>
         </div>
       </div>
@@ -98,9 +98,9 @@
           <div class="region-dish-content">
             <div class="region-dish-title">
               <RouterLink class="region-dish-name" :to="{ path: '/dishes', query: { dish: dish.id } }">{{ dish.name }}</RouterLink>
-              <span class="rating">{{ dish.displayRating.toFixed(1) }}</span>
+              <span class="rating">{{ dishRatingText(dish) }}</span>
             </div>
-            <small class="muted">{{ dish.cuisine }} · {{ dish.taste }} · ¥{{ dish.price }}</small>
+            <small class="muted">{{ dish.cuisine }} · {{ dish.taste || '口味待核验' }} · {{ dishPriceText(dish) }}</small>
             <small class="muted">{{ dishStallLabel(dish) }}</small>
             <div class="region-dish-meta">
               <span class="pill">热度 {{ formatSales(dish.sales) }}</span>
@@ -123,6 +123,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
+import { dishPriceText, dishRatingText, dishSupplyPresentation } from '../domain/dishPresentation.js';
 import {
   getRegionById,
   getRegionDishes,
@@ -179,11 +180,7 @@ function dishStallLabel(dish) {
 
 function supplyState(dish) {
   const menuDish = todayMenuMap.value.get(dish.id);
-  if (!menuDish) return { label: '暂非今日供应', className: 'off-menu', canOrder: false };
-  const status = menuDish.supplyStatus || 'available';
-  if (status === 'sold_out') return { label: '今日售罄', className: 'sold-out', canOrder: false };
-  if (status === 'limited') return { label: '库存紧张', className: 'limited', canOrder: true };
-  return { label: '今日可点', className: 'available', canOrder: true };
+  return dishSupplyPresentation(dish, menuDish || null);
 }
 
 function setSort(sortBy) {

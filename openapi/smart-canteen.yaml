@@ -227,6 +227,131 @@ components:
         visibility: { type: string, enum: [private] }
         objectVersion: { type: string, example: v1 }
         provider: { type: string, enum: [local, s3], description: local when S3_BUCKET is unset; s3 when S3_BUCKET and S3 client are configured. }
+    MealVisionRequest:
+      allOf:
+        - { $ref: '#/components/schemas/UploadRequest' }
+        - type: object
+          properties:
+            mode: { type: string, enum: [single_dish], default: single_dish }
+            context:
+              type: object
+              properties:
+                canteenId: { type: string, description: Required for closed-set campus dish matching. }
+                stallId: { type: string, nullable: true }
+                menuId: { type: string, nullable: true }
+                capturedAt: { type: string, format: date-time }
+                mealType: { type: string, enum: [breakfast, lunch, dinner] }
+            portion:
+              type: object
+              properties:
+                size: { type: string, enum: [small, regular, large] }
+                grams: { type: number, minimum: 1, maximum: 3000, nullable: true }
+    NutrientRange:
+      type: object
+      required: [min, max, unit]
+      properties:
+        min: { type: number, minimum: 0 }
+        max: { type: number, minimum: 0 }
+        unit: { type: string, enum: [kcal, g, mg] }
+    VisionNutrition:
+      type: object
+      required: [status, sourceIds]
+      properties:
+        status: { type: string, enum: [unknown, estimated, verified] }
+        basis: { type: string, enum: [per_serving, per_100g], nullable: true }
+        portionGrams: { type: number, nullable: true }
+        ranges:
+          type: object
+          nullable: true
+          additionalProperties: { $ref: '#/components/schemas/NutrientRange' }
+        sourceType: { type: string, enum: [recipe, manual, lab, vision], nullable: true }
+        sourceIds: { type: array, items: { type: string } }
+        reason: { type: string }
+    VisionCandidate:
+      type: object
+      required: [dishId, name, canteenPath, stallPath, score, reasons]
+      properties:
+        dishId: { type: string }
+        name: { type: string }
+        imageUrl: { type: string, nullable: true }
+        referenceImageUrl: { type: string, nullable: true }
+        canteenPath: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string } } } }
+        stallPath: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string } } } }
+        score: { type: number, minimum: 0, maximum: 1 }
+        scoreBreakdown: { type: object }
+        reasons: { type: array, items: { type: string } }
+    MealVisionResponse:
+      type: object
+      required: [analysisId, mode, context, observation, match, nutrition, warnings, source]
+      properties:
+        analysisId: { type: string }
+        mode: { type: string, enum: [single_dish] }
+        context: { type: object }
+        observation: { type: object, description: Visible food observations only; never contains a claimed campus location. }
+        match:
+          type: object
+          properties:
+            status: { type: string, enum: [auto_matched, needs_confirmation, unresolved] }
+            candidates: { type: array, maxItems: 3, items: { $ref: '#/components/schemas/VisionCandidate' } }
+        selectedDish: { type: object, nullable: true }
+        nutrition: { $ref: '#/components/schemas/VisionNutrition' }
+        warnings: { type: array, items: { type: object, properties: { code: { type: string }, message: { type: string } } } }
+        source:
+          type: object
+          properties:
+            observation: { type: string, enum: [vision-model] }
+            candidateScope: { type: string, enum: [published-menu, none] }
+            menuSource: { type: string, enum: [menu, none], description: Backward-compatible source.menuSource; trustworthy matching never falls back to unscoped catalog ownership. }
+            visualRetrieval: { type: string, enum: [siglip, degraded] }
+            location: { type: string, enum: [relational-database] }
+            rawImageRetained: { type: boolean, enum: [false] }
+            menuIds: { type: array, items: { type: string } }
+    DishReferenceImageInput:
+      type: object
+      required: [uploadId]
+      properties:
+        uploadId: { type: string }
+        purpose: { type: string, enum: [reference, evaluation], default: reference }
+        angle: { type: string }
+        batchKey: { type: string }
+        qualityStatus: { type: string, enum: [pending, approved, rejected], default: pending }
+    DishRecipeInput:
+      type: object
+      required: [ingredients]
+      properties:
+        version: { type: string }
+        basis: { type: string, enum: [per_serving, per_100g], default: per_serving }
+        servingWeightGrams: { type: number, minimum: 1 }
+        yieldWeightGrams: { type: number, minimum: 1 }
+        approve: { type: boolean, default: false }
+        notes: { type: string }
+        ingredients:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [foodReferenceId, rawWeightGrams]
+            properties:
+              foodReferenceId: { type: string }
+              ingredientName: { type: string }
+              rawWeightGrams: { type: number, minimum: 0 }
+              edibleRatio: { type: number, exclusiveMinimum: 0, maximum: 1 }
+              retentionFactor: { type: number, exclusiveMinimum: 0, maximum: 1.5 }
+    MealVisionMetrics:
+      type: object
+      required: [window, analysisCount, candidateCoverageRate, userCorrectionRate, latency, cost, confusionMatrix]
+      properties:
+        window: { type: object }
+        analysisCount: { type: integer, minimum: 0 }
+        candidateCoverageRate: { type: number, minimum: 0, maximum: 1 }
+        averageCandidateCount: { type: number, minimum: 0 }
+        feedbackCount: { type: integer, minimum: 0 }
+        userCorrectionRate: { type: number, minimum: 0, maximum: 1 }
+        unresolvedFeedbackCount: { type: integer, minimum: 0 }
+        autoMatchedCount: { type: integer, minimum: 0 }
+        latency: { type: object, description: Stored recognition latency with the 8000 ms P95 launch target. }
+        cost: { type: object, description: Student vision AI calls, images and estimated provider cost. }
+        confusionMatrix: { type: array, items: { type: object }, description: Top-candidate to user-confirmed dish and stall corrections. }
     AgentRequest:
       type: object
       description: Agent input. The assistant routes to dish_search, meal_recommendation, knowledge_qa, order_status, operations or general_canteen and executes only the tools required by the resolved intent.
@@ -484,19 +609,54 @@ components:
         limit: { type: integer, minimum: 1, maximum: 50, default: 20 }
         offset: { type: integer, minimum: 0, default: 0 }
         context: { $ref: '#/components/schemas/RetrievalContext' }
+    DishPricing:
+      type: object
+      required: [mode, display, minAmount, maxAmount, budgetComparable]
+      description: Structured catalog pricing. price remains the lowest purchasable amount for backward compatibility; per-weight prices are not sufficient to prove that a whole serving fits a budget.
+      properties:
+        mode: { type: string, enum: [fixed, per_weight, per_person, variants, tiered] }
+        display: { type: string, examples: [12元, 1.68元/50克, 10-18元] }
+        baseAmount: { type: number, minimum: 0 }
+        baseQuantity: { type: number, minimum: 0, nullable: true }
+        unit: { type: string }
+        minAmount: { type: number, minimum: 0 }
+        maxAmount: { type: number, minimum: 0 }
+        budgetComparable: { type: boolean }
+        variants:
+          type: array
+          items:
+            type: object
+            required: [id, label, amount]
+            properties:
+              id: { type: string }
+              label: { type: string }
+              amount: { type: number, minimum: 0 }
+              quantity: { type: number, minimum: 0, nullable: true }
+              unit: { type: string }
+        modifiers:
+          type: array
+          items:
+            type: object
+            required: [label, amount]
+            properties:
+              label: { type: string }
+              amount: { type: number, minimum: 0 }
+        raw: { type: string, description: Original normalized pricing note retained for audit and display fallback. }
     DishAvailability:
       type: object
       required: [orderable, status, price]
       description: Live availability projected from published menus, menu items, stall state, supply counters and serving windows. It is SQL truth and is never generated by the LLM.
       properties:
         orderable: { type: boolean }
-        status: { type: string, enum: [available, limited, sold_out, outside_serving_time, stall_closed, not_on_menu, dish_inactive, unavailable] }
+        status: { type: string, enum: [available, limited, sold_out, outside_serving_time, stall_closed, not_on_menu, catalog_only, dish_inactive, unavailable] }
         reason: { type: string, nullable: true }
         menuItemId: { type: string, nullable: true }
         menuId: { type: string, nullable: true }
         date: { type: string, format: date }
         mealType: { type: string }
         price: { type: number, minimum: 0 }
+        priceDisplay: { type: string, description: Display-safe current price. Catalog-only records use the structured catalog price. }
+        budgetComparable: { type: boolean, description: False for pricing such as per-weight where the final serving total is unknown. }
         supplyLimit: { type: integer, minimum: 0 }
         supplyCount: { type: integer, minimum: 0 }
         remaining: { type: integer, minimum: 0, nullable: true }
@@ -561,6 +721,12 @@ components:
         id: { type: string }
         name: { type: string }
         price: { type: number }
+        pricingMode: { type: string, enum: [fixed, per_weight, per_person, variants, tiered] }
+        priceDisplay: { type: string }
+        pricing: { $ref: '#/components/schemas/DishPricing' }
+        aliases: { type: array, items: { type: string }, description: Reviewed search aliases; not independent sale items. }
+        semanticLabels: { type: array, items: { type: string }, description: Soft retrieval expansion only; never proves recipe, nutrition or safety facts. }
+        sourceRef: { type: object, additionalProperties: true, description: Import batch and source locator used for audit traceability. }
         stallId: { type: string, nullable: true }
         stallName: { type: string, nullable: true }
         canteenId: { type: string, nullable: true }
@@ -574,9 +740,10 @@ components:
         tags: { type: array, items: { type: string } }
         halal: { type: boolean }
         mealTypes: { type: array, items: { type: string } }
-        nutrition: { type: object }
-        rating: { type: number }
-        reviewCount: { type: integer }
+        nutrition: { type: object, description: Values are displayable only when factStatus.nutrition is estimated or verified. Unknown placeholder zeros are not nutrition facts. }
+        factStatus: { type: object, additionalProperties: { type: string, enum: [unknown, estimated, verified] } }
+        rating: { type: number, description: Zero with reviewCount=0 means no rating exists and clients must display 暂无评分. }
+        reviewCount: { type: integer, minimum: 0 }
         availability: { $ref: '#/components/schemas/DishAvailability' }
         safety: { $ref: '#/components/schemas/DishSafety' }
         dataQuality: { $ref: '#/components/schemas/DishDataQuality' }
@@ -855,6 +1022,9 @@ components:
         stallId: { type: string }
         name: { type: string }
         price: { type: number, minimum: 0 }
+        pricingMode: { type: string, enum: [fixed, per_weight, per_person, variants, tiered], default: fixed }
+        priceDisplay: { type: string, description: Human-readable normalized price, for example 1.68元/50克. }
+        pricing: { $ref: '#/components/schemas/DishPricing' }
         taste: { type: string }
         cuisine: { type: string }
         regionalTaste: { type: string }
@@ -862,6 +1032,9 @@ components:
         seasonings: { type: array, items: { type: string } }
         additives: { type: array, items: { type: string } }
         tags: { type: array, items: { type: string } }
+        aliases: { type: array, items: { type: string } }
+        semanticLabels: { type: array, items: { type: string }, description: Soft retrieval labels only; they do not establish recipe or safety facts. }
+        sourceRef: { type: object, additionalProperties: true, description: Immutable source trace for controlled imports. }
         allergens: { type: array, items: { type: string } }
         safetyDeclarations: { type: array, items: { $ref: '#/components/schemas/SafetyDeclaration' } }
         dietaryLabels:
@@ -1303,15 +1476,31 @@ paths:
         '404': { description: Upload not found }
   /vision/meal-analyze:
     post:
-      description: Student photo meal analysis. Requires agent:use and configured vision AI; recommendations are grounded in database dishes and source.menuSource indicates menu vs fallback. Successful calls count against monthly tenant quota.
+      description: Trustworthy single-dish analysis. Requires agent:use and configured vision AI. Exact candidates are restricted by tenant, canteen/stall context and published menu; location is always relational database truth. Raw user images are not retained.
       requestBody:
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UploadRequest' }
+            schema: { $ref: '#/components/schemas/MealVisionRequest' }
       responses:
-        '200': { description: Suggestion, assessment, matches, plan, guidance and source.menuSource }
+        '200': { description: Observation, up to three confirmation candidates and provenance-safe nutrition, content: { application/json: { schema: { $ref: '#/components/schemas/MealVisionResponse' } } } }
         '401': { description: Login required }
         '429': { description: AI monthly quota exhausted }
+  /vision/analyses/{id}/confirm:
+    post:
+      description: Confirm, correct or reject a meal vision result. dishId must remain inside the original canteen and published-menu scope; trusted nutrition is resolved only after confirmation.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dishId: { type: string, nullable: true }
+                portion: { type: object }
+      responses:
+        '200': { description: Confirmed dish and provenance-safe nutrition }
+        '400': { description: Selected dish is outside the analysis scope }
+        '404': { description: Analysis not found or not owned by the user }
   /admin/canteens:
     post:
       description: Create a dining venue or dining area. Requires canteen:write. A dining area parentId must reference one of the four tenant-owned top-level venues; third-level dining areas are rejected. Existing non-catalog top-level canteen creation remains backward compatible.
@@ -1367,6 +1556,49 @@ paths:
       responses:
         '200': { description: Safe dish suggestion for manual confirmation }
         '429': { description: AI monthly quota exhausted }
+  /admin/dishes/{id}/reference-images:
+    get:
+      description: List dish reference and held-out evaluation images. Requires dish:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Reference image list } }
+    post:
+      description: Bind a tenant-owned upload to a dish as a pending/approved reference image or held-out evaluation image. Evaluation images are never embedded.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/DishReferenceImageInput' } } } }
+      responses: { '201': { description: Created reference image } }
+  /admin/dishes/{id}/recipes:
+    get:
+      description: List versioned dish recipes and calculated nutrition. Requires dish:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Recipe versions } }
+    post:
+      description: Create a recipe version from governed food-composition references. Approved recipes publish estimated nutrient ranges; AI annotations are not promoted automatically.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/DishRecipeInput' } } } }
+      responses: { '201': { description: Recipe calculation and version ids } }
+  /admin/vision/reference-images/{id}:
+    put:
+      description: Review or reclassify a reference image. Requires dish:write.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Updated reference image } }
+    delete:
+      description: Delete a reference image binding and its embedding. The underlying upload retention policy is unchanged.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Deleted } }
+  /admin/vision/reindex:
+    post:
+      description: Generate SigLIP embeddings for approved reference images only. Held-out evaluation images are excluded.
+      responses:
+        '200': { description: Reindex summary }
+        '400': { description: VISION_EMBEDDING_BASE_URL is not configured }
+  /admin/vision/metrics:
+    get:
+      description: Tenant-scoped meal vision monitoring for candidate coverage, P95 latency, correction rate, estimated model cost and dish/stall confusion. Requires ai:configure.
+      parameters:
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
+      responses:
+        '200': { description: Meal vision metrics, content: { application/json: { schema: { $ref: '#/components/schemas/MealVisionMetrics' } } } }
+        '403': { description: AI monitoring permission required }
   /admin/dishes/{id}:
     put:
       description: Edit dish. Requires dish:write.

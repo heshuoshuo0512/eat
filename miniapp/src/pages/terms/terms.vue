@@ -1,7 +1,7 @@
 <template>
-  <sc-page-shell title="用户服务协议" subtitle="Terms of Service" :back="true" status="必读">
+  <sc-page-shell title="用户服务协议" subtitle="服务边界与用户责任说明" :back="true" status="必读" content-mode="reading" appearance="plain">
     <view class="panel-card legal-card">
-      <sc-section eyebrow="TERMS" title="智慧食堂用户服务协议" desc="使用学生端小程序前，请先了解服务边界和用户责任。" />
+      <sc-section title="智慧食堂用户服务协议" desc="使用学生端小程序前，请先了解服务边界和用户责任。" />
       <view class="legal-section">
         <text class="legal-title">1. 服务内容</text>
         <text class="legal-text">智慧食堂学生端提供菜单浏览、菜品检索、健康推荐、拍照识餐、智能顾问和评价等校园餐饮辅助服务。</text>
@@ -27,9 +27,9 @@
 </template>
 
 <style scoped>
-.legal-card { margin-bottom: 80rpx; }
-.legal-section { padding: 22rpx 0; border-bottom: 1rpx solid var(--line); }
+.legal-card { max-width:720px; margin:0 auto 40px; padding:0; border:0; background:transparent; }
+.legal-section { padding:16px 0; border-bottom:1px solid var(--line); }
 .legal-section:last-child { border-bottom: 0; }
-.legal-title { display:block; color:var(--ink); font-size:30rpx; font-weight:600; }
-.legal-text { display:block; margin-top:12rpx; color:var(--ink-2); font-size:26rpx; line-height:1.7; }
+.legal-title { display:block; color:var(--ink); font-size:16px; font-weight:600; }
+.legal-text { display:block; margin-top:8px; color:var(--ink-2); font-size:14px; line-height:1.75; }
 </style>

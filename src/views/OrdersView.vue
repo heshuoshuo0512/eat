@@ -26,7 +26,7 @@
           <span>
             <strong>{{ dish.name }}</strong>
             <small>
-              ¥{{ dish.price }} · {{ dish.taste }}
+              {{ dishPriceText(dish) }} · {{ dish.taste }}
               <template v-if="stallInfo(dish.stallId)"> · {{ stallInfo(dish.stallId) }}</template>
             </small>
             <small class="muted">{{ supplyText(dish) }}</small>
@@ -158,6 +158,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
+import { dishPriceText } from '../domain/dishPresentation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();

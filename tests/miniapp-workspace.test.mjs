@@ -38,22 +38,31 @@ describe('miniapp unified workspaces', () => {
     assert.match(community, /listReviews\(\{\.\.\.reviewFilters,q:reviewQuery\.value\.trim\(\)/);
   });
 
-  it('uses a full-screen poster login while keeping all auth actions', () => {
+  it('uses a centered responsive login form while keeping all auth actions', () => {
     assert.match(login, /class="login-screen"/);
-    assert.match(login, /class="login-poster"/);
+    assert.match(login, /class="login-brand"/);
+    assert.doesNotMatch(login, /class="login-poster"/);
     assert.match(login, /class="login-card panel-card"/);
     assert.match(login, /loginWithWechat/);
     assert.match(login, /loginWithDemo/);
     assert.match(login, /loginWithAccount/);
     assert.match(login, /requireConsent/);
+    assert.match(login, /max-width:440px/);
     assert.match(login, /min-height:100vh/);
+    assert.match(login, /\.login-screen\s*\{[^}]*background:var\(--bg\)/s);
+    assert.doesNotMatch(login, /\.login-screen\s*\{[^}]*background:var\(--brand\)/s);
+    assert.match(login, /@media \(min-width:768px\)/);
+    assert.doesNotMatch(login, /background:var\(--ink\)[^}]*min-height/s);
     assert.doesNotMatch(login, /backdrop-filter/);
   });
 
-  it('passes workspace and community context from the homepage', () => {
-    assert.match(home, /COMMUNITY_ENTRY_IDS/);
-    assert.match(home, /communityEntries/);
+  it('keeps core discovery and utility routes on the homepage without duplicating community', () => {
+    assert.match(home, /CORE_ENTRY_IDS/);
+    assert.match(home, /EXPLORE_ENTRY_IDS/);
+    assert.match(home, /utilityEntries/);
+    assert.match(home, /\/pages\/health-profile\/health-profile/);
     assert.match(home, /entry\.discoveryMode/);
-    assert.match(home, /entry\.communitySection/);
+    assert.doesNotMatch(home, /COMMUNITY_ENTRY_IDS/);
+    assert.doesNotMatch(home, /communityEntries/);
   });
 });

@@ -6,6 +6,7 @@ import { openDatabase } from '../server/database.js';
 import {
   RETRIEVAL_EMBEDDING_DIM,
   buildDishIndexDocuments,
+  buildStallIndexDocuments,
   deleteRetrievalSource,
   getRetrievalIndexStatus,
   reindexRetrieval,
@@ -65,6 +66,79 @@ describe('retrieval index contracts', () => {
     assert.deepEqual(documents[0].metadata.allergens, ['蛋类']);
     assert.match(documents[0].content, /420 kcal/);
     assert.match(documents[0].searchText, /番茄 鸡蛋/);
+  });
+
+  it('uses AI annotations only as explicitly estimated search evidence', () => {
+    const documents = buildDishIndexDocuments([{
+      id: 'dish-ai-1',
+      tenantId: 'tenant-a',
+      stallId: 'stall-1',
+      name: '轻享餐',
+      price: 15,
+      ingredients: [],
+      allergens: [],
+      safetyDeclarations: [{ allergenCode: '*', status: 'unknown', source: 'menu_document' }],
+      factStatus: { nutrition: 'unknown', recipe: 'unknown', halal: 'unknown', dietary: 'unknown', spice: 'unknown' },
+      aiAnnotation: {
+        dishId: 'dish-ai-1',
+        factStatus: 'estimated',
+        safetyStatus: 'unknown',
+        aliases: ['鸡胸肉轻食'],
+        cuisineCandidates: ['轻食'],
+        cookingMethods: ['煮'],
+        tasteProfiles: ['清淡'],
+        spiceLevel: 0,
+        mealTypes: ['lunch'],
+        ingredientHypotheses: [{ name: '鸡胸肉', role: 'primary', confidence: 0.7, basis: 'model_prior', referenceIds: [] }],
+        seasoningHypotheses: [],
+        allergenHints: [{ allergenCode: 'soy', confidence: 0.3, reason: '调味方式可能使用酱油', referenceIds: [] }],
+        nutritionEstimate: {
+          basis: 'per_serving',
+          portionAssumption: '按普通轻食一份估算',
+          caloriesKcal: { min: 300, max: 650 },
+          proteinG: { min: 15, max: 40 },
+          fatG: { min: 5, max: 25 },
+          carbsG: { min: 25, max: 75 },
+          confidence: 0.4,
+          referenceIds: [],
+        },
+        scenarioTags: ['训练后'],
+        nutritionGoalTags: ['高蛋白候选'],
+        linkedConceptIds: [],
+        sourceIds: [],
+        uncertaintyNotes: ['真实配方待核验'],
+        fieldConfidence: { ingredients: 0.7 },
+      },
+      aiAnnotationMeta: { id: 'annotation-1', batchId: 'pilot', model: 'deepseek-v4-flash', promptVersion: 'v1', status: 'schema_validated' },
+    }], [{ id: 'stall-1', canteenId: 'canteen-1', name: '轻食档' }], [{ id: 'canteen-1', name: '第一食堂' }], 'tenant-a');
+
+    assert.deepEqual(documents[0].metadata.ingredients, []);
+    assert.deepEqual(documents[0].metadata.allergens, []);
+    assert.equal(documents[0].metadata.factStatus.recipe, 'unknown');
+    assert.equal(documents[0].metadata.aiEstimated.factStatus, 'estimated');
+    assert.equal(documents[0].metadata.aiEstimated.safetyStatus, 'unknown');
+    assert.deepEqual(documents[0].metadata.semanticEvidenceTypes, ['tenant_dish_fact', 'ai_estimated']);
+    assert.match(documents[0].searchText, /鸡胸肉.*训练后.*高蛋白候选/);
+    assert.match(documents[0].content, /AI预标注.*估算候选/s);
+    assert.match(documents[0].content, /真实状态仍为未知/);
+  });
+
+  it('builds non-orderable stall documents with aliases and full service-area location', () => {
+    const documents = buildStallIndexDocuments(
+      [{ id: 'stall-east', tenantId: 'tenant-a', canteenId: 'east-dongdahuo', name: '益和堂', aliases: ['益禾堂'], floor: '未标注', open: false }],
+      [
+        { id: 'east-zone', name: '东区餐饮与服务区' },
+        { id: 'east-dongdahuo', name: '东区东大活', parentId: 'east-zone' },
+      ],
+      'tenant-a',
+    );
+    assert.equal(documents.length, 1);
+    assert.equal(documents[0].sourceType, 'stall');
+    assert.match(documents[0].searchText, /益禾堂/);
+    assert.match(documents[0].content, /东区餐饮与服务区 > 东区东大活 > 未标注/);
+    assert.match(documents[0].content, /商品价格、今日供应与营业状态均未确认/);
+    assert.equal(documents[0].metadata.orderable, false);
+    assert.equal(documents[0].metadata.supplyConfirmed, false);
   });
 });
 
@@ -195,7 +269,7 @@ describe('SQLite retrieval fallback', () => {
     }
   });
 
-  it('rebuilds injected dish and health snapshots, reports status, prunes, and deletes by tenant source', async () => {
+  it('rebuilds tenant catalog and global health snapshots in separate scopes', async () => {
     const db = openDatabase(':memory:');
     const dishes = [{
       id: 'dish-1', tenantId: 'tenant-a', stallId: 'stall-1', name: '低脂鸡肉饭', price: 16,
@@ -210,10 +284,14 @@ describe('SQLite retrieval fallback', () => {
     }];
     try {
       const rebuilt = await reindexRetrieval(db, {
-        tenantId: 'tenant-a', dishes, stalls, canteens, healthDocuments, embeddingProvider: null,
+        tenantId: 'tenant-a', sourceTypes: ['dish', 'stall'], dishes, stalls, canteens, embeddingProvider: null,
       });
       assert.equal(rebuilt.documentCount, 2);
       assert.equal(rebuilt.failureCount, 0);
+      const global = await reindexRetrieval(db, {
+        tenantId: '__global__', sourceTypes: ['health_knowledge'], healthDocuments, embeddingProvider: null,
+      });
+      assert.equal(global.documentCount, 1);
       const status = await getRetrievalIndexStatus(db, { tenantId: 'tenant-a' });
       assert.equal(status.ready, true);
       assert.equal(status.documentCount, 2);

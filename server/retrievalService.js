@@ -4,6 +4,7 @@ import { deriveDishSemanticLabels, interpretCampusDiningQuery } from './campusDi
 import { buildDishFacts, dishDataQuality, evaluateDishSafety, retrievalConfidence } from './diningFacts.js';
 import { parseStructuredDiningQuery } from './queryUnderstanding.js';
 import { businessDateTime } from './time.js';
+import { budgetPriceForDish, normalizeDishPricing } from './dishPricing.js';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const SEARCH_SORTS = ['relevance', 'price_asc', 'price_desc', 'rating', 'sales'];
@@ -130,7 +131,7 @@ function extractListAfter(text, pattern) {
 }
 
 function looksLikeNamedDishLookup(text) {
-  return /(?:(?:帮我找|整点|来一份|来份|想吃|想来份|有没有|有木有|还有).{1,28}(?:饭|面|粉|粥|汤|饼|套餐|三明治|沙拉)(?:吗|么|呢)?|(?:饭|面|粉|粥|汤|饼|套餐|三明治|沙拉).{0,8}(?:有吗|有没有|有木有|在哪))/u.test(text);
+  return /(?:(?:帮我找|整点|来一份|来份|想吃|想来份|有没有|有木有|还有).{1,28}(?:饭|面|粉|粥|汤|饼|套餐|三明治|沙拉|水饺|饺子|馄饨|包子|虾|鸡|鸭|肉|菜)(?:吗|么|呢)?|(?:饭|面|粉|粥|汤|饼|套餐|三明治|沙拉|水饺|饺子|馄饨|包子).{0,8}(?:有吗|有没有|有木有|在哪))/u.test(text);
 }
 
 function inferQueryFilters(query) {
@@ -138,7 +139,11 @@ function inferQueryFilters(query) {
   const namedDishLookup = looksLikeNamedDishLookup(text);
   const structured = parseStructuredDiningQuery(text);
   const inferred = { ...structured.filters };
-  const detected = [...structured.detected];
+  let detected = [...structured.detected];
+  if (namedDishLookup && inferred.includeIngredients?.length) {
+    delete inferred.includeIngredients;
+    detected = detected.filter((field) => field !== 'includeIngredients');
+  }
 
   const range = text.match(/(\d+(?:\.\d+)?)\s*(?:到|至|[-~～])\s*(\d+(?:\.\d+)?)\s*元?/);
   const max = text.match(/(?:预算|价格)\s*(?:(?:改成|调整到|设为|变成)\s*)?(?:不超过|不高于|最多|低于|少于)?\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元?|(?:不超过|不高于|最多|低于|少于)\s*(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元|(?:¥|￥)?\s*(\d+(?:\.\d+)?)\s*元\s*(?:内|以内|以下)/);
@@ -161,7 +166,7 @@ function inferQueryFilters(query) {
   if (/清真/.test(text)) { inferred.halalOnly = true; detected.push('halalOnly'); }
   if (/(?:当前|现在|今天).{0,4}(?:能点|可点|有供应|可供应|有货|可下单)|(?:只看|只要|仅看|仅要).{0,6}(?:有供应|可供应|有货|可下单)|不要售罄|别要售罄/.test(text)) { inferred.orderableOnly = true; detected.push('orderableOnly'); }
   if (/纯素|全素|vegan/i.test(text)) { inferred.dietaryPattern = 'vegan'; detected.push('dietaryPattern'); }
-  else if (/素食|素菜|vegetarian/i.test(text)) { inferred.dietaryPattern = 'vegetarian'; detected.push('dietaryPattern'); }
+  else if (/素食|vegetarian/i.test(text)) { inferred.dietaryPattern = 'vegetarian'; detected.push('dietaryPattern'); }
 
   const taste = !namedDishLookup && TASTE_WORDS.find((word) => text.includes(word));
   if (taste) { inferred.taste = taste; detected.push('taste'); }
@@ -298,6 +303,11 @@ function mapCandidate(raw, tenantId) {
   const nutrition = raw.nutrition || {};
   const menuItem = raw.menuItem || raw.menu_item || null;
   const explicitAvailability = raw.availability && typeof raw.availability === 'object' ? raw.availability : null;
+  const pricing = normalizeDishPricing({
+    pricingMode: raw.pricingMode ?? raw.pricing_mode,
+    priceDisplay: raw.priceDisplay ?? raw.price_display,
+    pricing: raw.pricing ?? raw.pricing_json,
+  }, raw.price);
   const candidate = {
     ...raw,
     id: String(raw.id || raw.dishId || raw.dish_id || ''),
@@ -311,7 +321,11 @@ function mapCandidate(raw, tenantId) {
     crowdLevel: Number(raw.crowdLevel ?? raw.crowd_level ?? 50),
     stallOpen: raw.stallOpen == null && raw.stall_open == null ? true : Boolean(raw.stallOpen ?? raw.stall_open),
     name: String(raw.name || raw.dishName || raw.dish_name || ''),
-    price: Number(raw.price ?? 0),
+    price: Number(raw.price ?? pricing.minAmount ?? 0),
+    pricingMode: pricing.mode,
+    priceDisplay: pricing.display,
+    pricing,
+    aliases: parseJson(raw.aliases || raw.aliases_json, []),
     taste: String(raw.taste || ''),
     cuisine: String(raw.cuisine || ''),
     regionalTaste: String(raw.regionalTaste || raw.regional_taste || ''),
@@ -337,7 +351,7 @@ function mapCandidate(raw, tenantId) {
     sales: Number(raw.sales ?? 0),
     status: String(raw.status ?? '').trim().toLowerCase(),
     description: String(raw.description || ''),
-    semanticLabels: deriveDishSemanticLabels(raw),
+    semanticLabels: uniqueStrings(parseJson(raw.semanticLabels || raw.semantic_labels_json, []), deriveDishSemanticLabels(raw)),
     _menuEntries: parseJson(raw._menuEntries || raw.menuEntries || [], []),
     _menuItem: menuItem,
     _explicitAvailability: explicitAvailability
@@ -414,6 +428,8 @@ function deriveAvailability(candidate, { date, mealType, time }) {
     date,
     mealType,
     price: Number(entry?.price ?? candidate.price),
+    priceDisplay: entry ? `${Number(entry.price)}元` : candidate.priceDisplay,
+    budgetComparable: Boolean(entry) || candidate.pricing?.budgetComparable !== false,
     supplyLimit: Number(entry?.supplyLimit || 0),
     supplyCount: Number(entry?.supplyCount || 0),
     remaining: entry?.supplyLimit > 0 ? Math.max(0, entry.supplyLimit - entry.supplyCount) : null,
@@ -421,8 +437,8 @@ function deriveAvailability(candidate, { date, mealType, time }) {
     servingEnd: entry?.servingEnd || null
   };
 
+  if (!entry || entry.status !== 'published') return { ...base, orderable: false, status: 'catalog_only', reason: 'supply_unconfirmed' };
   if (!candidate.stallOpen) return { ...base, orderable: false, status: 'stall_closed', reason: 'stall_closed' };
-  if (!entry || entry.status !== 'published') return { ...base, orderable: false, status: 'not_on_menu', reason: 'not_on_menu' };
   if (entry.soldOut || (entry.supplyLimit > 0 && entry.supplyCount >= entry.supplyLimit)) return { ...base, orderable: false, status: 'sold_out', reason: 'sold_out' };
   if (!isWithinServingTime(time, entry.servingStart, entry.servingEnd)) return { ...base, orderable: false, status: 'outside_serving_time', reason: 'outside_serving_time' };
   const limited = entry.supplyLimit > 0 && entry.supplyCount >= entry.supplyLimit * 0.8;
@@ -458,9 +474,14 @@ async function loadCandidatesFromDatabase(db, tenantId, { date, mealType }) {
   return dishRows.map((row) => mapCandidate({ ...row, _menuEntries: menuByDish.get(row.id) || [] }, tenantId));
 }
 
+async function loadCatalogCanteens(db, tenantId) {
+  if (!db?.prepare) return [];
+  return db.prepare('SELECT id, name FROM canteens WHERE tenant_id = ?').all(tenantId);
+}
+
 function candidateSearchText(candidate) {
   return [candidate.name, candidate.cuisine, candidate.taste, candidate.description, candidate.stallName, candidate.canteenName,
-    ...candidate.ingredients, ...candidate.tags, ...(candidate.dietaryLabels || []), ...(candidate.semanticLabels || [])].filter(Boolean).join(' ');
+    ...(candidate.aliases || []), ...candidate.ingredients, ...candidate.tags, ...(candidate.dietaryLabels || []), ...(candidate.semanticLabels || [])].filter(Boolean).join(' ');
 }
 
 function chineseBigrams(text) {
@@ -468,6 +489,37 @@ function chineseBigrams(text) {
   const grams = [];
   for (let index = 0; index < compact.length - 1; index += 1) grams.push(compact.slice(index, index + 2));
   return [...new Set(grams)];
+}
+
+function isSingleEditMatch(left, right) {
+  const a = [...normalizedText(left)];
+  const b = [...normalizedText(right)];
+  if (Math.min(a.length, b.length) < 3 || Math.abs(a.length - b.length) > 1) return false;
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let edits = 0;
+  while (leftIndex < a.length && rightIndex < b.length) {
+    if (a[leftIndex] === b[rightIndex]) {
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (a.length > b.length) leftIndex += 1;
+    else if (b.length > a.length) rightIndex += 1;
+    else {
+      leftIndex += 1;
+      rightIndex += 1;
+    }
+  }
+  if (leftIndex < a.length || rightIndex < b.length) edits += 1;
+  return edits === 1;
+}
+
+function isUnknownTaste(candidate) {
+  const taste = normalizedText(candidate?.taste);
+  return !taste || ['待核验', '未知', '未标注', '不限'].includes(taste);
 }
 
 /** Deterministic Chinese-friendly lexical ranking over already authorized candidates. */
@@ -483,6 +535,10 @@ export function lexicalRankDishes(query, candidates = []) {
     if (name === normalizedQuery) { score += 220; reasons.push('菜名完全匹配'); }
     else if (normalizedQuery.includes(name) && name.length >= 2) { score += 130; reasons.push('问题中点名菜品'); }
     else if (name.includes(normalizedQuery) && normalizedQuery.length >= 2) { score += 105; reasons.push('菜名匹配'); }
+    else if (isSingleEditMatch(name, normalizedQuery) || candidate.aliases.some((alias) => isSingleEditMatch(alias, normalizedQuery))) {
+      score += 95;
+      reasons.push('菜名近似匹配');
+    }
 
     const ingredientMatches = candidate.ingredients.filter((item) => includesTerm(query, item) || includesTerm(item, query));
     if (ingredientMatches.length) { score += 45 + ingredientMatches.length * 8; reasons.push(`食材匹配：${ingredientMatches.slice(0, 3).join('、')}`); }
@@ -504,12 +560,14 @@ function exactRankDishes(query, candidates) {
   const normalizedQuery = normalizedText(query);
   if (!normalizedQuery) return [];
   return candidates.map((candidate) => {
+    const normalizedName = normalizedText(candidate.name);
     let score = 0;
-    if (normalizedText(candidate.name) === normalizedQuery) score = 3;
-    else if (normalizedQuery.includes(normalizedText(candidate.name)) && normalizedText(candidate.name).length >= 2) score = 2;
+    if (normalizedName === normalizedQuery) score = 3;
+    else if (normalizedQuery.includes(normalizedName) && normalizedName.length >= 2) score = 2;
     else if (candidate.ingredients.some((item) => normalizedQuery.includes(normalizedText(item)))) score = 1;
-    return { id: candidate.id, score };
-  }).filter((item) => item.score > 0).sort((left, right) => right.score - left.score);
+    return { id: candidate.id, score, matchLength: score >= 2 ? normalizedName.length : 0 };
+  }).filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || right.matchLength - left.matchLength || left.id.localeCompare(right.id));
 }
 
 /** Merge ranked lists using weighted Reciprocal Rank Fusion. */
@@ -543,13 +601,15 @@ export function applyDishHardConstraints(candidates, filters = {}, { requireOrde
   const rejections = {};
   const reject = (reason) => { rejections[reason] = (rejections[reason] || 0) + 1; return false; };
   const items = candidates.filter((candidate) => {
-    const price = Number(candidate.availability?.price ?? candidate.price ?? 0);
+    const menuPrice = candidate.availability?.menuItemId ? Number(candidate.availability.price) : null;
+    const price = menuPrice ?? budgetPriceForDish(candidate);
     if (!isActiveDish(candidate)) return reject('status');
-    if (filters.budgetMin != null && price < filters.budgetMin) return reject('budgetMin');
-    if (filters.budgetMax != null && price > filters.budgetMax) return reject('budgetMax');
+    if (price != null && filters.budgetMin != null && price < filters.budgetMin) return reject('budgetMin');
+    if (price != null && filters.budgetMax != null && price > filters.budgetMax) return reject('budgetMax');
     if (filters.mealType && !candidate.mealTypes.includes(filters.mealType)) return reject('mealType');
     if (filters.halalOnly && !candidate.halal) return reject('halalOnly');
-    if (filters.taste && filters.taste !== '不限' && candidate.taste !== filters.taste && !candidate.tags.some((tag) => includesTerm(tag, filters.taste))) return reject('taste');
+    if (filters.taste && filters.taste !== '不限' && !isUnknownTaste(candidate)
+      && candidate.taste !== filters.taste && !candidate.tags.some((tag) => includesTerm(tag, filters.taste))) return reject('taste');
     if (filters.canteenId && candidate.canteenId !== filters.canteenId) return reject('canteen');
     if (filters.primaryCanteenId && candidate.primaryCanteenId !== filters.primaryCanteenId && candidate.canteenId !== filters.primaryCanteenId) return reject('canteen');
     if (filters.canteenName && !includesTerm(candidate.canteenName, filters.canteenName)) return reject('canteen');
@@ -568,6 +628,9 @@ export function applyDishHardConstraints(candidates, filters = {}, { requireOrde
     if (!matchesDietaryLabels(candidate, filters.dietaryPattern)) return reject('dietaryPattern');
     if (filters.minSpiceLevel != null && candidate.spiceLevel != null && candidate.spiceLevel < filters.minSpiceLevel) return reject('minSpiceLevel');
     if (filters.maxSpiceLevel != null && candidate.spiceLevel != null && candidate.spiceLevel > filters.maxSpiceLevel) return reject('maxSpiceLevel');
+    const hasNutritionFilter = ['minProtein', 'minFiber', 'maxCalories', 'maxFat', 'maxCarbs', 'maxSodium', 'maxSugar']
+      .some((key) => filters[key] != null);
+    if (hasNutritionFilter && candidate.facts?.factStatus?.nutrition === 'unknown') return reject('nutritionUnknown');
     if (filters.minProtein != null && candidate.nutrition.protein < filters.minProtein) return reject('minProtein');
     if (filters.minFiber != null && candidate.fiber < filters.minFiber) return reject('minFiber');
     if (filters.maxCalories != null && candidate.nutrition.calories > filters.maxCalories) return reject('maxCalories');
@@ -592,6 +655,7 @@ function relaxationSuggestions(rejections, filters, { lexicalMiss = false } = {}
   if (rejections.halalOnly) add('halalOnly', '当前范围没有满足清真条件的菜品，请更换食堂或餐次');
   if (rejections.safety) add('safety', '未找到同时满足全部忌口条件的菜品，请人工确认可替代食材，系统不会自动放宽过敏原约束');
   if (rejections.minProtein || rejections.minFiber || rejections.maxCalories || rejections.maxFat || rejections.maxSodium || rejections.maxSugar) add('nutrition', '可适当放宽营养阈值');
+  if (rejections.nutritionUnknown) add('nutritionEvidence', '部分菜品缺少已核验营养数据，无法作确定的营养筛选');
   if (lexicalMiss) add('query', '可改用菜名、主要食材、口味或档口名称查询');
   return suggestions.slice(0, 5);
 }
@@ -652,7 +716,8 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
   const candidates = sourceCandidates
     .filter((candidate) => candidate.id && candidate.tenantId === request.tenantId && isActiveDish(candidate))
     .map((candidate) => ({ ...candidate, availability: deriveAvailability(candidate, exec) }));
-  applyCatalogLocationMention(request, candidates);
+  const catalogCanteens = request.candidates ? [] : await loadCatalogCanteens(dependencies.db, request.tenantId);
+  applyCatalogLocationMention(request, candidates, catalogCanteens);
   const interpretationWarnings = [];
   let llmSupplementUsed = false;
   const preliminaryExact = exactRankDishes(request.query, candidates);
@@ -767,12 +832,48 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
       allergens: item.safety.unknownAllergens,
       message: `${item.name}的相关过敏原信息尚未由食堂确认，请现场核实配方和交叉接触风险。`,
     }));
+  if (!pageItems.length && request.filters.allergens?.length) {
+    safetyWarnings.push({
+      code: 'ALLERGEN_UNVERIFIED',
+      allergens: request.filters.allergens,
+      message: `当前区域没有可用于核验${request.filters.allergens.join('、')}过敏风险的菜品记录，不能据此判断可安全食用。`,
+    });
+  }
+  const supplyWarnings = pageItems
+    .filter((item) => item.availability?.status === 'catalog_only')
+    .map((item) => ({
+      code: 'SUPPLY_UNCONFIRMED',
+      dishId: item.id,
+      message: `${item.name}仅来自菜品目录，今日供应尚未确认。`,
+    }));
+  if (!pageItems.length && request.filters.canteenId && request.filters.allergens?.length) {
+    supplyWarnings.push({
+      code: 'SUPPLY_UNCONFIRMED',
+      canteenId: request.filters.canteenId,
+      message: '当前区域没有可用于确认今日供应的菜品记录，不能据此判断有菜品可购买。',
+    });
+  }
+  const budgetWarnings = (request.filters.budgetMin != null || request.filters.budgetMax != null)
+    ? pageItems.filter((item) => item.availability?.budgetComparable === false).map((item) => ({
+        code: 'BUDGET_UNVERIFIED',
+        dishId: item.id,
+        message: `${item.name}按重量计价，无法仅凭单价确认整份是否符合预算。`,
+      }))
+    : [];
+  const tasteWarnings = request.filters.taste && request.filters.taste !== '不限'
+    ? pageItems.filter(isUnknownTaste).map((item) => ({
+        code: 'TASTE_UNVERIFIED',
+        dishId: item.id,
+        taste: request.filters.taste,
+        message: `${item.name}的口味信息尚未核验，无法确认是否符合“${request.filters.taste}”。`,
+      }))
+    : [];
   const lexicalMiss = Boolean(request.query) && !request.interpreted.detected.length && !exact.length && !lexical.length && !semantic.results.length;
   return {
     interpreted: request.interpreted,
     items: pageItems,
     confidence: pageItems[0]?.confidence || retrievalConfidence(),
-    warnings: [...interpretationWarnings, ...safetyWarnings],
+    warnings: [...interpretationWarnings, ...safetyWarnings, ...supplyWarnings, ...budgetWarnings, ...tasteWarnings],
     availability: {
       orderableCount: ranked.filter((item) => item.availability.orderable).length,
       totalCount: ranked.length,
@@ -953,28 +1054,135 @@ function bestCombination(ranked, budget, targetSize) {
   return best;
 }
 
+function knowledgeAuthority(sourceType, metadata = {}) {
+  if (sourceType === 'campus_policy') return 5;
+  if (sourceType === 'health_knowledge' && /中国|国家|学校/.test(`${metadata.publisher || ''} ${metadata.sourceVersion || ''}`)) return 4;
+  if (sourceType === 'health_knowledge') return 3;
+  if (sourceType === 'food_composition_reference') return 2;
+  if (sourceType === 'campus_dining_knowledge') return 1;
+  return 0;
+}
+
 function normalizeKnowledgeResults(results = []) {
-  return results.filter((item) => !item.sourceType || item.sourceType !== 'dish').map((item) => {
+  return results.filter((item) => !['dish', 'stall'].includes(item.sourceType)).map((item) => {
     const metadata = item.metadata || {};
+    const sourceType = item.sourceType || 'knowledge';
     return {
       id: item.id || item.sourceId,
       sourceId: item.sourceId || item.id,
-      sourceType: item.sourceType || 'knowledge',
+      sourceType,
       tenantId: item.tenantId || metadata.tenantId || null,
-      evidenceType: metadata.evidenceType || 'knowledge_reference',
+      evidenceType: item.evidenceType || metadata.evidenceType || 'knowledge_reference',
       title: item.title || item.name || '健康知识',
       snippet: item.snippet || String(item.content || '').slice(0, 180),
       score: Number(item.score ?? item.similarity ?? 0),
+      knowledgeDomain: metadata.knowledgeDomain || metadata.category || null,
+      publisher: metadata.publisher || null,
+      version: metadata.version || metadata.sourceVersion || null,
+      reviewedAt: metadata.reviewedAt || null,
+      license: metadata.license || null,
+      factStatus: metadata.factStatus || null,
+      citation: metadata.citation || metadata.sourceUrl || null,
+      authority: knowledgeAuthority(sourceType, metadata),
       metadata,
     };
   });
 }
 
-function applyCatalogLocationMention(request, candidates) {
+/** Route each question to evidence sources that are allowed to answer that domain. */
+export function routeDiningKnowledgeSources(query = '') {
+  const text = String(query || '').trim();
+  const policy = /退款|投诉|失物|应急|服务台|营业(?:时间|规则|安排)|开放时间|停业|闭店|规章|校内制度|价格争议|意见反馈|反馈渠道/.test(text);
+  const allergy = /过敏|过敏原|交叉接触|交叉污染|致敏|不能吃|忌口|放心吃|确认不含|不含.{0,8}(?:花生|牛奶|鸡蛋|小麦|大豆|芝麻|坚果|虾|蟹|鱼)/.test(text);
+  const nutrition = /营养|减脂|增肌|健身|运动|训练|蛋白|热量|卡路里|脂肪|碳水|膳食|低卡|低脂|低糖|低钠|少盐|摄入|均衡/.test(text);
+  const foodComposition = /成分|食材|配方|每\s*100\s*克|FDC|FoodOn/i.test(text) || nutrition;
+  if (policy) {
+    return {
+      intent: 'campus_policy',
+      routes: [{ id: 'tenant_policy', scope: 'tenant', sourceTypes: ['campus_policy'], weight: 1.5 }],
+      includeFoodComposition: false,
+    };
+  }
+  if (allergy) {
+    return {
+      intent: 'allergy_safety',
+      routes: [
+        { id: 'global_health', scope: 'global', sourceTypes: ['health_knowledge'], weight: 1.5 },
+        { id: 'global_concepts', scope: 'global', sourceTypes: ['campus_dining_knowledge'], weight: 0.7 },
+      ],
+      includeFoodComposition: foodComposition,
+    };
+  }
+  if (nutrition || foodComposition || /健康|饮食原则|均衡饮食|食物多样|规律进餐|食物分类|食材别名|同义词|未标注|待核验|unknown|补剂|呼吸困难|医疗|医学|疾病|食品安全|食物安全|世界卫生组织|WHO/i.test(text)) {
+    return {
+      intent: 'nutrition_and_health',
+      routes: [
+        { id: 'global_health', scope: 'global', sourceTypes: ['health_knowledge'], weight: 1.35 },
+        { id: 'global_concepts', scope: 'global', sourceTypes: ['campus_dining_knowledge'], weight: 0.8 },
+      ],
+      includeFoodComposition: foodComposition,
+    };
+  }
+  return {
+    intent: 'dish_semantics',
+    routes: [{ id: 'global_concepts', scope: 'global', sourceTypes: ['campus_dining_knowledge'], weight: 1 }],
+    includeFoodComposition: false,
+  };
+}
+
+/** Exact structured lookup for reference-only FDC/FoodOn records. */
+export function matchFoodCompositionReferencesForQuery(query = '', references = [], limit = 5) {
+  const normalizedQuery = normalizedText(query);
+  if (!normalizedQuery) return [];
+  return references.map((reference) => {
+    const terms = [
+      String(reference.canonicalName || '').replace(/参考食材$/, ''),
+      ...(reference.aliases || []),
+    ].map((term) => String(term).trim()).filter((term) => normalizedText(term).length >= 2);
+    const matchedTerms = terms.filter((term) => normalizedQuery.includes(normalizedText(term)));
+    const matchLength = matchedTerms.reduce((maximum, term) => Math.max(maximum, normalizedText(term).length), 0);
+    return { reference, matchedTerms, matchLength };
+  }).filter((item) => item.matchLength > 0)
+    .sort((left, right) => right.matchLength - left.matchLength || left.reference.id.localeCompare(right.reference.id))
+    .slice(0, limit)
+    .map(({ reference, matchedTerms, matchLength }, index) => ({
+      id: `food-reference:${reference.id}`,
+      sourceId: reference.id,
+      sourceType: 'food_composition_reference',
+      tenantId: '__global__',
+      evidenceType: 'reference_only',
+      title: reference.canonicalName,
+      content: `FDC/FoodOn参考食材，每${reference.basisGrams}克基准；只能用于结构化参考，不得覆盖校内菜品事实。`,
+      score: Number((1 - index * 0.03 + Math.min(0.2, matchLength / 100)).toFixed(4)),
+      metadata: {
+        evidenceType: 'reference_only',
+        factStatus: reference.factStatus,
+        campusDishFactPolicy: reference.campusDishFactPolicy,
+        basisGrams: reference.basisGrams,
+        nutrients: reference.nutrients,
+        fdcId: reference.fdcId,
+        foodOnId: reference.foodOnId,
+        sourceIds: reference.sourceIds,
+        provenance: reference.provenance,
+        matchedTerms,
+        citation: `FDC:${reference.fdcId}; ${reference.foodOnId}`,
+        license: `${reference.provenance?.fdc?.license || ''}; ${reference.provenance?.foodOn?.license || ''}`,
+        version: `${reference.provenance?.fdc?.sourceVersion || ''}; ${reference.provenance?.foodOn?.sourceVersion || ''}`,
+      },
+    }));
+}
+
+function applyCatalogLocationMention(request, candidates, catalogCanteens = []) {
   const query = String(request.query || '');
+  const normalizedQuery = normalizedText(query);
   const canteens = new Map();
   for (const candidate of candidates) {
     if (candidate.canteenId && candidate.canteenName) canteens.set(candidate.canteenId, String(candidate.canteenName));
+  }
+  for (const canteen of catalogCanteens) {
+    const id = canteen.id || canteen.canteenId || canteen.canteen_id;
+    const name = canteen.name || canteen.canteenName || canteen.canteen_name;
+    if (id && name) canteens.set(String(id), String(name));
   }
   const matches = [...canteens.entries()].filter(([, name]) => {
     const aliases = [
@@ -999,35 +1207,126 @@ function applyCatalogLocationMention(request, candidates) {
       scope: 'location', source: 'tenant_catalog', matchedText,
     }];
   }
+
+  const activeCanteenId = request.filters?.canteenId;
+  const stalls = new Map();
+  for (const candidate of candidates) {
+    if (!candidate.stallId || !candidate.stallName) continue;
+    if (activeCanteenId && candidate.canteenId !== activeCanteenId) continue;
+    stalls.set(candidate.stallId, { name: String(candidate.stallName), canteenId: candidate.canteenId });
+  }
+  const stallMatches = [...stalls.entries()].filter(([, stall]) => {
+    const normalizedName = normalizedText(stall.name);
+    return normalizedName.length >= 3 && normalizedQuery.includes(normalizedName);
+  });
+  if (stallMatches.length === 1 && !request.filters?.stallId) {
+    const [stallId, stall] = stallMatches[0];
+    const filters = request.filters || (request.filters = {});
+    const interpreted = request.interpreted || (request.interpreted = {});
+    filters.stallId = stallId;
+    interpreted.filters = filters;
+    interpreted.hardConstraints = filters;
+    interpreted.detected = [...new Set([...(interpreted.detected || []), 'stallId'])];
+    interpreted.constraints = [...(interpreted.constraints || []), {
+      field: 'stallId', value: stallId, polarity: 'include', strength: 'hard',
+      scope: 'location', source: 'tenant_catalog', matchedText: stall.name,
+    }];
+  }
 }
 
 /** Produce a grounded deterministic knowledge answer; callers may replace only the prose with an LLM. */
 export function buildKnowledgeAnswer({ query = '', results = [] } = {}) {
   const citations = normalizeKnowledgeResults(results);
-  if (!citations.length) return { answer: '当前没有检索到可引用的健康知识，推荐结果仅依据实时菜品数据和用户约束生成。', citations: [] };
+  if (!citations.length) return { answer: '当前没有检索到可引用的知识依据，推荐结果仅依据实时菜品数据和用户约束生成。', citations: [] };
   return {
-    answer: `关于“${String(query).slice(0, 80)}”，已检索到 ${citations.slice(0, 3).map((item) => item.title).join('、')} 等依据；健康知识仅用于解释，不覆盖过敏原、价格、库存和供应状态。`,
+    answer: `关于“${String(query).slice(0, 80)}”，已检索到 ${citations.slice(0, 3).map((item) => item.title).join('、')} 等依据；通用知识仅用于解释，不覆盖校内过敏原、价格、库存和供应状态。`,
     citations
   };
 }
 
-async function retrieveKnowledge(knowledgeSearch, request) {
-  if (!knowledgeSearch || !request.query) return { results: [], degradedReasons: [], trace: null };
-  try {
-    const raw = await knowledgeSearch({
-      query: request.query,
-      tenantId: request.tenantId,
-      limit: 5,
-      sourceTypes: ['health_knowledge', 'campus_dining_knowledge'],
-    });
-    return {
-      results: normalizeKnowledgeResults(Array.isArray(raw) ? raw : raw?.items || raw?.results || []),
-      degradedReasons: (raw?.warnings || []).map((warning) => `${warning.code || 'retrieval_warning'}:${warning.message || 'degraded'}`),
-      trace: raw?.meta?.trace || null,
-    };
-  } catch (error) {
-    return { results: [], degradedReasons: [`knowledge_search_failed:${error?.message || 'unknown'}`], trace: null };
+export async function retrieveRoutedKnowledge(input = {}, dependencies = {}) {
+  const query = String(input.query || '').trim();
+  const tenantId = String(input.tenantId || 'default');
+  const limit = Math.max(1, Math.min(10, Number(input.limit || 5)));
+  if (!query) return { results: [], degradedReasons: [], trace: { routing: null, sources: [] } };
+  const routing = routeDiningKnowledgeSources(query);
+  const routeResults = await Promise.all(routing.routes.map(async (route) => {
+    if (!dependencies.knowledgeSearch) return { route, items: [], warnings: [], trace: null };
+    try {
+      const raw = await dependencies.knowledgeSearch({
+        query,
+        tenantId,
+        limit: Math.max(limit, 5),
+        sourceTypes: route.sourceTypes,
+      });
+      return {
+        route,
+        items: normalizeKnowledgeResults(Array.isArray(raw) ? raw : raw?.items || raw?.results || []),
+        warnings: raw?.warnings || [],
+        trace: raw?.meta?.trace || null,
+      };
+    } catch (error) {
+      return { route, items: [], warnings: [], trace: null, error };
+    }
+  }));
+  let structured = [];
+  if (routing.includeFoodComposition && dependencies.foodCompositionLookup) {
+    try {
+      structured = normalizeKnowledgeResults(await dependencies.foodCompositionLookup({ query, limit }));
+    } catch (error) {
+      routeResults.push({
+        route: { id: 'food_composition_reference', scope: 'global', sourceTypes: ['food_composition_reference'], weight: 0.9 },
+        items: [], warnings: [], trace: null, error,
+      });
+    }
   }
+
+  const fused = new Map();
+  const add = (item, route, rank) => {
+    const key = `${item.sourceType}:${item.sourceId || item.id}`;
+    const contribution = Number(route.weight || 1) / (60 + rank + 1);
+    const existing = fused.get(key);
+    if (!existing) {
+      fused.set(key, { ...item, routeId: route.id, fusedScore: contribution });
+      return;
+    }
+    existing.fusedScore += contribution;
+    if (item.score > existing.score) Object.assign(existing, item);
+  };
+  for (const result of routeResults) result.items.forEach((item, rank) => add(item, result.route, rank));
+  // A canonical-name/alias match is a structured lookup, so it must not be
+  // displaced by several broad semantic documents in a small Top-K window.
+  structured.forEach((item, rank) => add(item, { id: 'food_composition_reference', weight: 2 }, rank));
+  const results = [...fused.values()]
+    .sort((left, right) => (right.fusedScore + right.authority * 0.001) - (left.fusedScore + left.authority * 0.001))
+    .slice(0, limit)
+    .map((item) => ({ ...item, score: Number(item.fusedScore.toFixed(6)) }));
+  const degradedReasons = [
+    ...routeResults.filter((item) => item.error).map((item) => `${item.route.id}_failed:${item.error?.message || 'unknown'}`),
+    ...routeResults.flatMap((item) => item.warnings.map((warning) => `${warning.code || 'retrieval_warning'}:${warning.message || 'degraded'}`)),
+  ];
+  return {
+    results,
+    degradedReasons,
+    trace: {
+      routing,
+      sources: routeResults.map((item) => ({
+        routeId: item.route.id,
+        sourceTypes: item.route.sourceTypes,
+        resultCount: item.items.length,
+        failed: Boolean(item.error),
+        trace: item.trace,
+      })),
+      structuredReferenceCount: structured.length,
+    },
+  };
+}
+
+async function retrieveKnowledge(knowledgeSearch, request, foodCompositionLookup) {
+  return retrieveRoutedKnowledge({ query: request.query, tenantId: request.tenantId, limit: 5 }, {
+    knowledgeSearch,
+    foodCompositionLookup,
+  });
 }
 
 /** Execute personalized recommendation over current, published and orderable menu candidates. */
@@ -1058,6 +1357,7 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
   const candidates = sourceCandidates
     .filter((candidate) => candidate.id && candidate.tenantId === request.tenantId && isActiveDish(candidate))
     .map((candidate) => ({ ...candidate, availability: deriveAvailability(candidate, exec) }));
+  const catalogCanteens = request.candidates ? [] : await loadCatalogCanteens(dependencies.db, request.tenantId);
   const locationInterpretation = {
     query: request.query,
     filters,
@@ -1068,7 +1368,7 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
       constraints: inferred.structured.constraints,
     },
   };
-  applyCatalogLocationMention(locationInterpretation, candidates);
+  applyCatalogLocationMention(locationInterpretation, candidates, catalogCanteens);
   const hasConflicts = inferred.structured.conflicts.length > 0;
   const hard = hasConflicts
     ? { items: [], rejections: { conflict: candidates.length } }
@@ -1079,7 +1379,7 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
     candidateIds: hard.items.map((item) => item.id),
     limit: 30
   });
-  const knowledgePromise = retrieveKnowledge(dependencies.knowledgeSearch, request);
+  const knowledgePromise = retrieveKnowledge(dependencies.knowledgeSearch, request, dependencies.foodCompositionLookup);
   const [semantic, knowledge] = await Promise.all([semanticPromise, knowledgePromise]);
   const semanticScores = new Map(semantic.results.map((item) => [item.id, item.score]));
   let source = 'menu';
@@ -1234,6 +1534,7 @@ export function createRetrievalService(dependencies = {}) {
     parseDishSearchRequest,
     searchDishes: (input) => runDishSearchWorkflow(input, dependencies),
     recommendMeals: (input) => runMealRecommendationWorkflow(input, dependencies),
+    searchKnowledge: (input) => retrieveRoutedKnowledge(input, dependencies),
     buildKnowledgeAnswer
   };
 }

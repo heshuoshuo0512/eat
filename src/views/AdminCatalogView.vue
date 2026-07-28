@@ -236,7 +236,7 @@
                             <small v-if="dishSearchDetail(dish)" class="dish-search-match">命中：<HighlightText :text="dishSearchDetail(dish)" :query="searchTerm" /></small>
                           </span>
                         </button>
-                        <span class="dish-price">¥{{ formatPrice(dish.price) }}</span>
+                        <span class="dish-price">{{ dishPriceText(dish) }}</span>
                         <span :class="['dish-state', dish.status === 'hidden' ? 'hidden' : 'active']">{{ dish.status === 'hidden' ? '已隐藏' : '上架中' }}</span>
                         <span class="dish-actions">
                           <button type="button" @click="openDish(venue, areaNode, row.node, dish, 'view')">查看</button>
@@ -304,7 +304,7 @@
                             <small v-if="dishSearchDetail(dish)" class="dish-search-match">命中：<HighlightText :text="dishSearchDetail(dish)" :query="searchTerm" /></small>
                           </span>
                         </button>
-                        <span class="dish-price">¥{{ formatPrice(dish.price) }}</span>
+                        <span class="dish-price">{{ dishPriceText(dish) }}</span>
                         <span :class="['dish-state', dish.status === 'hidden' ? 'hidden' : 'active']">{{ dish.status === 'hidden' ? '已隐藏' : '上架中' }}</span>
                         <span class="dish-actions">
                           <button type="button" @click="openUnassignedDish(venue, row.node, dish, 'view')">查看</button>
@@ -345,6 +345,7 @@
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 import CatalogEditorDrawer from '../components/CatalogEditorDrawer.vue';
+import { dishPriceText } from '../domain/dishPresentation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const REGION_ORDER = ['campus-main', 'north-zone', 'south-zone', 'east-zone'];
@@ -352,7 +353,7 @@ const FALLBACK_VENUES = [
   { id: 'campus-main', name: '综合餐饮楼', defaultName: '综合餐饮楼', position: 'top-left', venueType: 'dining_complex', areaType: 'restaurant', areaLabel: '餐厅' },
   { id: 'north-zone', name: '北苑食堂', defaultName: '北苑食堂', position: 'top-right', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' },
   { id: 'south-zone', name: '南湖食堂', defaultName: '南湖食堂', position: 'bottom-left', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' },
-  { id: 'east-zone', name: '东苑食堂', defaultName: '东苑食堂', position: 'bottom-right', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' }
+  { id: 'east-zone', name: '东区餐饮与服务区', defaultName: '东区餐饮与服务区', position: 'bottom-right', venueType: 'dining_service_zone', areaType: 'dining_area', areaLabel: '餐饮区域' }
 ];
 
 const HighlightText = defineComponent({

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import {
   createEmbeddings,
+  generateDishAnnotationCandidates,
   generateAgentToolCalls,
   generateGroundedAgentAnswer,
   getAiProviderStatus,
@@ -59,6 +60,13 @@ describe('split chat and embedding providers', () => {
   before(async () => {
     chatServer = requestServer(({ request, payload }) => {
       chatRequests.push({ path: request.url, authorization: request.headers.authorization, payload });
+      if (payload.messages?.[0]?.content?.includes('校园食堂菜品数据预标注器')) {
+        return {
+          model: 'provider-resolved-model',
+          usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+          choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ annotations: [{ dishId: 'dish-1' }] }) } }],
+        };
+      }
       return { choices: [{ message: { content: JSON.stringify({ answer: '建议选择证据中的鸡肉饭，价格为 ¥12。', citationIds: ['dish-1'] }) } }] };
     });
     embeddingServer = requestServer(({ request, payload }) => {
@@ -104,8 +112,39 @@ describe('split chat and embedding providers', () => {
     assert.deepEqual(result.grounded.citationIds, ['dish-1']);
     assert.equal(chatRequests.at(-1).authorization, 'Bearer chat-secret');
     assert.equal(chatRequests.at(-1).payload.model, 'deepseek-test');
+    const groundedPrompt = JSON.parse(chatRequests.at(-1).payload.messages.at(-1).content);
+    assert.deepEqual(groundedPrompt.evidence[0].evidenceClasses, ['tenant_fact']);
     assert.equal(embeddingRequests.at(-1).authorization, 'Bearer embedding-secret');
     assert.equal(embeddingRequests.at(-1).payload.model, 'qwen-test');
+  });
+
+  it('hoists repeated annotation health evidence while retaining per-dish allowed ids', async () => {
+    const generated = await withAiRuntimeConfig({
+      chatBaseUrl,
+      chatApiKey: 'chat-secret',
+      chatModel: 'claude-test',
+    }, () => generateDishAnnotationCandidates({
+      dishes: [{
+        dish: { id: 'dish-1', name: '测试菜' },
+        concepts: [],
+        foodCompositionReferences: [],
+        healthKnowledge: [{ id: 'health-1', title: '共享知识', content: '只用于边界说明' }],
+      }],
+      knowledge: { authority: 'ai_estimated' },
+      promptVersion: 'test-v1',
+    }));
+
+    const request = chatRequests.at(-1).payload;
+    const modelInput = JSON.parse(request.messages[1].content);
+    assert.deepEqual(modelInput.dishes[0].healthKnowledgeIds, ['health-1']);
+    assert.equal(modelInput.dishes[0].healthKnowledge, undefined);
+    assert.equal(modelInput.knowledge.healthKnowledge[0].id, 'health-1');
+    assert.ok(modelInput.outputSchema.properties.annotations.items.required.includes('fieldConfidence'));
+    assert.equal(request.reasoning_effort, 'low');
+    assert.equal(request.max_tokens, 12_000);
+    assert.equal(generated.model, 'provider-resolved-model');
+    assert.equal(generated.finishReason, 'stop');
+    assert.deepEqual(generated.usage, { promptTokens: 100, completionTokens: 20, totalTokens: 120 });
   });
 
   it('rejects unknown citations and unsupported price claims', () => {

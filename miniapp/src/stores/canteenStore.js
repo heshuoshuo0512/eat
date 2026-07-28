@@ -52,7 +52,8 @@ const contextualRecommendation = ref(normalizeRecommendationResult());
 const recommendationLoading = ref(false);
 const discoveryMode = ref('search');
 const communitySection = ref('posts');
-const motionReduced = ref(Boolean(uni.getStorageSync(MOTION_KEY)));
+const runtimeUni = typeof uni !== 'undefined' ? uni : globalThis?.uni;
+const motionReduced = ref(runtimeUni?.getStorageSync?.(MOTION_KEY) === '1');
 const searchFilters = reactive({ keyword: '', maxPrice: 999, taste: '不限', halalOnly: false });
 let loadPromise = null;
 
@@ -301,7 +302,8 @@ export function useCanteenStore() {
     createPost: apiClient.createPost,
     uploadImage: apiClient.uploadImage,
     listOrders: apiClient.listOrders,
-    analyzeMealImage: apiClient.analyzeMealImage
+    analyzeMealImage: apiClient.analyzeMealImage,
+    confirmMealVision: apiClient.confirmMealVision
     ,sendVerificationCode: apiClient.sendVerificationCode
     ,resetPassword: apiClient.resetPassword
   };

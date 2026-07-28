@@ -5,16 +5,28 @@
   "type": "module",
   "scripts": {
     "dev:mp-weixin": "uni -p mp-weixin",
-    "build:mp-weixin": "uni build -p mp-weixin"
+    "build:mp-weixin": "uni build -p mp-weixin",
+    "build:h5": "uni build -p h5",
+    "preview:h5": "vite preview --host 127.0.0.1 --port 4173 --outDir dist/build/h5",
+    "test:visual": "playwright test -c tests/ui/playwright.config.js",
+    "test:wechat": "node tests/ui/wechat-automator.mjs"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-5010420260703001",
+    "@dcloudio/uni-h5": "3.0.0-5010420260703001",
     "@dcloudio/uni-mp-weixin": "3.0.0-5010420260703001",
     "@dcloudio/vite-plugin-uni": "3.0.0-5010420260703001",
-    "@vue/compiler-sfc": "^3.5.39",
-    "@vue/shared": "^3.5.39",
+    "@vue/compiler-sfc": "3.4.21",
+    "@vue/shared": "3.4.21",
+    "@wot-ui/ui": "^2.2.0",
     "promise-polyfill": "^8.3.0",
     "vite": "5.2.8",
-    "vue": "3.5.39"
+    "vue": "3.4.21"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0",
+    "@weapp-vite/miniprogram-automator": "1.2.8",
+    "miniprogram-automator": "0.12.1",
+    "sass": "^1.102.0"
   }
 }

@@ -373,6 +373,18 @@ export const useCanteenStore = defineStore('canteen', () => {
     return apiClient.analyzeMealImage(payload, options);
   }
 
+  async function confirmMealVision(analysisId, payload, options = {}) {
+    return apiClient.confirmMealVision(analysisId, payload, options);
+  }
+
+  async function listDishReferenceImages(dishId) { return apiClient.listDishReferenceImages(dishId); }
+  async function addDishReferenceImage(dishId, payload) { return apiClient.addDishReferenceImage(dishId, payload); }
+  async function updateDishReferenceImage(referenceImageId, payload) { return apiClient.updateDishReferenceImage(referenceImageId, payload); }
+  async function deleteDishReferenceImage(referenceImageId) { return apiClient.deleteDishReferenceImage(referenceImageId); }
+  async function reindexDishReferenceImages(payload = {}) { return apiClient.reindexDishReferenceImages(payload); }
+  async function listDishRecipes(dishId) { return apiClient.listDishRecipes(dishId); }
+  async function createDishRecipe(dishId, payload) { return apiClient.createDishRecipe(dishId, payload); }
+
   async function askMealAdvisor(payload) {
     return apiClient.askMealAdvisor(payload);
   }
@@ -831,6 +843,14 @@ export const useCanteenStore = defineStore('canteen', () => {
     uploadImage,
     identifyDishImage,
     analyzeMealImage,
+    confirmMealVision,
+    listDishReferenceImages,
+    addDishReferenceImage,
+    updateDishReferenceImage,
+    deleteDishReferenceImage,
+    reindexDishReferenceImages,
+    listDishRecipes,
+    createDishRecipe,
     ragSearch,
     askMealAdvisor,
     runAgent,

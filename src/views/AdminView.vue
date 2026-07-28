@@ -254,7 +254,7 @@
                     <div v-for="dish in stallNode.directDishes" :key="dish.id" class="dish-hierarchy-row">
                       <span class="dish-name">{{ dish.name }}</span>
                       <span>{{ dish.taste || '未设置口味' }}</span>
-                      <strong>¥{{ dish.price }}</strong>
+                      <strong>{{ dishPriceText(dish) }}</strong>
                       <button v-if="canWriteDishes" type="button" @click="openEntry({ task: 'dish', venueId: regionCard.id, areaId: canteenNode.canteen.id, stallId: stallNode.stall.id, editId: dish.id })">编辑</button>
                     </div>
                   </div>
@@ -278,7 +278,7 @@
                         <div v-for="dish in childNode.dishes" :key="dish.id" class="dish-hierarchy-row">
                           <span class="dish-name">{{ dish.name }}</span>
                           <span>{{ dish.taste || '未设置口味' }}</span>
-                          <strong>¥{{ dish.price }}</strong>
+                          <strong>{{ dishPriceText(dish) }}</strong>
                           <button v-if="canWriteDishes" type="button" @click="openEntry({ task: 'dish', venueId: regionCard.id, areaId: canteenNode.canteen.id, stallId: childNode.stall.id, editId: dish.id })">编辑</button>
                         </div>
                       </div>
@@ -456,7 +456,7 @@
               <td>{{ row.row }}</td>
               <td>{{ row.dish.name || '-' }}</td>
               <td>{{ row.dish.stallId || '-' }}</td>
-              <td>¥{{ row.dish.price || 0 }}</td>
+              <td>{{ dishPriceText(row.dish) }}</td>
               <td :class="row.valid ? 'positive' : 'danger'">{{ row.valid ? '可导入' : row.errors.join('；') }}</td>
             </tr>
           </tbody>
@@ -480,7 +480,7 @@
                   <td>{{ row.row }}</td>
                   <td>{{ row.dish.name || '-' }}</td>
                   <td>{{ row.dish.stallId || '-' }}</td>
-                  <td>¥{{ row.dish.price || 0 }}</td>
+                  <td>{{ dishPriceText(row.dish) }}</td>
                   <td :class="row.valid ? 'positive' : 'danger'">{{ row.valid ? '可导入' : row.errors.join('；') }}</td>
                 </tr>
               </tbody>
@@ -684,6 +684,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { dishPriceText } from '../domain/dishPresentation.js';
 import { assertNumber, assertText, parseList, validateImageFile } from '../domain/validation.js';
 import { useRoute, useRouter } from 'vue-router';
 import CatalogAreaFormFields from '../components/CatalogAreaFormFields.vue';
@@ -1212,11 +1213,11 @@ function defaultCanteenForm() {
 }
 
 function defaultDishForm() {
-  return { id: '', stallId: store.stalls[0]?.id || '', name: '', price: 15, taste: '清爽', cuisine: '轻食', ingredients: '', seasonings: '', additives: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', rating: 4.5, reviewCount: 0, sales: 0, calories: 500, protein: 25, fat: 12, carbs: 60, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '', allergenDeclarationStatus: 'unknown', dietaryLabels: '', spiceLevel: null, nutritionFactStatus: 'unknown', recipeFactStatus: 'unknown', halalFactStatus: 'unknown', dietaryFactStatus: 'unknown', spiceFactStatus: 'unknown', factSource: 'manual', dataVersion: 'manual-v1' };
+  return { id: '', stallId: store.stalls[0]?.id || '', name: '', price: 15, taste: '', cuisine: '', ingredients: '', seasonings: '', additives: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', rating: 0, reviewCount: 0, sales: 0, calories: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '', allergenDeclarationStatus: 'unknown', dietaryLabels: '', spiceLevel: null, nutritionFactStatus: 'unknown', recipeFactStatus: 'unknown', halalFactStatus: 'unknown', dietaryFactStatus: 'unknown', spiceFactStatus: 'unknown', factSource: 'manual', dataVersion: 'manual-v1' };
 }
 
 function defaultStallForm() {
-  return { id: '', canteenId: '', parentId: null, name: '', floor: '1F', category: '', rating: 4.5, avgPrice: 15, description: '', open: true };
+  return { id: '', canteenId: '', parentId: null, name: '', floor: '1F', category: '', rating: 0, avgPrice: 15, description: '', open: true };
 }
 
 function defaultAiForm() {
@@ -1393,7 +1394,7 @@ function dishPayload() {
     imageUrl: dishForm.imageUrl || undefined,
     description: String(dishForm.description || '').trim() || '管理员录入菜品。',
     status: dishForm.status || 'active',
-    rating: Number(dishForm.rating ?? 4.5),
+    rating: Number(dishForm.rating ?? 0),
     reviewCount: Number(dishForm.reviewCount ?? 0),
     sales: Number(dishForm.sales ?? 0),
     nutrition: {
@@ -1506,7 +1507,7 @@ async function saveStall(action = 'stay') {
       name: assertText(stallForm.name, '档口名称', 2, 40),
       floor: assertText(stallForm.floor, '楼层', 1, 10),
       category: assertText(stallForm.category, '品类', 2, 30),
-      rating: assertNumber(stallForm.rating, '评分', 1, 5),
+      rating: assertNumber(stallForm.rating, '评分', 0, 5),
       avgPrice: assertNumber(stallForm.avgPrice, '均价', 1, 200),
       description: stallForm.description || '',
       open: stallForm.open

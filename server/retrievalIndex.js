@@ -11,15 +11,22 @@ import {
   deriveDishSemanticLabels,
   GLOBAL_KNOWLEDGE_TENANT_ID,
 } from './campusDiningKnowledgeBase.js';
-import { loadHealthKnowledgeDocuments } from './healthKnowledgeBase.js';
+import {
+  CAMPUS_POLICY_SOURCE_TYPE,
+  loadCampusPolicyKnowledgeDocuments,
+  loadHealthKnowledgeDocuments,
+} from './healthKnowledgeBase.js';
+import { buildDishFacts } from './diningFacts.js';
+import { dishAiAnnotationSchema, listDishAiAnnotations } from './dishAiAnnotations.js';
+import { normalizeDishPricing } from './dishPricing.js';
 
 export const RETRIEVAL_EMBEDDING_DIM = 1536;
-export const RETRIEVAL_INDEX_VERSION = '004_dual_provider_experiment';
+export const RETRIEVAL_INDEX_VERSION = '008_multi_source_annotations';
 
-const DEFAULT_SOURCE_TYPES = ['dish', 'health_knowledge'];
+const DEFAULT_SOURCE_TYPES = ['dish', 'stall', 'health_knowledge', CAMPUS_POLICY_SOURCE_TYPE];
 const VECTOR_MODES = new Set(['off', 'shadow', 'active']);
-const QUERY_CACHE_TTL_MS = 5 * 60 * 1000;
-const QUERY_CACHE_MAX = 256;
+const QUERY_CACHE_TTL_MS = Math.max(1_000, Number(process.env.RETRIEVAL_QUERY_CACHE_TTL_MS || 5 * 60 * 1000));
+const QUERY_CACHE_MAX = Math.max(16, Number(process.env.RETRIEVAL_QUERY_CACHE_MAX || 256));
 const postgresReady = new WeakSet();
 const sqliteReady = new WeakSet();
 const sqliteReadyInflight = new WeakMap();
@@ -142,6 +149,68 @@ function asBoolean(value) {
   return Boolean(value);
 }
 
+function dishAiAnnotationForIndex(dish) {
+  const raw = rowValue(dish, 'aiAnnotation', 'ai_annotation_json');
+  if (!raw) return null;
+  const parsed = dishAiAnnotationSchema.safeParse(parseJson(raw, raw));
+  return parsed.success ? parsed.data : null;
+}
+
+function dishAiAnnotationSummary(annotation) {
+  if (!annotation) return { content: '', searchTerms: [], metadata: null };
+  const ingredientNames = annotation.ingredientHypotheses.map((item) => item.name);
+  const seasoningNames = annotation.seasoningHypotheses.map((item) => item.name);
+  const allergenCodes = annotation.allergenHints.map((item) => item.allergenCode);
+  const nutrition = annotation.nutritionEstimate;
+  return {
+    content: [
+      'AI预标注：以下内容均为估算候选，未经过食堂负责人核验，不得覆盖正式菜品事实。',
+      annotation.aliases.length ? `可能别名：${annotation.aliases.join('、')}` : '',
+      annotation.cuisineCandidates.length ? `可能菜系：${annotation.cuisineCandidates.join('、')}` : '',
+      annotation.cookingMethods.length ? `可能做法：${annotation.cookingMethods.join('、')}` : '',
+      annotation.tasteProfiles.length ? `可能口味：${annotation.tasteProfiles.join('、')}` : '',
+      ingredientNames.length ? `可能食材：${ingredientNames.join('、')}` : '',
+      seasoningNames.length ? `可能调味料：${seasoningNames.join('、')}` : '',
+      allergenCodes.length ? `可能过敏原风险：${allergenCodes.join('、')}；真实状态仍为未知。` : '',
+      nutrition
+        ? `估算营养（${nutrition.basis === 'per_100g' ? '每100克' : '每份'}，${nutrition.portionAssumption}）：热量 ${nutrition.caloriesKcal.min}-${nutrition.caloriesKcal.max} kcal，蛋白质 ${nutrition.proteinG.min}-${nutrition.proteinG.max}g，脂肪 ${nutrition.fatG.min}-${nutrition.fatG.max}g，碳水 ${nutrition.carbsG.min}-${nutrition.carbsG.max}g。`
+        : '',
+      annotation.uncertaintyNotes.length ? `不确定性：${annotation.uncertaintyNotes.join('；')}` : '',
+    ].filter(Boolean).join('\n'),
+    searchTerms: [
+      ...annotation.aliases,
+      ...annotation.cuisineCandidates,
+      ...annotation.cookingMethods,
+      ...annotation.tasteProfiles,
+      ...ingredientNames,
+      ...seasoningNames,
+      ...annotation.mealTypes,
+      ...annotation.scenarioTags,
+      ...annotation.nutritionGoalTags,
+    ],
+    metadata: {
+      factStatus: 'estimated',
+      safetyStatus: 'unknown',
+      aliases: annotation.aliases,
+      cuisineCandidates: annotation.cuisineCandidates,
+      cookingMethods: annotation.cookingMethods,
+      tasteProfiles: annotation.tasteProfiles,
+      spiceLevel: annotation.spiceLevel,
+      mealTypes: annotation.mealTypes,
+      ingredientHypotheses: annotation.ingredientHypotheses,
+      seasoningHypotheses: annotation.seasoningHypotheses,
+      allergenHints: annotation.allergenHints,
+      nutritionEstimate: annotation.nutritionEstimate,
+      scenarioTags: annotation.scenarioTags,
+      nutritionGoalTags: annotation.nutritionGoalTags,
+      linkedConceptIds: annotation.linkedConceptIds,
+      sourceIds: annotation.sourceIds,
+      uncertaintyNotes: annotation.uncertaintyNotes,
+      disclaimerCode: 'AI_ESTIMATED_REVIEW_REQUIRED',
+    },
+  };
+}
+
 export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [], tenantId = 'default') {
   const stallById = new Map(stalls.map((stall) => [rowValue(stall, 'id'), stall]));
   const canteenById = new Map(canteens.map((canteen) => [rowValue(canteen, 'id'), canteen]));
@@ -159,26 +228,49 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
     const allergens = parseList(rowValue(dish, 'allergens', 'allergens_json'));
     const mealTypes = parseList(rowValue(dish, 'mealTypes', 'meal_types_json'));
     const nutrition = rowValue(dish, 'nutrition') || {};
-    const semanticLabels = deriveDishSemanticLabels(dish);
+    const semanticLabels = [...new Set([
+      ...parseList(rowValue(dish, 'semanticLabels', 'semantic_labels_json')),
+      ...deriveDishSemanticLabels(dish),
+    ])];
+    const aliases = parseList(rowValue(dish, 'aliases', 'aliases_json'));
+    const facts = buildDishFacts(dish);
+    const sourceRef = parseJson(rowValue(dish, 'sourceRef', 'source_ref_json'), {});
+    const aiAnnotation = dishAiAnnotationForIndex(dish);
+    const aiSummary = dishAiAnnotationSummary(aiAnnotation);
+    const aiAnnotationMeta = rowValue(dish, 'aiAnnotationMeta', 'ai_annotation_meta') || {};
     const name = requiredText(rowValue(dish, 'name'), 'dish.name');
     const stallName = rowValue(dish, 'stallName', 'stall_name') || rowValue(joinedStall, 'name') || '';
     const canteenName = rowValue(dish, 'canteenName', 'canteen_name') || rowValue(joinedCanteen, 'name') || '';
     const parentCanteenName = rowValue(dish, 'parentCanteenName', 'parent_canteen_name') || rowValue(parentCanteen, 'name') || '';
     const price = Number(rowValue(dish, 'price') || 0);
+    const pricing = normalizeDishPricing({
+      pricingMode: rowValue(dish, 'pricingMode', 'pricing_mode'),
+      priceDisplay: rowValue(dish, 'priceDisplay', 'price_display'),
+      pricing: rowValue(dish, 'pricing', 'pricing_json'),
+    }, price);
+    const nutritionKnown = facts.factStatus.nutrition !== 'unknown';
+    const allergenText = facts.declarations.some((item) => item.status === 'unknown')
+      ? '数据库尚未确认'
+      : allergens.join('、') || '未标注';
     const details = [
       `菜品：${name}`,
+      aliases.length ? `别名：${aliases.join('、')}` : '',
       `菜系：${rowValue(dish, 'cuisine') || '未分类'}`,
       `口味：${rowValue(dish, 'taste') || '未标注'}`,
       `食材：${ingredients.join('、') || '未标注'}`,
-      `过敏原：${allergens.join('、') || '无已知标注'}`,
+      `过敏原：${allergenText}`,
       `标签：${tags.join('、') || '无'}`,
       `餐次：${mealTypes.join('、') || '未标注'}`,
       `检索语义：${semanticLabels.join('、') || '无派生标签'}`,
       `位置：${[parentCanteenName, canteenName, stallName].filter(Boolean).join(' > ') || '未标注'}`,
-      `价格：${price} 元`,
-      `营养：${Number(nutrition.calories ?? rowValue(dish, 'calories') ?? 0)} kcal，蛋白质 ${Number(nutrition.protein ?? rowValue(dish, 'protein') ?? 0)}g，脂肪 ${Number(nutrition.fat ?? rowValue(dish, 'fat') ?? 0)}g，碳水 ${Number(nutrition.carbs ?? rowValue(dish, 'carbs') ?? 0)}g`,
+      `价格：${pricing.display}`,
+      nutritionKnown
+        ? `营养：${Number(nutrition.calories ?? rowValue(dish, 'calories') ?? 0)} kcal，蛋白质 ${Number(nutrition.protein ?? rowValue(dish, 'protein') ?? 0)}g，脂肪 ${Number(nutrition.fat ?? rowValue(dish, 'fat') ?? 0)}g，碳水 ${Number(nutrition.carbs ?? rowValue(dish, 'carbs') ?? 0)}g`
+        : '营养：待核验',
+      '供应：目录菜品，今日供应尚未确认',
       `描述：${rowValue(dish, 'description') || ''}`,
-    ];
+      aiSummary.content,
+    ].filter(Boolean);
     return {
       tenantId: dishTenantId,
       sourceType: 'dish',
@@ -186,7 +278,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
       chunkIndex: 0,
       title: name,
       content: details.join('。'),
-      searchText: [name, rowValue(dish, 'cuisine'), rowValue(dish, 'taste'), ...ingredients, ...allergens, ...tags, ...semanticLabels, stallName, canteenName, parentCanteenName, rowValue(dish, 'description')].filter(Boolean).join(' '),
+      searchText: [name, ...aliases, rowValue(dish, 'cuisine'), rowValue(dish, 'taste'), ...ingredients, ...allergens, ...tags, ...semanticLabels, ...aiSummary.searchTerms, stallName, canteenName, parentCanteenName, rowValue(dish, 'description')].filter(Boolean).join(' '),
       metadata: {
         tenantId: dishTenantId,
         dishId: rowValue(dish, 'id'),
@@ -197,14 +289,88 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
         parentCanteenId: parentCanteenId || null,
         parentCanteenName: parentCanteenName || null,
         price,
+        priceDisplay: pricing.display,
+        pricing,
+        budgetComparable: pricing.budgetComparable,
         halal: asBoolean(rowValue(dish, 'halal')),
         ingredients,
         allergens,
         tags,
         mealTypes,
+        aliases,
         semanticLabels,
+        factStatus: facts.factStatus,
+        safetyDeclarations: facts.declarations,
+        sourceRef,
+        availabilityStatus: 'catalog_only',
+        supplyConfirmed: false,
         semanticLabelVersion: 'campus-dining-2026.07.1',
         evidenceType: 'tenant_dish_fact',
+        ...(aiSummary.metadata ? {
+          aiEstimated: {
+            ...aiSummary.metadata,
+            annotationId: aiAnnotationMeta.id || null,
+            batchId: aiAnnotationMeta.batchId || null,
+            model: aiAnnotationMeta.model || null,
+            promptVersion: aiAnnotationMeta.promptVersion || null,
+            reviewStatus: aiAnnotationMeta.status || 'schema_validated',
+          },
+          semanticEvidenceTypes: ['tenant_dish_fact', 'ai_estimated'],
+        } : {}),
+      },
+    };
+  });
+}
+
+export function buildStallIndexDocuments(stalls = [], canteens = [], tenantId = 'default') {
+  const canteenById = new Map(canteens.map((canteen) => [rowValue(canteen, 'id'), canteen]));
+  return stalls.map((stall) => {
+    const stallTenantId = normalizeTenantId(rowValue(stall, 'tenantId', 'tenant_id') || tenantId);
+    const stallId = requiredText(rowValue(stall, 'id'), 'stall.id');
+    const name = requiredText(rowValue(stall, 'name'), 'stall.name');
+    const aliases = parseList(rowValue(stall, 'aliases', 'aliases_json'));
+    const canteenId = rowValue(stall, 'canteenId', 'canteen_id');
+    const canteen = canteenById.get(canteenId) || {};
+    const canteenName = rowValue(stall, 'canteenName', 'canteen_name') || rowValue(canteen, 'name') || '';
+    const parentCanteenId = rowValue(stall, 'parentCanteenId', 'parent_canteen_id') || rowValue(canteen, 'parentId', 'parent_id');
+    const parentCanteen = canteenById.get(parentCanteenId) || {};
+    const parentCanteenName = rowValue(stall, 'parentCanteenName', 'parent_canteen_name') || rowValue(parentCanteen, 'name') || '';
+    const floor = rowValue(stall, 'floor') || '未标注';
+    const category = rowValue(stall, 'category') || '待核验';
+    const location = [parentCanteenName, canteenName, floor].filter(Boolean).join(' > ') || '未标注';
+    const details = [
+      `店铺：${name}`,
+      aliases.length ? `别名：${aliases.join('、')}` : '',
+      `位置：${location}`,
+      `区域：${canteenName || '未标注'}`,
+      `楼层：${floor}`,
+      `状态：${category}`,
+      '目录说明：来源仅确认店铺存在，商品价格、今日供应与营业状态均未确认',
+      `描述：${rowValue(stall, 'description') || ''}`,
+    ].filter(Boolean);
+    return {
+      tenantId: stallTenantId,
+      sourceType: 'stall',
+      sourceId: stallId,
+      chunkIndex: 0,
+      title: name,
+      content: details.join('。'),
+      searchText: [name, ...aliases, canteenName, parentCanteenName, floor, category, rowValue(stall, 'description')].filter(Boolean).join(' '),
+      metadata: {
+        tenantId: stallTenantId,
+        stallId,
+        stallName: name,
+        aliases,
+        canteenId,
+        canteenName,
+        parentCanteenId: parentCanteenId || null,
+        parentCanteenName: parentCanteenName || null,
+        floor,
+        category,
+        orderable: false,
+        supplyConfirmed: false,
+        availabilityStatus: 'catalog_only',
+        evidenceType: 'tenant_stall_fact',
       },
     };
   });
@@ -820,14 +986,32 @@ function fuseResults(lexicalResults, vectorResults, query, limit, rrfK = 60) {
   lexicalResults.forEach((item, rank) => add(item, rank, 'lexical'));
   vectorResults.forEach((item, rank) => add(item, rank, 'vector'));
   const normalized = normalizedQuery(query);
-  return [...fused.values()].map((item) => ({
+  const locationAliases = (item) => {
+    const metadata = item.metadata || {};
+    const values = [metadata.canteenName, metadata.parentCanteenName].filter(Boolean);
+    const aliases = new Set();
+    for (const value of values) {
+      const text = normalizedQuery(value);
+      aliases.add(text);
+      aliases.add(text.replace(/餐饮与服务区|餐饮服务区|餐饮区|食堂|餐厅|超市/g, ''));
+      aliases.add(text.replace(/^(?:东|西|南|北)区/, ''));
+    }
+    return [...aliases].filter((value) => value.length >= 2);
+  };
+  const ranked = [...fused.values()].map((item) => ({
     ...item,
+    score: item.score + (locationAliases(item).some((alias) => normalized.includes(alias)) ? 0.04 : 0),
     matchReasons: [
       ...(normalizedQuery(item.title) === normalized ? ['name_exact'] : []),
+      ...(locationAliases(item).some((alias) => normalized.includes(alias)) ? ['location_exact'] : []),
       ...(item.matchSources.includes('lexical') ? ['lexical'] : []),
       ...(item.matchSources.includes('vector') ? ['semantic'] : []),
     ],
-  })).sort((left, right) => right.score - left.score || right.lexicalScore - left.lexicalScore)
+  }));
+  const scoped = ranked.some((item) => item.matchReasons.includes('location_exact'))
+    ? ranked.filter((item) => item.matchReasons.includes('location_exact'))
+    : ranked;
+  return scoped.sort((left, right) => right.score - left.score || right.lexicalScore - left.lexicalScore)
     .slice(0, limit);
 }
 
@@ -1034,6 +1218,18 @@ async function loadDishRows(db, tenantId, dishId = null) {
   ).all(...params);
 }
 
+async function loadStallRows(db, tenantId) {
+  return db.prepare(
+    `SELECT s.*,
+            c.name AS canteen_name, c.parent_id AS parent_canteen_id,
+            parent.name AS parent_canteen_name
+     FROM stalls s
+     JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
+     LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = s.tenant_id
+     WHERE s.tenant_id = ?`,
+  ).all(tenantId);
+}
+
 export async function syncDishRetrievalDocument(db, options = {}) {
   const { tenantId = 'default', dishId } = options;
   const tenant = normalizeTenantId(tenantId);
@@ -1112,6 +1308,16 @@ export async function reindexRetrieval(db, options = {}) {
   await ensureRetrievalIndex(db);
   const tenantId = normalizeTenantId(options.tenantId || 'default');
   const sourceTypes = normalizeSourceTypes(options.sourceTypes);
+  if (sourceTypes.includes('health_knowledge') && tenantId !== GLOBAL_KNOWLEDGE_TENANT_ID) {
+    throw Object.assign(new Error(`Health knowledge must be indexed in ${GLOBAL_KNOWLEDGE_TENANT_ID}`), {
+      code: 'GLOBAL_KNOWLEDGE_SCOPE_REQUIRED',
+    });
+  }
+  if (sourceTypes.includes(CAMPUS_POLICY_SOURCE_TYPE) && tenantId === GLOBAL_KNOWLEDGE_TENANT_ID) {
+    throw Object.assign(new Error('Campus policy must be indexed in its tenant scope'), {
+      code: 'TENANT_POLICY_SCOPE_REQUIRED',
+    });
+  }
   const configuration = embeddingConfigurationFrom(options);
   const embeddingModel = configuration.embeddingModel;
   const runId = await startIndexRun(db, tenantId, configuration);
@@ -1120,10 +1326,41 @@ export async function reindexRetrieval(db, options = {}) {
   try {
     const documents = [];
     if (sourceTypes.includes('dish')) {
-      const dishDocuments = options.dishes !== undefined
-        ? buildDishIndexDocuments(options.dishes, options.stalls || [], options.canteens || [], tenantId)
-        : buildDishIndexDocuments(await loadDishRows(db, tenantId), [], [], tenantId);
+      let dishRows = options.dishes !== undefined ? options.dishes : await loadDishRows(db, tenantId);
+      if (options.dishAnnotationBatchId) {
+        const annotations = options.dishAiAnnotations || await listDishAiAnnotations(db, {
+          tenantId,
+          batchId: options.dishAnnotationBatchId,
+        });
+        if (!annotations.length) {
+          throw Object.assign(new Error(`No validated dish annotations found for batch ${options.dishAnnotationBatchId}`), {
+            code: 'DISH_ANNOTATION_BATCH_EMPTY',
+          });
+        }
+        const annotationByDishId = new Map(annotations.map((record) => [record.dishId, record]));
+        dishRows = dishRows.map((dish) => {
+          const record = annotationByDishId.get(rowValue(dish, 'id'));
+          return record ? {
+            ...dish,
+            aiAnnotation: record.annotation,
+            aiAnnotationMeta: {
+              id: record.id,
+              batchId: record.batchId,
+              model: record.model,
+              promptVersion: record.promptVersion,
+              status: record.status,
+            },
+          } : dish;
+        });
+      }
+      const dishDocuments = buildDishIndexDocuments(dishRows, options.stalls || [], options.canteens || [], tenantId);
       documents.push(...dishDocuments);
+    }
+    if (sourceTypes.includes('stall')) {
+      const stallDocuments = options.stalls !== undefined
+        ? buildStallIndexDocuments(options.stalls, options.canteens || [], tenantId)
+        : buildStallIndexDocuments(await loadStallRows(db, tenantId), [], tenantId);
+      documents.push(...stallDocuments);
     }
     if (sourceTypes.includes('health_knowledge')) {
       const healthDocuments = options.healthDocuments !== undefined
@@ -1134,6 +1371,17 @@ export async function reindexRetrieval(db, options = {}) {
             chunkOverlap: options.healthChunkOverlap,
           });
       documents.push(...buildHealthIndexDocuments(healthDocuments, tenantId));
+    }
+    if (sourceTypes.includes(CAMPUS_POLICY_SOURCE_TYPE)) {
+      const campusPolicyDocuments = options.campusPolicyDocuments !== undefined
+        ? options.campusPolicyDocuments
+        : loadCampusPolicyKnowledgeDocuments({
+            root: options.campusPolicyRoot || options.healthRoot,
+            tenantId,
+            chunkSize: options.healthChunkSize,
+            chunkOverlap: options.healthChunkOverlap,
+          });
+      documents.push(...buildHealthIndexDocuments(campusPolicyDocuments, tenantId));
     }
     if (sourceTypes.includes(CAMPUS_KNOWLEDGE_SOURCE_TYPE)) {
       if (tenantId !== GLOBAL_KNOWLEDGE_TENANT_ID) {
@@ -1167,6 +1415,16 @@ export async function reindexRetrieval(db, options = {}) {
     await finishIndexRun(db, runId, 'failed', documentCount, Math.max(1, failureCount), error.message).catch(() => {});
     throw error;
   }
+}
+
+export async function pruneInvalidKnowledgeScopes(db) {
+  await ensureRetrievalIndex(db);
+  const result = await db.prepare(
+    `DELETE FROM rag_documents
+     WHERE (source_type IN ('health_knowledge', 'campus_dining_knowledge') AND tenant_id <> ?)
+        OR (source_type = ? AND tenant_id = ?)`,
+  ).run(GLOBAL_KNOWLEDGE_TENANT_ID, CAMPUS_POLICY_SOURCE_TYPE, GLOBAL_KNOWLEDGE_TENANT_ID);
+  return { deletedCount: Number(result?.changes || 0) };
 }
 
 export async function getRetrievalIndexStatus(db, { tenantId = 'default' } = {}) {

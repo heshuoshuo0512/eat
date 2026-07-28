@@ -74,7 +74,8 @@ export function summarizeRegions(dishes = [], options = {}) {
   return REGION_DEFINITIONS.map((region) => {
     const regionDishes = rankRegionDishes(getRegionDishes(region.id, dishes), { ...options, sortBy: 'hot' });
     const totalSales = regionDishes.reduce((sum, dish) => sum + Number(dish.sales || 0), 0);
-    const averageRating = regionDishes.length ? regionDishes.reduce((sum, dish) => sum + dish.displayRating, 0) / regionDishes.length : 0;
+    const ratedDishes = regionDishes.filter((dish) => dish.displayReviewCount > 0 && dish.displayRating > 0);
+    const averageRating = ratedDishes.length ? ratedDishes.reduce((sum, dish) => sum + dish.displayRating, 0) / ratedDishes.length : 0;
     return { ...region, count: regionDishes.length, totalSales, averageRating: Number(averageRating.toFixed(1)), heroDish: regionDishes[0] || null, dishes: regionDishes };
   });
 }

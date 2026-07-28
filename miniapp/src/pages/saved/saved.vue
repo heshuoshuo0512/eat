@@ -1,27 +1,33 @@
 <template>
   <sc-page-shell back title="收藏与吃过" subtitle="个人记录" tone="records">
-    <view class="saved-stats">
-      <view><text class="ui-strong">{{ saved.favorites.length }}</text><text>收藏菜品</text></view>
-      <view><text class="ui-strong">{{ saved.eaten.length }}</text><text>吃过菜品</text></view>
-      <view><text class="ui-strong">{{ saved.totalEaten }}</text><text>累计吃过</text></view>
-    </view>
-    <sc-segmented-control v-model="activePanel" :options="panelOptions" block />
-    <text v-if="message" class="message" :class="{ error:isError }">{{ message }}</text>
+    <view class="saved-workspace">
+      <view class="saved-aside">
+        <view class="saved-stats">
+          <view><text class="ui-strong">{{ saved.favorites.length }}</text><text>收藏菜品</text></view>
+          <view><text class="ui-strong">{{ saved.eaten.length }}</text><text>吃过菜品</text></view>
+          <view><text class="ui-strong">{{ saved.totalEaten }}</text><text>累计吃过</text></view>
+        </view>
+      </view>
+      <view class="saved-main">
+        <sc-segmented-control v-model="activePanel" :options="panelOptions" block />
+        <text v-if="message" class="message" :class="{ error:isError }">{{ message }}</text>
 
-    <view v-if="activePanel==='favorites'" class="saved-list">
-      <view v-for="dish in saved.favorites" :key="dish.id" class="saved-entry">
-        <sc-dish-card :dish="dish" :location="locationLabel(dish)" compact @tap="openDish(dish.id)" />
+        <view v-if="activePanel==='favorites'" class="saved-list">
+          <view v-for="dish in saved.favorites" :key="dish.id" class="saved-entry">
+            <sc-list-row :title="dish.name" :description="locationLabel(dish)" :meta="dishPriceText(dish)" badge="已收藏" @tap="openDish(dish.id)" />
         <view class="entry-actions"><button @tap="toggleFavorite(dish.id)"><view>取消收藏</view></button><button @tap="markEaten(dish.id)"><view>记录吃过</view></button><button class="order-preview" @tap="openOrder(dish.id)"><view>点餐预览</view></button></view>
-      </view>
-      <sc-state-card v-if="!saved.favorites.length" type="empty" title="还没有收藏菜品" desc="在菜品详情、区域推荐或智能推荐中加入收藏。" action-text="去找菜" @action="openDishes" />
-    </view>
+          </view>
+          <sc-state-card v-if="!saved.favorites.length" type="empty" illustration="empty-saved" title="还没有收藏菜品" desc="在菜品详情、区域推荐或智能推荐中加入收藏。" action-text="去找菜" @action="openDishes" />
+        </view>
 
-    <view v-else class="history-list">
-      <view v-for="dish in saved.eaten" :key="dish.id" class="history-row">
-        <button class="history-main" @tap="openDish(dish.id)"><image :src="dish.imageUrl||'/static/food/bowl.svg'" mode="aspectFill" /><view><text class="ui-strong">{{ dish.name }}</text><text>最近记录 {{ formatDate(dish.lastEatenAt) }}</text><text class="ui-small">揭晓 {{ dish.drawnCount||0 }} 次</text></view><text class="ui-bold">{{ dish.eatenCount }}</text></button>
-        <button class="again-button" @tap="markEaten(dish.id)"><view>再记一次</view></button>
+        <view v-else class="history-list">
+          <view v-for="dish in saved.eaten" :key="dish.id" class="history-row">
+            <sc-list-row :title="dish.name" :description="`最近记录 ${formatDate(dish.lastEatenAt)} · 揭晓 ${dish.drawnCount||0} 次`" :meta="`${dish.eatenCount} 次`" @tap="openDish(dish.id)" />
+            <button class="again-button" @tap="markEaten(dish.id)">再记一次</button>
+          </view>
+          <sc-state-card v-if="!saved.eaten.length" type="empty" illustration="empty-saved" title="还没有吃过记录" desc="在菜品详情中记录真实用餐，统计会出现在这里。" action-text="浏览菜品" @action="openDishes" />
+        </view>
       </view>
-      <sc-state-card v-if="!saved.eaten.length" type="empty" title="还没有吃过记录" desc="在菜品详情中记录真实用餐，统计会出现在这里。" action-text="浏览菜品" @action="openDishes" />
     </view>
   </sc-page-shell>
 </template>
@@ -29,6 +35,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { onLoad, onShow } from '@dcloudio/uni-app';
+import { dishPriceText } from '../../domain/dishPresentation.js';
 import { savedDishEntries } from '../../domain/studentDiscovery.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 
@@ -46,31 +53,28 @@ function toggleFavorite(id){return runAction(()=>store.toggleFavorite(id),'已�
 </script>
 
 <style scoped>
-.saved-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:10rpx; margin-bottom:18rpx; }
-.saved-stats view { min-width:0; padding:18rpx 6rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:center; }
+.saved-workspace { display:grid; gap:16px; }
+.saved-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border:1px solid var(--module-line); border-radius:var(--radius-large); background:var(--module-soft); }
+.saved-stats view { position:relative; min-width:0; padding:12px 4px; text-align:center; }
+.saved-stats view+view::before { position:absolute; top:10px; bottom:10px; left:0; width:1px; background:var(--line); content:''; }
 .saved-stats .ui-strong,.saved-stats text { display:block; }
-.saved-stats .ui-strong { color:var(--ink); font-size:32rpx; font-weight:600; }
-.saved-stats text { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
-.message { display:block; margin:12rpx 0; color:var(--brand); font-size:24rpx; }
+.saved-stats .ui-strong { color:var(--module-dark); font-size:16px; }
+.saved-stats text { margin-top:3px; color:var(--muted); font-size:12px; }
+.message { display:block; margin:10px 0; color:var(--ink-2); font-size:14px; }
 .message.error { color:var(--danger); }
-.saved-list,.history-list { display:flex; flex-direction:column; gap:14rpx; margin-top:18rpx; }
-.saved-entry { overflow:hidden; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
-.saved-entry :deep(.dish-card) { border:0; border-bottom:1rpx solid var(--line); border-radius:0; }
-.entry-actions { display:grid; grid-template-columns:1fr 1fr 1.15fr; gap:2rpx; padding:4rpx 8rpx; }
-.entry-actions button { display:flex; align-items:center; justify-content:center; min-height:88rpx; padding:0 4rpx; color:var(--brand); background:transparent; font-size:22rpx; font-weight:500; }
-.entry-actions button>view { display:flex; align-items:center; justify-content:center; width:100%; min-height:64rpx; padding:0 6rpx; border-radius:10rpx; background:var(--brand-soft); line-height:1.2; box-sizing:border-box; }
-.entry-actions button:active>view { transform:scale(.98); }
-.entry-actions .order-preview { color:#8b5d18; }
-.entry-actions .order-preview>view { background:var(--rating-soft); }
-.history-row { display:grid; grid-template-columns:minmax(0,1fr) 96rpx; gap:10rpx; padding:14rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); }
-.history-main { display:grid; grid-template-columns:108rpx minmax(0,1fr) 58rpx; align-items:center; gap:14rpx; min-width:0; padding:0; background:transparent; text-align:left; }
-.history-main image { width:108rpx; height:108rpx; border-radius:12rpx; background:var(--surface-soft); }
-.history-main view { min-width:0; }
-.history-main .ui-strong,.history-main text,.history-main .ui-small { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.history-main .ui-strong { color:var(--ink); font-size:26rpx; font-weight:600; }
-.history-main text { margin-top:5rpx; color:var(--muted); font-size:22rpx; }
-.history-main .ui-small { margin-top:3rpx; color:var(--ink-2); font-size:22rpx; }
-.history-main .ui-bold { display:flex; align-items:center; justify-content:center; width:54rpx; height:54rpx; border-radius:50%; color:#fff; background:var(--brand); font-size:24rpx; font-weight:600; }
-.again-button { display:flex; align-items:center; justify-content:center; align-self:center; min-width:104rpx; min-height:88rpx; padding:0 4rpx; color:var(--brand); background:transparent; font-size:22rpx; font-weight:500; }
-.again-button>view { display:flex; align-items:center; justify-content:center; min-width:96rpx; min-height:64rpx; padding:0 8rpx; border-radius:10rpx; background:var(--brand-soft); box-sizing:border-box; }
+.saved-list,.history-list { display:flex; flex-direction:column; gap:0; margin-top:12px; padding:0 12px; border-radius:var(--radius-large); background:var(--surface); }
+.saved-entry,.history-row { overflow:hidden; padding:0 0 8px; border-bottom:1px solid var(--line); background:transparent; }.saved-entry:last-of-type,.history-row:last-of-type { border-bottom:0; }
+.entry-actions { display:grid; grid-template-columns:1fr 1fr 1.15fr; gap:6px; border-top:1px solid var(--line); padding-top:8px; }
+.entry-actions button,.again-button { display:flex; min-height:44px; padding:0 8px; align-items:center; justify-content:center; border-radius:var(--radius); color:var(--ink-2); background:var(--surface-soft); font-size:12px; font-weight:500; }
+.entry-actions .order-preview { color:#fff; background:var(--module-accent); }
+.history-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; padding-bottom:0; }
+.again-button { min-width:84px; }
+@media (min-width:768px) {
+  .saved-workspace { grid-template-columns:280px minmax(0,1fr); gap:24px; align-items:start; }
+  .saved-aside { position:sticky; top:72px; }
+  .saved-stats { grid-template-columns:1fr; }
+  .saved-stats view { display:flex; min-height:56px; padding:0 16px; align-items:center; justify-content:space-between; text-align:left; }
+  .saved-stats view+view::before { top:0; right:12px; bottom:auto; left:12px; width:auto; height:1px; }
+  .saved-stats text { margin-top:0; }
+}
 </style>

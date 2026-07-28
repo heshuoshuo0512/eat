@@ -1,12 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../server/database.js';
+import { loadFoodCompositionReferences } from '../server/healthKnowledgeBase.js';
 import { businessDate } from '../server/time.js';
 import {
   applyDishHardConstraints,
+  matchFoodCompositionReferencesForQuery,
   mergeDiningConversationState,
   parseDishSearchRequest,
   reciprocalRankFusion,
+  retrieveRoutedKnowledge,
+  routeDiningKnowledgeSources,
   runDishSearchWorkflow,
   runMealRecommendationWorkflow
 } from '../server/retrievalService.js';
@@ -58,6 +62,65 @@ function candidate(overrides = {}) {
 const fixedContext = { date: '2026-07-21', time: '12:00', mealType: 'lunch' };
 
 describe('dish search request parsing and fusion', () => {
+  it('routes policy, nutrition and allergy questions to isolated evidence sources', () => {
+    const policy = routeDiningKnowledgeSources('食堂退款和投诉规则是什么');
+    const nutrition = routeDiningKnowledgeSources('训练后吃鸡蛋怎么补充蛋白质');
+    const allergy = routeDiningKnowledgeSources('花生过敏时怎么理解交叉接触风险');
+
+    assert.equal(policy.intent, 'campus_policy');
+    assert.deepEqual(policy.routes.flatMap((item) => item.sourceTypes), ['campus_policy']);
+    assert.equal(policy.includeFoodComposition, false);
+    assert.equal(nutrition.intent, 'nutrition_and_health');
+    assert.deepEqual(nutrition.routes.map((item) => item.sourceTypes[0]), ['health_knowledge', 'campus_dining_knowledge']);
+    assert.equal(nutrition.includeFoodComposition, true);
+    assert.equal(allergy.intent, 'allergy_safety');
+    assert.ok(!allergy.routes.some((item) => item.sourceTypes.includes('campus_policy')));
+  });
+
+  it('matches FDC/FoodOn references structurally without turning them into campus dish facts', () => {
+    const matches = matchFoodCompositionReferencesForQuery(
+      '鸡蛋每100克大概有多少蛋白质',
+      loadFoodCompositionReferences(),
+      5,
+    );
+    assert.ok(matches.length > 0);
+    assert.equal(matches[0].sourceType, 'food_composition_reference');
+    assert.equal(matches[0].evidenceType, 'reference_only');
+    assert.equal(matches[0].tenantId, '__global__');
+    assert.equal(matches[0].metadata.campusDishFactPolicy, 'must_not_overwrite');
+    assert.ok(matches[0].metadata.fdcId);
+    assert.match(matches[0].metadata.foodOnId, /^FOODON:/);
+  });
+
+  it('retrieves routed sources separately and excludes dish documents from knowledge evidence', async () => {
+    const calls = [];
+    const result = await retrieveRoutedKnowledge({
+      query: '训练后吃鸡蛋补充蛋白质',
+      tenantId: 'tenant-a',
+      limit: 6,
+    }, {
+      knowledgeSearch: async (request) => {
+        calls.push(request.sourceTypes);
+        if (request.sourceTypes.includes('health_knowledge')) return {
+          items: [
+            { id: 'health-1', sourceId: 'health-1', sourceType: 'health_knowledge', title: '运动恢复原则', content: '一般性恢复建议。', metadata: { publisher: '中国营养学会', evidenceType: 'approved_global_knowledge' } },
+            { id: 'dish-noise', sourceId: 'dish-noise', sourceType: 'dish', title: '不得成为知识证据' },
+          ],
+          warnings: [],
+        };
+        return { items: [{ id: 'concept-1', sourceId: 'concept-1', sourceType: 'campus_dining_knowledge', title: '训练后用餐', content: '校园场景概念。', metadata: {} }], warnings: [] };
+      },
+      foodCompositionLookup: ({ query, limit }) => matchFoodCompositionReferencesForQuery(query, loadFoodCompositionReferences(), limit),
+    });
+
+    assert.deepEqual(calls, [['health_knowledge'], ['campus_dining_knowledge']]);
+    assert.ok(result.results.some((item) => item.sourceType === 'health_knowledge'));
+    assert.ok(result.results.some((item) => item.sourceType === 'food_composition_reference'));
+    assert.ok(result.results.every((item) => item.sourceType !== 'dish'));
+    assert.equal(result.trace.routing.intent, 'nutrition_and_health');
+    assert.ok(result.trace.structuredReferenceCount > 0);
+  });
+
   it('extracts Chinese hard filters while explicit filters remain authoritative', () => {
     const parsed = parseDishSearchRequest({
       tenantId: 'tenant-a',
@@ -178,6 +241,48 @@ describe('dish search workflow', () => {
     assert.equal(result.items[0].availability.price, 15, 'menu price is database truth');
   });
 
+  it('prefers the longest explicitly named dish over a shorter contained name', async () => {
+    const result = await runDishSearchWorkflow({
+      tenantId: 'tenant-a',
+      query: '想吃鸡架拌面',
+      candidates: [
+        candidate({ id: 'short-name', name: '鸡架' }),
+        candidate({ id: 'specific-name', name: '鸡架拌面' }),
+      ],
+      context: fixedContext,
+    });
+
+    assert.equal(result.items[0].id, 'specific-name');
+  });
+
+  it('recovers a single missing character in a dish-name query', async () => {
+    const result = await runDishSearchWorkflow({
+      tenantId: 'tenant-a',
+      query: '鸡肉子',
+      candidates: [
+        candidate({ id: 'noise', name: '把子肉' }),
+        candidate({ id: 'expected', name: '鸡肉包子' }),
+      ],
+      context: fixedContext,
+    });
+
+    assert.equal(result.items[0].id, 'expected');
+    assert.ok(result.items[0].matchReasons.includes('菜名近似匹配'));
+  });
+
+  it('keeps unknown taste facts visible with a warning instead of filtering the whole catalog', async () => {
+    const result = await runDishSearchWorkflow({
+      tenantId: 'tenant-a',
+      query: '咖喱',
+      filters: { taste: '咖喱' },
+      candidates: [candidate({ id: 'unknown-taste', name: '咖喱鸡排饭', taste: '待核验' })],
+      context: fixedContext,
+    });
+
+    assert.deepEqual(result.items.map((item) => item.id), ['unknown-taste']);
+    assert.ok(result.warnings.some((warning) => warning.code === 'TASTE_UNVERIFIED'));
+  });
+
   it('uses vector support rather than the small RRF score for confidence inputs', async () => {
     const result = await runDishSearchWorkflow({
       tenantId: 'tenant-a', query: '运动后恢复', candidates: [candidate()], context: fixedContext,
@@ -201,6 +306,46 @@ describe('dish search workflow', () => {
     assert.deepEqual(result.items.map((item) => item.id), ['sports-dish']);
     assert.equal(result.interpreted.filters.canteenId, 'sports');
     assert.equal(result.interpreted.detected.includes('canteenId'), true);
+  });
+
+  it('warns about both allergen and supply uncertainty for an empty catalog area', async () => {
+    const db = openDatabase(':memory:');
+    const now = new Date().toISOString();
+    try {
+      db.prepare(`INSERT INTO canteens
+        (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run('east-dongdahuo-empty', 'default', '东区东大活', '东区', '待核验', 0, '[]', '目录快照', null, 'dining_area', '', now, now);
+
+      const result = await runDishSearchWorkflow({
+        tenantId: 'default',
+        query: '我对小麦过敏，东区东大活有什么能吃',
+        context: fixedContext,
+      }, { db });
+
+      assert.deepEqual(result.items, []);
+      assert.equal(result.interpreted.filters.canteenId, 'east-dongdahuo-empty');
+      assert.ok(result.warnings.some((warning) => warning.code === 'ALLERGEN_UNVERIFIED'));
+      assert.ok(result.warnings.some((warning) => warning.code === 'SUPPLY_UNCONFIRMED'));
+    } finally {
+      db.close();
+    }
+  });
+
+  it('uses a unique tenant stall mention as a hard filter within the selected canteen', async () => {
+    const result = await runDishSearchWorkflow({
+      tenantId: 'tenant-a',
+      query: '北苑食堂汉堡鸡排饭档的香辣粉丝丸子',
+      candidates: [
+        candidate({ id: 'target', stallId: 'burger', stallName: '汉堡鸡排饭档', canteenId: 'north', canteenName: '北苑食堂', name: '香辣粉丝丸子', taste: '待核验' }),
+        candidate({ id: 'noise', stallId: 'noodle', stallName: '面食档', canteenId: 'north', canteenName: '北苑食堂', name: '香辣肉片', taste: '待核验' }),
+      ],
+      context: fixedContext,
+    });
+
+    assert.deepEqual(result.items.map((item) => item.id), ['target']);
+    assert.equal(result.interpreted.filters.canteenId, 'north');
+    assert.equal(result.interpreted.filters.stallId, 'burger');
   });
 
   it('keeps sold-out catalog matches but marks them non-orderable', async () => {
@@ -342,6 +487,24 @@ describe('meal recommendation workflow', () => {
     assert.equal(result.evidence.dishes[0].sourceType, 'dish');
   });
 
+  it('does not treat stall retrieval documents as recommendation candidates', async () => {
+    const result = await runMealRecommendationWorkflow({
+      tenantId: 'tenant-a',
+      query: '轻食档口有什么推荐',
+      profile: { goal: 'healthy', mealType: 'lunch', budgetMax: 20 },
+      context: fixedContext,
+      candidates: [candidate()],
+    }, {
+      semanticSearch: async () => [
+        { sourceId: 'stall-1', sourceType: 'stall', score: 1 },
+      ],
+    });
+
+    assert.equal(result.meta.semanticUsed, false);
+    assert.ok(result.recommendations.every((item) => item.id !== 'stall-1'));
+    assert.ok(result.evidence.dishes.every((item) => item.sourceType === 'dish'));
+  });
+
   it('excludes hidden dishes from both current-menu and catalog-fallback recommendations', async () => {
     const result = await runMealRecommendationWorkflow({
       tenantId: 'tenant-a',
@@ -372,6 +535,20 @@ describe('hard constraints', () => {
     const result = applyDishHardConstraints(mapped, { allergens: ['花生'] }, { requireOrderable: true });
     assert.deepEqual(result.items.map((item) => item.id), ['dish-1']);
     assert.equal(result.rejections.safety, 1);
+  });
+
+  it('conservatively rejects a dish whose name explicitly contains the requested allergen', () => {
+    const mapped = [
+      { ...candidate({ id: 'named-allergen', name: '花生鸡丁', ingredients: [], allergens: [] }), availability: { orderable: true, price: 15 } },
+      { ...candidate({ id: 'unknown-recipe', name: '宫保鸡丁', ingredients: [], allergens: [] }), availability: { orderable: true, price: 15 } },
+      { ...candidate({ id: 'fish-flavor', name: '鱼香肉丝', ingredients: [], allergens: [] }), availability: { orderable: true, price: 15 } },
+    ];
+
+    const peanut = applyDishHardConstraints(mapped, { allergens: ['花生'] }, { requireOrderable: true });
+    const fish = applyDishHardConstraints(mapped, { allergens: ['鱼'] }, { requireOrderable: true });
+    assert.equal(peanut.items.some((item) => item.id === 'named-allergen'), false);
+    assert.equal(peanut.items.find((item) => item.id === 'unknown-recipe').safety.status, 'unknown');
+    assert.equal(fish.items.some((item) => item.id === 'fish-flavor'), true, '鱼香 is not proof that a dish contains fish');
   });
 
   it('accepts only active dish status as a hard constraint', () => {

@@ -24,6 +24,18 @@ function termMatches(left, right) {
   return Boolean(a && b) && (a.includes(b) || b.includes(a));
 }
 
+function dishNameClearlyMatchesAllergen(name, allergen) {
+  const normalizedName = normalizedText(name);
+  const normalizedAllergen = normalizedText(allergen);
+  if (!normalizedName || !normalizedAllergen || !normalizedName.includes(normalizedAllergen)) return false;
+
+  // “鱼香” describes a flavor profile and does not by itself prove that a dish contains fish.
+  if (normalizedAllergen === '鱼' && !normalizedName.replaceAll('鱼香', '').includes('鱼')) return false;
+  // “高蛋白” is a nutrition claim, not explicit evidence that the dish contains egg.
+  if (normalizedAllergen === '蛋' && !normalizedName.replaceAll('蛋白', '').includes('蛋')) return false;
+  return true;
+}
+
 function normalizeFactStatus(value, fallback = 'unknown') {
   const status = String(value || '').trim();
   return FACT_STATUSES.includes(status) ? status : fallback;
@@ -84,8 +96,12 @@ export function deriveSpiceLevel(raw = {}) {
 export function buildDishFacts(raw = {}) {
   const declarations = normalizeSafetyDeclarations(raw);
   const explicitFactStatus = raw.factStatus || {};
+  const rawNutritionStatus = explicitFactStatus.nutrition ?? raw.nutritionFactStatus ?? raw.nutrition_fact_status;
+  const nutrition = raw.nutrition || {};
+  const hasLegacyNutrition = ['calories', 'protein', 'fat', 'carbs']
+    .some((key) => Number(nutrition[key] ?? raw[key] ?? 0) > 0);
   const factStatus = {
-    nutrition: normalizeFactStatus(explicitFactStatus.nutrition ?? raw.nutritionFactStatus ?? raw.nutrition_fact_status),
+    nutrition: normalizeFactStatus(rawNutritionStatus, rawNutritionStatus == null && hasLegacyNutrition ? 'estimated' : 'unknown'),
     recipe: normalizeFactStatus(explicitFactStatus.recipe ?? raw.recipeFactStatus ?? raw.recipe_fact_status),
     halal: normalizeFactStatus(explicitFactStatus.halal ?? raw.halalFactStatus ?? raw.halal_fact_status),
     dietary: normalizeFactStatus(explicitFactStatus.dietary ?? raw.dietaryFactStatus ?? raw.dietary_fact_status),
@@ -125,7 +141,8 @@ export function evaluateDishSafety(candidate, requestedAllergens = []) {
     const declarations = facts.declarations.filter((item) => item.allergenCode === '*' || termMatches(item.allergenCode, allergen));
     selectedDeclarations.push(...declarations.map((item) => ({ ...item, requestedAllergen: allergen })));
     const recipeMatch = recipeText.some((item) => termMatches(item, allergen));
-    const unsafe = recipeMatch || declarations.some((item) => ['confirmed_present', 'cross_contact_possible'].includes(item.status));
+    const explicitNameMatch = dishNameClearlyMatchesAllergen(candidate.name, allergen);
+    const unsafe = explicitNameMatch || recipeMatch || declarations.some((item) => ['confirmed_present', 'cross_contact_possible'].includes(item.status));
     const absent = declarations.some((item) => item.status === 'confirmed_absent');
     if (unsafe) matched.push(allergen);
     else if (!absent) unknown.push(allergen);

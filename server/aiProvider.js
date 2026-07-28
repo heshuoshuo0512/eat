@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { DISH_AI_ANNOTATION_BATCH_JSON_SCHEMA } from './dishAiAnnotations.js';
 
 const runtimeConfig = {
   apiKey: '',
@@ -286,6 +287,14 @@ function clampNumber(value, min, max, fallback) {
   return Math.min(max, Math.max(min, number));
 }
 
+function nullableNumber(value, min, max, digits = 0) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const bounded = Math.min(max, Math.max(min, number));
+  return digits ? Number(bounded.toFixed(digits)) : Math.round(bounded);
+}
+
 function listOfText(value, fallback = []) {
   const list = Array.isArray(value) ? value : String(value || '').split(/[，,、\s]+/);
   const normalized = list.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8);
@@ -305,13 +314,53 @@ export function normalizeVisionDishSuggestion(value = {}, options = {}) {
     ingredients: listOfText(value.ingredients),
     tags: listOfText(value.tags, ['AI识别', '待确认']),
     nutrition: {
-      calories: Math.round(clampNumber(nutrition.calories, 1, 3000, 500)),
-      protein: Math.round(clampNumber(nutrition.protein, 0, 300, 20)),
-      fat: Math.round(clampNumber(nutrition.fat, 0, 300, 12)),
-      carbs: Math.round(clampNumber(nutrition.carbs, 0, 500, 60))
+      calories: nullableNumber(nutrition.calories, 1, 3000),
+      protein: nullableNumber(nutrition.protein, 0, 300),
+      fat: nullableNumber(nutrition.fat, 0, 300),
+      carbs: nullableNumber(nutrition.carbs, 0, 500)
     },
     confidence: Number(clampNumber(value.confidence, 0, 1, 0.5).toFixed(2)),
     notes: String(value.notes || fallbackNotes).trim().slice(0, 240)
+  };
+}
+
+function normalizeNutritionRange(value, max, unit) {
+  const min = nullableNumber(value?.min, 0, max, 1);
+  const upper = nullableNumber(value?.max, 0, max, 1);
+  if (min === null || upper === null) return null;
+  return { min: Math.min(min, upper), max: Math.max(min, upper), unit };
+}
+
+export function normalizeMealObservation(value = {}) {
+  const estimate = value.estimatedNutrition || value.nutritionEstimate || {};
+  const ranges = {
+    calories: normalizeNutritionRange(estimate.calories, 3000, 'kcal'),
+    protein: normalizeNutritionRange(estimate.protein, 300, 'g'),
+    fat: normalizeNutritionRange(estimate.fat, 300, 'g'),
+    carbs: normalizeNutritionRange(estimate.carbs, 500, 'g'),
+  };
+  const hasRanges = Object.values(ranges).every(Boolean);
+  const issueCodes = listOfText(value.quality?.issueCodes || value.issueCodes)
+    .map((item) => item.toUpperCase().replace(/[^A-Z0-9_]/g, '_'));
+  return {
+    genericNames: listOfText(value.genericNames || value.names || value.name).slice(0, 5),
+    visibleIngredients: listOfText(value.visibleIngredients || value.ingredients).slice(0, 12),
+    cookingMethods: listOfText(value.cookingMethods || value.methods).slice(0, 6),
+    presentation: String(value.presentation || '').trim().slice(0, 160),
+    multipleItems: Boolean(value.multipleItems),
+    dishCountEstimate: nullableNumber(value.dishCountEstimate, 1, 12) || 1,
+    quality: { usable: value.quality?.usable !== false, issueCodes },
+    estimatedNutrition: hasRanges ? {
+      status: 'estimated',
+      basis: 'per_serving',
+      portionGrams: nullableNumber(estimate.portionGrams || estimate.assumedPortionGrams, 10, 3000),
+      ranges,
+      sourceType: 'vision',
+      sourceIds: [],
+      reason: '仅根据可见食物和假设份量给出的宽区间，不能替代食堂配方。',
+    } : null,
+    confidence: Number(clampNumber(value.confidence, 0, 1, 0).toFixed(2)),
+    notes: String(value.notes || '').trim().slice(0, 240),
   };
 }
 
@@ -358,6 +407,93 @@ export async function identifyDishFromImage({ dataBase64, contentType, filename,
     ]
   }, config);
   return normalizeVisionDishSuggestion(parseJsonObject(data.choices?.[0]?.message?.content), { purpose });
+}
+
+export async function observeMealFromImage({ dataBase64, contentType, filename } = {}) {
+  const config = providerConfig();
+  if (!config.enabled) throw Object.assign(new Error('请先在 AI 配置中启用支持视觉的模型'), { status: 400 });
+  const { mime, image } = validateVisionImage({ dataBase64, contentType });
+  const data = await postJson(`${config.baseUrl}/chat/completions`, {
+    model: config.visionModel || config.chatModel,
+    temperature: 0.1,
+    max_tokens: 900,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: [
+          '你是校园食堂单道菜视觉观察器，只描述照片中可见事实。',
+          '不得猜测食堂、餐厅、档口、价格、库存或具体校内菜品ID。',
+          '如果画面含多道独立菜品，multipleItems=true；不要强行合并成一道菜。',
+          '营养只能给宽区间，并明确基于假设份量；看不清时 estimatedNutrition 设为 null。',
+          '只输出 JSON：genericNames[],visibleIngredients[],cookingMethods[],presentation,multipleItems,dishCountEstimate,quality{usable,issueCodes[]},estimatedNutrition{portionGrams,calories{min,max},protein{min,max},fat{min,max},carbs{min,max}}或null,confidence,notes。',
+        ].join('\n'),
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `观察这张单道餐食照片。文件名：${filename || 'meal-image'}` },
+          { type: 'image_url', image_url: { url: `data:${mime};base64,${image}` } },
+        ],
+      },
+    ],
+  }, config);
+  return normalizeMealObservation(parseJsonObject(data.choices?.[0]?.message?.content));
+}
+
+export function normalizeVisionRerank(value = {}, allowedDishIds = []) {
+  const allowed = new Set(allowedDishIds.map(String));
+  const seen = new Set();
+  const rankings = (Array.isArray(value.rankings) ? value.rankings : [])
+    .map((item) => ({
+      dishId: String(item.dishId || ''),
+      score: Number(clampNumber(item.score, 0, 1, 0).toFixed(3)),
+      reasons: listOfText(item.reasons).slice(0, 4),
+    }))
+    .filter((item) => allowed.has(item.dishId) && !seen.has(item.dishId) && seen.add(item.dishId))
+    .sort((left, right) => right.score - left.score);
+  return {
+    rankings,
+    multipleItems: Boolean(value.multipleItems),
+    notes: String(value.notes || '').trim().slice(0, 240),
+  };
+}
+
+export async function rerankMealCandidates({ dataBase64, contentType, observation, candidates = [] } = {}) {
+  const config = providerConfig();
+  if (!config.enabled || !candidates.length) return { rankings: [], multipleItems: false, notes: '' };
+  const { mime, image } = validateVisionImage({ dataBase64, contentType });
+  const boundedCandidates = candidates.slice(0, 5);
+  const content = [
+    {
+      type: 'text',
+      text: [
+        '第一张图片是用户待识别照片。后续图片是候选菜品的已审核参考图。',
+        '只在给定候选中按视觉相似度排序；不得创建新候选或根据食堂名称反推结果。',
+        `视觉观察：${JSON.stringify(observation)}`,
+        `候选元数据：${JSON.stringify(boundedCandidates.map((item) => ({ dishId: item.dishId, name: item.name, aliases: item.aliases, semanticLabels: item.semanticLabels })))}`,
+        '只输出 JSON：{"rankings":[{"dishId":"...","score":0到1,"reasons":["..."]}],"multipleItems":false,"notes":"..."}。',
+      ].join('\n'),
+    },
+    { type: 'image_url', image_url: { url: `data:${mime};base64,${image}` } },
+  ];
+  for (const candidate of boundedCandidates) {
+    for (const reference of (candidate.referenceImages || []).slice(0, 2)) {
+      content.push({ type: 'text', text: `候选 ${candidate.dishId}｜${candidate.name}` });
+      content.push({ type: 'image_url', image_url: { url: `data:${reference.contentType};base64,${reference.dataBase64}` } });
+    }
+  }
+  const data = await postJson(`${config.baseUrl}/chat/completions`, {
+    model: config.visionModel || config.chatModel,
+    temperature: 0,
+    max_tokens: 700,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: '你是封闭候选集菜品视觉复核器，只能返回给定 dishId。' },
+      { role: 'user', content },
+    ],
+  }, config);
+  return normalizeVisionRerank(parseJsonObject(data.choices?.[0]?.message?.content), boundedCandidates.map((item) => item.dishId));
 }
 
 async function postJson(url, payload, config = providerConfig()) {
@@ -477,23 +613,48 @@ export async function generateGroundedMealAnswer({ query, profile, citations, pl
   return answer || null;
 }
 
+export function groundingEvidenceClasses(item = {}) {
+  const metadata = item.metadata || {};
+  const sourceType = String(item.sourceType || 'knowledge');
+  const evidenceType = String(item.evidenceType || metadata.evidenceType || '');
+  const classes = [];
+  if (['dish', 'stall', 'campus_policy'].includes(sourceType)) classes.push('tenant_fact');
+  if (['health_knowledge', 'campus_dining_knowledge'].includes(sourceType)) classes.push('verified_knowledge');
+  if (sourceType === 'food_composition_reference' || evidenceType === 'reference_only') classes.push('reference_only');
+  if (evidenceType === 'ai_estimated' || metadata.aiEstimated || metadata.semanticEvidenceTypes?.includes?.('ai_estimated')) {
+    classes.push('ai_estimated');
+  }
+  return [...new Set(classes.length ? classes : ['verified_knowledge'])];
+}
+
 function compactGroundingCitation(item, index) {
   const id = String(item.id || item.sourceId || `citation-${index + 1}`);
+  const metadata = item.metadata || {};
+  const declarations = Array.isArray(metadata.safetyDeclarations) ? metadata.safetyDeclarations : [];
+  const safetyStatus = metadata.safetyStatus
+    || (declarations.some((entry) => entry?.status === 'unknown') ? 'unknown' : null);
   return {
     id,
     sourceType: String(item.sourceType || 'knowledge'),
+    evidenceClasses: groundingEvidenceClasses(item),
     title: String(item.title || item.name || '').slice(0, 120),
     snippet: String(item.snippet || item.content || '').slice(0, 500),
     metadata: {
-      tenantId: item.tenantId || item.metadata?.tenantId || null,
-      evidenceType: item.evidenceType || item.metadata?.evidenceType || null,
-      orderable: item.metadata?.orderable,
-      price: item.metadata?.price,
-      status: item.metadata?.status,
-      safetyStatus: item.metadata?.safetyStatus || null,
-      unknownAllergens: item.metadata?.unknownAllergens || [],
-      confidenceLevel: item.metadata?.confidenceLevel || null,
-      dataVersion: item.metadata?.dataVersion || null,
+      tenantId: item.tenantId || metadata.tenantId || null,
+      evidenceType: item.evidenceType || metadata.evidenceType || null,
+      orderable: metadata.orderable,
+      price: metadata.price,
+      priceDisplay: metadata.priceDisplay || null,
+      status: metadata.status,
+      availabilityStatus: metadata.availabilityStatus || null,
+      supplyConfirmed: metadata.supplyConfirmed,
+      safetyStatus,
+      unknownAllergens: metadata.unknownAllergens || [],
+      nutritionFactStatus: metadata.nutritionFactStatus || metadata.factStatus?.nutrition || null,
+      confidenceLevel: metadata.confidenceLevel || null,
+      dataVersion: metadata.dataVersion || null,
+      basisGrams: metadata.basisGrams || null,
+      campusDishFactPolicy: metadata.campusDishFactPolicy || null,
     },
   };
 }
@@ -525,6 +686,28 @@ export function validateGroundedAgentAnswer(value, citations = [], options = {})
     return { valid: false, reason: 'MISSING_ALLERGEN_WARNING' };
   }
 
+  const evidenceClasses = new Set(cited.flatMap((item) => item.evidenceClasses || groundingEvidenceClasses(item)));
+  const hasUnconfirmedSupply = cited.some((item) => item.metadata?.supplyConfirmed === false || item.metadata?.availabilityStatus === 'catalog_only');
+  if (hasUnconfirmedSupply && /(?:今日|当前|现在)(?:有售|供应中|正在供应|可以买|可购买|可下单|可点)/.test(answer)) {
+    return { valid: false, reason: 'UNSUPPORTED_SUPPLY_CLAIM' };
+  }
+  if (evidenceClasses.has('ai_estimated') && !/(?:AI\s*)?(?:估算|推测|可能|待核验|预标注)/i.test(answer)) {
+    return { valid: false, reason: 'MISSING_ESTIMATION_LABEL' };
+  }
+  const hasReferenceNutritionNumber = evidenceClasses.has('reference_only')
+    && /\d+(?:\.\d+)?\s*(?:kcal|千卡|g|克|mg|毫克)/i.test(answer);
+  const hasReferenceLabel = /(?:参考食材|参考值)/.test(answer);
+  const hasReferenceBoundary = /(?:不代表|不能代表|不得覆盖).{0,10}(?:菜品|配方|营养|事实)/.test(answer);
+  if (hasReferenceNutritionNumber && !(hasReferenceLabel && hasReferenceBoundary)) {
+    return { valid: false, reason: 'MISSING_REFERENCE_BOUNDARY' };
+  }
+  const hasUnknownDishNutrition = cited.some((item) => item.sourceType === 'dish' && item.metadata?.nutritionFactStatus === 'unknown');
+  if (hasUnknownDishNutrition
+    && /(?:\d+(?:\.\d+)?\s*(?:kcal|千卡|g|克|mg|毫克)|高蛋白|低脂|低卡|低热量)/i.test(answer)
+    && !/(?:营养(?:数据|信息)?(?:尚未确认|未确认|未知|待核验)|无法判断|不能判断|估算|参考值|不代表(?:该|校内)?菜品)/.test(answer)) {
+    return { valid: false, reason: 'UNSUPPORTED_NUTRITION_CLAIM' };
+  }
+
   const allowedNumbers = factNumbers([...citations, ...(options.allowedNumberSources || [])]);
   for (const match of answer.matchAll(/(?:[¥￥]\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:元|kcal|千卡|g|克|mg|毫克))/gi)) {
     const number = match[1] || match[2];
@@ -551,6 +734,9 @@ export async function generateGroundedAgentAnswer({ query, intent, deterministic
           '你是校园食堂 Agent 的受约束回答生成器。',
           '只允许根据给定 evidence 组织中文回答，不得补充未提供的菜品、价格、营养、过敏原、库存、供应时段或档口事实。',
           'hardConstraints 是不可放宽的安全约束。通用知识只能解释，不能覆盖真实菜品数据。',
+          'evidenceClasses 区分 tenant_fact、verified_knowledge、reference_only 和 ai_estimated；参考食材与AI估算不得写成校内菜品已核验事实。',
+          'reference_only 的营养数字必须明确为每100克参考值并说明不代表校内菜品；ai_estimated 必须明确写“估算/可能/待核验”。',
+          'supplyConfirmed=false 或 availabilityStatus=catalog_only 时，必须说明今日供应未确认，禁止声称今日有售。',
           'evidence 中 safetyStatus=unknown 时必须明确说明过敏信息尚未确认并建议现场核实，禁止声称安全或确认不含。',
           '只输出 JSON：{"answer":"...","citationIds":["..."]}。',
           'answer 必须是非空中文字符串，不能是布尔值、数组或对象。',
@@ -578,7 +764,100 @@ export async function generateGroundedAgentAnswer({ query, intent, deterministic
   }
   const validated = validateGroundedAgentAnswer(parsed, evidence, { allowedNumberSources: [query, hardConstraints] });
   if (!validated.valid) return { answer: null, citationIds: [], reason: validated.reason };
-  return { answer: validated.answer, citationIds: validated.citationIds, reason: null, model: config.chatModel };
+  const citedEvidence = evidence.filter((item) => validated.citationIds.includes(item.id));
+  return {
+    answer: validated.answer,
+    citationIds: validated.citationIds,
+    evidenceClasses: [...new Set(citedEvidence.flatMap((item) => item.evidenceClasses || []))],
+    reason: null,
+    model: config.chatModel,
+  };
+}
+
+function compactDishAnnotationRequest(dishes, knowledge) {
+  const healthById = new Map();
+  const compactDishes = dishes.map(({ healthKnowledge = [], ...dish }) => {
+    const healthKnowledgeIds = [];
+    for (const document of Array.isArray(healthKnowledge) ? healthKnowledge : []) {
+      const id = String(document?.id || '').trim();
+      if (!id) continue;
+      if (!healthById.has(id)) healthById.set(id, document);
+      healthKnowledgeIds.push(id);
+    }
+    return { ...dish, healthKnowledgeIds };
+  });
+  return {
+    dishes: compactDishes,
+    knowledge: { ...knowledge, healthKnowledge: [...healthById.values()] },
+  };
+}
+
+/** Generate review-only dish annotations. Local validation remains authoritative. */
+export async function generateDishAnnotationCandidates({ dishes = [], knowledge = {}, promptVersion } = {}) {
+  const config = chatProviderConfig();
+  if (!config.enabled) throw Object.assign(new Error('AI Chat provider is not configured'), { code: 'CHAT_PROVIDER_NOT_CONFIGURED' });
+  if (!Array.isArray(dishes) || !dishes.length || dishes.length > 10) {
+    throw Object.assign(new Error('Dish annotation batches must contain 1-10 dishes'), { code: 'INVALID_ANNOTATION_BATCH' });
+  }
+  const modelInput = compactDishAnnotationRequest(dishes, knowledge);
+  const maxTokens = Math.min(32_000, 8_000 + (dishes.length * 4_000));
+  const data = await postJson(`${config.baseUrl}/chat/completions`, {
+    model: config.chatModel,
+    temperature: 0.1,
+    max_tokens: maxTokens,
+    reasoning_effort: 'low',
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: [
+          '你是校园食堂菜品数据预标注器，只输出待人工核验的估算候选。',
+          '只输出 JSON：{"annotations":[...]}，每道输入菜品恰好一条。',
+          '不得输出 verified、confirmed_absent、confirmed_present、cross_contact_possible 或清真认证。',
+          'factStatus 必须为 estimated，safetyStatus 必须为 unknown。',
+          '过敏原只能写入 allergenHints，表示可能涉及，不能声明安全。',
+          '营养必须是宽区间；称重菜使用 per_100g，其他菜使用 per_serving 并写明假设分量。',
+          '引用ID只能来自对应输入提供的概念、健康知识和食物成分参考。',
+          '所有引用值只能逐字复制输入对象的 id 字段；不得把哈希、文件名、URL、菜品ID或自行编造的值写入引用数组。',
+          '每道菜的 healthKnowledgeIds 只能引用 knowledge.healthKnowledge 中同 ID 的共享正文。',
+          '没有参考食材时 nutritionEstimate.referenceIds 留空并降低 confidence。',
+          '不要补充价格、供应、库存、营业时间或真实配方。',
+          '严格遵守 outputSchema；所有 required 字段都必须存在，不适用列表用 []，未知辣度用 null，无法合理估算营养时用 null。',
+          'fieldConfidence 必须完整填写 outputSchema 中列出的12个字段，值为0到1；uncertaintyNotes 至少写一条待核验边界。',
+          'sourceIds 必须包含 linkedConceptIds 及所有 ingredient、seasoning、allergen、nutrition 的 referenceIds。',
+          '不得增加 outputSchema 未声明的字段。',
+          'mealTypes 只能使用 breakfast、lunch、dinner、late_snack，不得输出中文枚举。',
+          `提示词版本：${String(promptVersion || 'unknown')}`,
+        ].join('\n'),
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({ outputSchema: DISH_AI_ANNOTATION_BATCH_JSON_SCHEMA, ...modelInput }),
+      },
+    ],
+  }, { ...config, timeoutMs: Math.max(config.timeoutMs, 60_000) });
+  const choice = data.choices?.[0] || {};
+  const content = choice.message?.content || '';
+  let parsed;
+  try {
+    parsed = parseJsonObject(content);
+  } catch (error) {
+    const completionTokens = Number(data.usage?.completion_tokens ?? data.usage?.output_tokens ?? 0) || 0;
+    throw Object.assign(new Error(
+      `AI annotation JSON is invalid (finish=${choice.finish_reason || 'unknown'}, chars=${String(content).length}, completionTokens=${completionTokens}): ${error.message}`,
+    ), { code: 'INVALID_ANNOTATION_JSON' });
+  }
+  const usage = data.usage || {};
+  return {
+    ...parsed,
+    model: data.model || config.chatModel,
+    finishReason: choice.finish_reason || null,
+    usage: {
+      promptTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0,
+      completionTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0,
+      totalTokens: Number(usage.total_tokens ?? 0) || 0,
+    },
+  };
 }
 
 export async function generateAgentToolCalls({ query, tools = [] } = {}) {

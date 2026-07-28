@@ -29,6 +29,12 @@ const supabaseFoundationUpgrade = readFileSync(join(root, 'server', 'migrations'
 const supabaseFoundationVersion = '013_supabase_foundation';
 const rowLevelSecurityUpgrade = readFileSync(join(root, 'server', 'migrations', '014_row_level_security.sql'), 'utf8');
 const rowLevelSecurityVersion = '014_row_level_security';
+const realCatalogPricingUpgrade = readFileSync(join(root, 'server', 'migrations', '015_real_catalog_pricing.sql'), 'utf8');
+const realCatalogPricingVersion = '015_real_catalog_pricing';
+const dishAiAnnotationsUpgrade = readFileSync(join(root, 'server', 'migrations', '016_dish_ai_annotations.sql'), 'utf8');
+const dishAiAnnotationsVersion = '016_dish_ai_annotations';
+const trustworthyMealVisionUpgrade = readFileSync(join(root, 'server', 'migrations', '017_trustworthy_meal_vision.sql'), 'utf8');
+const trustworthyMealVisionVersion = '017_trustworthy_meal_vision';
 const roleBootstrap = readFileSync(join(root, 'scripts', 'create-postgres-roles.sql'), 'utf8');
 const roleProvisioning = readFileSync(join(root, 'scripts', 'provision-postgres-roles.sql'), 'utf8');
 const ownerReassignment = readFileSync(join(root, 'scripts', 'reassign-postgres-owner.sql'), 'utf8');
@@ -178,6 +184,8 @@ describe('PostgreSQL migration runner', () => {
       assert.match(historyInsert, new RegExp(`'${version}'`));
     }
     assert.doesNotMatch(historyInsert, new RegExp(`'${rowLevelSecurityVersion}'`));
+    assert.doesNotMatch(historyInsert, new RegExp(`'${realCatalogPricingVersion}'`));
+    assert.doesNotMatch(historyInsert, new RegExp(`'${dishAiAnnotationsVersion}'`));
     assert.match(postgresBaseline, /idx_reviews_target ON reviews\(target_type, target_id\)/i);
   });
 
@@ -262,6 +270,66 @@ describe('PostgreSQL migration runner', () => {
     }
   });
 
+  it('defines structured catalog pricing and import provenance for fresh and existing databases', () => {
+    for (const pattern of [
+      /pricing_mode TEXT NOT NULL DEFAULT 'fixed'/i,
+      /price_display TEXT NOT NULL DEFAULT ''/i,
+      /pricing_json TEXT NOT NULL DEFAULT '\{\}'/i,
+      /aliases_json TEXT NOT NULL DEFAULT '\[\]'/i,
+      /semantic_labels_json TEXT NOT NULL DEFAULT '\[\]'/i,
+      /source_ref_json TEXT NOT NULL DEFAULT '\{\}'/i,
+      /CREATE TABLE IF NOT EXISTS catalog_import_rows/i,
+      /idx_catalog_import_rows_batch/i,
+      /idx_catalog_import_rows_source/i,
+    ]) {
+      assert.match(postgresBaseline, pattern);
+      assert.match(realCatalogPricingUpgrade, pattern);
+    }
+    assert.equal((postgresBaseline.match(/rating REAL NOT NULL DEFAULT 0 CHECK\(rating BETWEEN 0 AND 5\)/gi) || []).length, 2);
+    assert.match(realCatalogPricingUpgrade, /ALTER TABLE dishes ALTER COLUMN rating SET DEFAULT 0/i);
+    assert.match(realCatalogPricingUpgrade, /ALTER TABLE stalls ALTER COLUMN rating SET DEFAULT 0/i);
+  });
+
+  it('keeps AI dish annotations isolated, tenant-scoped and reviewable', () => {
+    for (const sql of [postgresBaseline, dishAiAnnotationsUpgrade]) {
+      for (const pattern of [
+        /CREATE TABLE IF NOT EXISTS dish_ai_annotations/i,
+        /dish_id TEXT NOT NULL REFERENCES dishes\(id\) ON DELETE CASCADE/i,
+        /annotation_json TEXT NOT NULL DEFAULT '\{\}'/i,
+        /field_confidence_json TEXT NOT NULL DEFAULT '\{\}'/i,
+        /linked_concept_ids_json TEXT NOT NULL DEFAULT '\[\]'/i,
+        /status IN \('generated','schema_validated','approved','rejected'\)/i,
+        /UNIQUE\(tenant_id, dish_id, batch_id, input_hash\)/i,
+      ]) assert.match(sql, pattern);
+    }
+    assert.match(dishAiAnnotationsUpgrade, /ENABLE ROW LEVEL SECURITY/i);
+    assert.match(dishAiAnnotationsUpgrade, /app_current_role\(\) = 'worker' OR app_can_write_catalog\(\)/i);
+  });
+
+  it('defines tenant-scoped meal vision data with approved read boundaries', () => {
+    for (const pattern of [
+      /CREATE TABLE IF NOT EXISTS dish_reference_images/i,
+      /purpose IN \('reference','evaluation'\)/i,
+      /CREATE TABLE IF NOT EXISTS dish_image_embeddings/i,
+      /embedding vector\(768\)/i,
+      /USING hnsw \(embedding vector_cosine_ops\)/i,
+      /CREATE TABLE IF NOT EXISTS dish_recipe_versions/i,
+      /CREATE TABLE IF NOT EXISTS dish_recipe_ingredients/i,
+      /CREATE TABLE IF NOT EXISTS dish_nutrition_versions/i,
+      /status IN \('unknown','estimated','verified'\)/i,
+      /CREATE TABLE IF NOT EXISTS meal_vision_analyses/i,
+      /CREATE TABLE IF NOT EXISTS meal_vision_feedback/i,
+      /image_hash TEXT NOT NULL/i,
+    ]) assert.match(trustworthyMealVisionUpgrade, pattern);
+
+    assert.match(trustworthyMealVisionUpgrade, /quality_status = 'approved' AND purpose = 'reference'/i);
+    assert.match(trustworthyMealVisionUpgrade, /vision_reference_upload_read ON uploads FOR SELECT/i);
+    assert.match(trustworthyMealVisionUpgrade, /status = 'approved'/i);
+    assert.match(trustworthyMealVisionUpgrade, /status IN \('estimated','verified'\)/i);
+    assert.match(trustworthyMealVisionUpgrade, /user_id = app_current_user_id\(\) OR app_is_tenant_staff\(\)/i);
+    assert.doesNotMatch(trustworthyMealVisionUpgrade, /raw_image|image_base64|image_data/i);
+  });
+
   it('defines normalized identities, rotating sessions, private uploads and Outbox', () => {
     const sharedPatterns = [
       /CREATE TABLE IF NOT EXISTS user_identities/i,
@@ -319,7 +387,7 @@ describe('PostgreSQL migration runner', () => {
 
     const applied = await runMigrations(db);
 
-    assert.deepEqual(applied, ['004_database_workbench', '005_campus_posts', runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion]);
+    assert.deepEqual(applied, ['004_database_workbench', '005_campus_posts', runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion]);
     assert.ok(db.versions.has('001_enterprise_foundation'));
     assert.ok(db.versions.has('008_retrieval_pgvector'));
     assert.ok(!db.executed.includes('002_generic_review_targets'));
@@ -336,8 +404,8 @@ describe('PostgreSQL migration runner', () => {
 
     const applied = await runMigrations(db);
 
-    assert.deepEqual(applied, [runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion]);
-    assert.deepEqual(db.executed, [runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion]);
+    assert.deepEqual(applied, [runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion]);
+    assert.deepEqual(db.executed, [runtimeColumnsVersion, regionAllergenVersion, studentAuthVersion, ragSafetyVersion, supabaseFoundationVersion, rowLevelSecurityVersion, realCatalogPricingVersion, dishAiAnnotationsVersion, trustworthyMealVisionVersion]);
     for (const version of migrationVersions.filter((item) => /^00[2-7]_/.test(item))) {
       assert.ok(db.versions.has(version), `${version} should be backfilled`);
     }

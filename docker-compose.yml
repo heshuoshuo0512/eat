@@ -118,6 +118,9 @@ services:
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-smart-canteen}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-smart-canteen-secret}
+      VISION_EMBEDDING_BASE_URL: ${VISION_EMBEDDING_BASE_URL:-}
+      VISION_EMBEDDING_MODEL: ${VISION_EMBEDDING_MODEL:-siglip-base-patch16-224}
+      VISION_EMBEDDING_DIMENSION: 768
     volumes:
       - smart_canteen_data:/app/data
       - smart_canteen_uploads:/app/uploads
@@ -133,6 +136,24 @@ services:
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  vision-embedding:
+    profiles: ["vision"]
+    build: ./services/vision-embedding
+    image: smart-canteen-vision-embedding:local
+    environment:
+      VISION_EMBEDDING_MODEL: ${VISION_EMBEDDING_HF_MODEL:-google/siglip-base-patch16-224}
+      HF_HOME: /models
+    volumes:
+      - smart_canteen_vision_models:/models
+    ports:
+      - "127.0.0.1:${VISION_EMBEDDING_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
+      interval: 15s
       timeout: 5s
       retries: 20
     restart: unless-stopped
@@ -226,3 +247,4 @@ volumes:
   smart_canteen_pg:
   smart_canteen_redis:
   smart_canteen_minio:
+  smart_canteen_vision_models:

@@ -1,11 +1,12 @@
 import { createDatabase, openPostgresDatabase } from './database.js';
 import { createCache, rankingCacheKey } from './cache.js';
 import { createHttpServer } from './app.js';
-import { loadHealthKnowledgeBase } from './healthKnowledgeBase.js';
+import { CAMPUS_POLICY_SOURCE_TYPE, GLOBAL_KNOWLEDGE_TENANT_ID } from './knowledgeGovernance.js';
 import {
   deleteRetrievalSource,
   ensureRetrievalIndex,
   listRetrievalTenantIds,
+  reindexRetrieval,
   syncDishRetrievalDocument
 } from './retrievalIndex.js';
 import { createOutboxWorker } from './outbox.js';
@@ -30,12 +31,23 @@ if (healthKnowledgeAutoload) {
   const tenantIds = typeof workerDb.runWithContext === 'function'
     ? await workerDb.runWithContext({ tenantId: '*', userId: '', role: 'worker', requestId: 'health-kb-tenants' }, listTenants)
     : await listTenants();
+  const loadGlobal = () => reindexRetrieval(workerDb, {
+    tenantId: GLOBAL_KNOWLEDGE_TENANT_ID,
+    sourceTypes: ['health_knowledge'],
+  });
+  const globalImport = typeof workerDb.runWithContext === 'function'
+    ? await workerDb.runWithContext({ tenantId: GLOBAL_KNOWLEDGE_TENANT_ID, userId: '', role: 'worker', requestId: 'health-kb-global' }, loadGlobal)
+    : await loadGlobal();
+  console.log(`Global health knowledge loaded: ${globalImport.documentCount} chunks`);
   for (const tenantId of tenantIds) {
-    const load = () => loadHealthKnowledgeBase(workerDb, { tenantId });
+    const load = () => reindexRetrieval(workerDb, {
+      tenantId,
+      sourceTypes: [CAMPUS_POLICY_SOURCE_TYPE],
+    });
     const imported = typeof workerDb.runWithContext === 'function'
-      ? await workerDb.runWithContext({ tenantId, userId: '', role: 'worker', requestId: `health-kb-${tenantId}` }, load)
+      ? await workerDb.runWithContext({ tenantId, userId: '', role: 'worker', requestId: `campus-policy-${tenantId}` }, load)
       : await load();
-    console.log(`Health knowledge base loaded for ${tenantId}: ${imported.count} chunks`);
+    console.log(`Campus policy loaded for ${tenantId}: ${imported.documentCount} chunks`);
   }
 }
 

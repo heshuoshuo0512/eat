@@ -1,7 +1,7 @@
 <template>
-  <sc-page-shell title="隐私保护指引" subtitle="Privacy Notice" :back="true" status="必读">
+  <sc-page-shell title="隐私保护指引" subtitle="个人信息收集、使用与保护说明" :back="true" status="必读" content-mode="reading" appearance="plain">
     <view class="panel-card legal-card">
-      <sc-section eyebrow="PRIVACY" title="智慧食堂隐私保护指引" desc="说明学生端小程序如何收集、使用和保护个人信息。" />
+      <sc-section title="智慧食堂隐私保护指引" desc="说明学生端小程序如何收集、使用和保护个人信息。" />
       <view class="legal-section">
         <text class="legal-title">1. 收集的信息</text>
         <text class="legal-text">为提供微信登录、菜单推荐、拍照识餐和智能顾问服务，小程序会处理微信登录标识、账号信息、健康偏好、预算、忌口、评价内容、用户主动上传的餐食图片和接口访问记录。</text>
@@ -27,9 +27,9 @@
 </template>
 
 <style scoped>
-.legal-card { margin-bottom: 80rpx; }
-.legal-section { padding: 22rpx 0; border-bottom: 1rpx solid var(--line); }
+.legal-card { max-width:720px; margin:0 auto 40px; padding:0; border:0; background:transparent; }
+.legal-section { padding:16px 0; border-bottom:1px solid var(--line); }
 .legal-section:last-child { border-bottom: 0; }
-.legal-title { display:block; color:var(--ink); font-size:30rpx; font-weight:600; }
-.legal-text { display:block; margin-top:12rpx; color:var(--ink-2); font-size:26rpx; line-height:1.7; }
+.legal-title { display:block; color:var(--ink); font-size:16px; font-weight:600; }
+.legal-text { display:block; margin-top:8px; color:var(--ink-2); font-size:14px; line-height:1.75; }
 </style>

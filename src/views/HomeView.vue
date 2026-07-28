@@ -16,7 +16,7 @@
         <article><strong>{{ store.canteens.length }}</strong><span>食堂</span></article>
         <article><strong>{{ store.stalls.length }}</strong><span>档口</span></article>
         <article><strong>{{ store.dishes.length }}</strong><span>菜品</span></article>
-        <article><strong>{{ topDish?.computedRating?.toFixed(1) || '—' }}</strong><span>最高评分</span></article>
+        <article><strong>{{ topDish ? dishRatingText(topDish) : '暂无评分' }}</strong><span>最高评分</span></article>
       </div>
     </section>
 
@@ -44,7 +44,7 @@
           <strong>{{ revealDish.name }}</strong>
           <small>{{ dishStallLabel(revealDish) }}</small>
           <p>{{ formatWhy(revealDish.why) || '结合你的健康档案与当前供应排序。' }}</p>
-          <div><span class="pill">{{ revealDish.nutrition?.calories || 0 }} kcal</span><span class="pill">¥{{ revealDish.price }}</span></div>
+          <div><span class="pill">{{ dishNutritionPresentation(revealDish).label }}</span><span class="pill">{{ dishPriceText(revealDish) }}</span><span class="pill">{{ dishSupplyPresentation(revealDish).label }}</span></div>
         </div>
         <div v-else class="reveal-placeholder" aria-hidden="true"><span></span><span></span><span></span></div>
         <RouterLink v-if="revealPhase === 'revealed'" class="primary button-link" :to="{ path: '/dishes', query: { dish: revealDish.id } }">查看菜品</RouterLink>
@@ -130,8 +130,8 @@
             <tr v-for="dish in store.adminAnalytics.recentDishes" :key="dish.id">
               <td>{{ dish.name }}</td>
               <td>{{ stallName(dish.stallId) }}</td>
-              <td>¥{{ dish.price }}</td>
-              <td>{{ dish.nutrition?.calories || 0 }} kcal</td>
+              <td>{{ dishPriceText(dish) }}</td>
+              <td>{{ dishNutritionPresentation(dish).label }}</td>
             </tr>
           </tbody>
         </table>
@@ -221,6 +221,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import StudentFeatureOrbit from '../components/StudentFeatureOrbit.vue';
+import { dishNutritionPresentation, dishPriceText, dishRatingText, dishSupplyPresentation } from '../domain/dishPresentation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();

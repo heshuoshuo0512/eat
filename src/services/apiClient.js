@@ -300,6 +300,33 @@ export const apiClient = {
   async analyzeMealImage(payload, options = {}) {
     return request('/api/vision/meal-analyze', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000, ...options });
   },
+  async confirmMealVision(analysisId, payload, options = {}) {
+    return request(`/api/vision/analyses/${encodeURIComponent(analysisId)}/confirm`, { method: 'POST', body: JSON.stringify(payload), ...options });
+  },
+  async listDishReferenceImages(dishId) {
+    return request(`/api/admin/dishes/${encodeURIComponent(dishId)}/reference-images`);
+  },
+  async addDishReferenceImage(dishId, payload) {
+    return request(`/api/admin/dishes/${encodeURIComponent(dishId)}/reference-images`, { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async updateDishReferenceImage(referenceImageId, payload) {
+    return request(`/api/admin/vision/reference-images/${encodeURIComponent(referenceImageId)}`, { method: 'PUT', body: JSON.stringify(payload) });
+  },
+  async deleteDishReferenceImage(referenceImageId) {
+    return request(`/api/admin/vision/reference-images/${encodeURIComponent(referenceImageId)}`, { method: 'DELETE' });
+  },
+  async reindexDishReferenceImages(payload = {}) {
+    return request('/api/admin/vision/reindex', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 120_000 });
+  },
+  async getMealVisionMetrics(days = 30) {
+    return request(`/api/admin/vision/metrics?days=${encodeURIComponent(days)}`);
+  },
+  async listDishRecipes(dishId) {
+    return request(`/api/admin/dishes/${encodeURIComponent(dishId)}/recipes`);
+  },
+  async createDishRecipe(dishId, payload) {
+    return request(`/api/admin/dishes/${encodeURIComponent(dishId)}/recipes`, { method: 'POST', body: JSON.stringify(payload) });
+  },
   async listUsers() {
     return request('/api/admin/users');
   },

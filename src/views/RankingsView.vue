@@ -21,7 +21,7 @@
         <div v-for="(dish, i) in filteredDishes.slice(0, 3)" :key="dish.id" class="preview-item">
           <span class="preview-rank">{{ i + 1 }}</span>
           <span class="preview-name">{{ dish.name }}</span>
-          <span class="preview-score">{{ dish.rankScore }}</span>
+          <span class="preview-score">{{ dishRatingText(dish) }}</span>
         </div>
         <p v-if="filteredDishes.length === 0" class="preview-empty">暂无数据</p>
       </div>
@@ -51,15 +51,15 @@
             <div class="rank-body">
               <strong class="rank-name">{{ dish.name }}</strong>
               <div class="rank-meta">
-                <span class="meta-price">¥{{ dish.price }}</span>
+                <span class="meta-price">{{ dishPriceText(dish) }}</span>
                 <span class="meta-dot">·</span>
                 <span>{{ dish.taste }}</span>
                 <span class="meta-dot">·</span>
-                <span>{{ dish.nutrition?.calories || '—' }} kcal</span>
+                <span>{{ dishNutritionPresentation(dish).label }}</span>
               </div>
               <small class="rank-path">{{ dishLocationPath(dish) }}</small>
             </div>
-            <span class="rank-score">{{ dish.rankScore }}</span>
+            <span class="rank-score">{{ dishRatingText(dish) }}</span>
           </div>
         </div>
         <div v-else class="empty-state">
@@ -173,6 +173,7 @@
 
 <script setup>
 import { ref, computed } from 'vue';
+import { dishNutritionPresentation, dishPriceText, dishRatingText } from '../domain/dishPresentation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();

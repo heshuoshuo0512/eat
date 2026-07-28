@@ -2,7 +2,7 @@
   <view class="smart-composer">
     <view class="composer-head">
       <view class="composer-copy"><text class="composer-title">{{ title }}</text><text class="composer-subtitle">{{ subtitle }}</text></view>
-      <button class="memory-toggle" @tap="$emit('toggle-memory')"><view>{{ memoryOpen ? '收起记忆' : '饮食记忆' }}</view></button>
+      <button class="memory-toggle" @tap="$emit('toggle-memory')"><sc-icon name="history" :size="16" /><text>{{ memoryOpen ? '收起记忆' : '饮食记忆' }}</text></button>
     </view>
     <view class="input-panel">
       <textarea class="composer-input" :value="modelValue" :maxlength="300" :placeholder="placeholder" @input="$emit('update:modelValue', $event.detail.value)" />
@@ -30,28 +30,27 @@ defineEmits(['update:modelValue', 'update:memoryDraft', 'submit', 'prompt', 'tog
 </script>
 
 <style scoped>
-.smart-composer { display:flex; flex-direction:column; gap:18rpx; margin-bottom:24rpx; }
-.composer-head { display:flex; align-items:flex-end; justify-content:space-between; gap:18rpx; }
+.smart-composer { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; }
+.composer-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .composer-copy { min-width:0; }
 .composer-title,.composer-subtitle { display:block; }
-.composer-title { color:var(--ink); font-size:30rpx; font-weight:600; }
-.composer-subtitle { margin-top:4rpx; color:var(--muted); font-size:24rpx; line-height:1.5; }
-.memory-toggle { display:flex; align-items:center; justify-content:center; flex:0 0 auto; min-height:88rpx; padding:0 8rpx; background:transparent; }
-.memory-toggle>view { display:flex; align-items:center; justify-content:center; min-height:56rpx; padding:0 14rpx; border-radius:10rpx; color:var(--brand); background:var(--brand-soft); font-size:24rpx; font-weight:500; white-space:nowrap; }
-.memory-toggle:active>view { transform:scale(.97); }
-.input-panel { overflow:hidden; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); box-shadow:var(--shadow-soft); }
-.composer-input { width:100%; min-height:148rpx; padding:22rpx; color:var(--ink); background:transparent; font-size:28rpx; line-height:1.55; box-sizing:border-box; }
-.composer-submit { width:calc(100% - 24rpx); min-height:88rpx; margin:0 12rpx 12rpx; border-radius:12rpx; color:#fff; background:var(--brand); font-size:28rpx; font-weight:500; }
+.composer-title { color:var(--ink); font-size:16px; font-weight:600; }
+.composer-subtitle { margin-top:3px; color:var(--muted); font-size:12px; line-height:1.5; }
+.memory-toggle { display:flex; min-height:44px; flex:0 0 auto; align-items:center; justify-content:center; gap:6px; padding:0 10px; border-radius:var(--radius); color:var(--ink-2); background:var(--surface-soft); font-size:12px; font-weight:500; white-space:nowrap; }
+.memory-toggle:active { transform:translateY(1px); opacity:.8; }
+.input-panel { overflow:hidden; border:1px solid var(--module-line); border-radius:var(--radius-large); background:var(--surface); }
+.composer-input { width:100%; min-height:92px; padding:14px; color:var(--ink); background:transparent; font-size:14px; line-height:1.55; box-sizing:border-box; }
+.composer-submit { width:calc(100% - 16px); min-height:44px; margin:0 8px 8px; border-radius:var(--radius); color:#fff; background:var(--module-accent); font-size:14px; font-weight:600; }
+.composer-submit:active { transform:translateY(1px); background:var(--module-dark); }
 .prompt-track { width:100%; white-space:nowrap; }
-.prompt-row { display:flex; gap:12rpx; width:max-content; padding-right:24rpx; }
-.prompt-chip { display:flex; width:232rpx; min-height:96rpx; flex-direction:column; justify-content:center; padding:14rpx 16rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:left; }
-.prompt-chip text:first-child { color:var(--ink); font-size:24rpx; font-weight:600; }
-.prompt-chip text:last-child { margin-top:4rpx; color:var(--muted); font-size:22rpx; }
-.prompt-chip:active { transform:scale(.98); background:var(--brand-soft); }
-.memory-panel { padding:20rpx; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); animation:panel-in 200ms ease both; }
-.memory-label { display:block; margin-bottom:10rpx; color:var(--ink); font-size:24rpx; font-weight:600; }
-.memory-input { width:100%; min-height:128rpx; padding:18rpx; border:1rpx solid var(--line); border-radius:12rpx; color:var(--ink); background:var(--surface-soft); font-size:26rpx; line-height:1.5; box-sizing:border-box; }
-.memory-actions { display:grid; grid-template-columns:1fr 1fr; gap:12rpx; margin-top:14rpx; }
-.memory-actions .secondary-btn,.memory-actions .ghost-btn { min-height:64rpx; border-radius:10rpx; font-size:24rpx; }
-@keyframes panel-in { from { opacity:0; transform:translateY(-6rpx); } to { opacity:1; transform:none; } }
+.prompt-row { display:flex; gap:8px; width:max-content; padding-right:16px; }
+.prompt-chip { display:flex; width:150px; min-height:60px; flex-direction:column; justify-content:center; padding:10px 12px; border:1px solid var(--module-line); border-radius:var(--radius); background:var(--module-soft); text-align:left; }
+.prompt-chip text:first-child { color:var(--ink); font-size:14px; font-weight:600; }
+.prompt-chip text:last-child { margin-top:3px; color:var(--muted); font-size:12px; }
+.prompt-chip:active { transform:translateY(1px); background:#ffe4e6; }
+.memory-panel { padding:14px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); animation:panel-in 200ms ease both; }
+.memory-label { display:block; margin-bottom:8px; color:var(--ink); font-size:14px; font-weight:600; }
+.memory-input { width:100%; min-height:84px; padding:12px; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface-soft); font-size:14px; line-height:1.5; box-sizing:border-box; }
+.memory-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+@keyframes panel-in { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
 </style>

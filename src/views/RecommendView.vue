@@ -61,7 +61,7 @@
             <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" />
             <span v-else class="emoji large">{{ dish.image || '🍽️' }}</span>
           </RouterLink>
-          <div><strong>{{ dish.name }}</strong><small>评分 {{ dish.displayRating.toFixed(1) }} · ¥{{ dish.price }} · {{ dish.nutrition?.calories || 0 }} kcal</small><RagTrustState :item="dish" compact /></div>
+          <div><strong>{{ dish.name }}</strong><small>{{ dishRatingText(dish) }} · {{ dishPriceText(dish) }} · {{ dishNutritionPresentation(dish).label }} · {{ dishSupplyPresentation(dish).label }}</small><RagTrustState :item="dish" compact /></div>
           <RouterLink class="primary button-link compact order-link" :to="{ path: '/dishes', query: { dish: dish.id } }">查看详情</RouterLink>
         </article>
       </div>
@@ -99,6 +99,7 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import RagTrustState from '../components/RagTrustState.vue';
 import SmartMealComposer from '../components/SmartMealComposer.vue';
+import { dishNutritionPresentation, dishPriceText, dishRatingText, dishSupplyPresentation } from '../domain/dishPresentation.js';
 import { buildProfilePrompts, compactCitationSnippet, createRatingMap, sortDishesByRating, visibleCitations } from '../domain/studentDiscovery.js';
 import { validateQuestion } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';

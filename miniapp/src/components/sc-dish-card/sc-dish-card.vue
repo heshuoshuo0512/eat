@@ -1,55 +1,61 @@
 <template>
-  <button class="dish-card" :class="{ unavailable, compact }" :disabled="disabled" @tap="$emit('tap')">
-    <view class="dish-visual">
-      <image class="dish-cover" :src="coverSrc" mode="aspectFill" @error="imageFailed = true" />
-      <text v-if="statusLabel" class="status-badge" :class="statusClass">{{ statusLabel }}</text>
-    </view>
+  <button class="dish-card" :class="[`variant-${normalizedVariant}`, { unavailable, compact }]" :disabled="disabled" @tap="$emit('tap')">
+    <sc-dish-media v-if="showMedia" class="dish-card-media" :dish="dish" ratio="wide" />
     <view class="dish-body">
-      <view class="dish-title-row"><text class="dish-name">{{ dish.name }}</text><text class="dish-price">¥{{ dish.price }}</text></view>
+      <view class="dish-title-row"><text class="dish-name">{{ dish.name }}</text><text class="dish-price">{{ priceText }}</text></view>
       <text v-if="location" class="dish-location">{{ location }}</text>
-      <text class="dish-meta">{{ dish.taste || '口味待补' }} · {{ dish.cuisine || '校园风味' }}</text>
-      <view class="dish-facts"><text class="rating">★ {{ rating }}</text><text>{{ calories }} kcal</text><text v-if="protein">蛋白 {{ protein }}g</text></view>
-      <view v-if="dish.tags?.length" class="dish-tags"><text v-for="tag in dish.tags.slice(0, 2)" :key="tag">{{ tag }}</text></view>
-      <sc-rag-trust-state :item="dish" compact />
+      <view class="dish-meta-row">
+        <text :class="{ rating: hasRating }">{{ ratingText }}</text>
+        <text class="meta-divider">·</text>
+        <text>{{ nutrition.label }}</text>
+        <text v-if="statusLabel" class="status-badge" :class="statusClass">{{ statusLabel }}</text>
+      </view>
+      <sc-rag-trust-state v-if="hasTrustWarning" :item="dish" compact />
     </view>
-    <text class="chevron">›</text>
+    <sc-icon name="arrow-right" :size="16" tone="muted" />
   </button>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
-const props = defineProps({ dish: { type: Object, required: true }, location: { type: String, default: '' }, badge: { type: String, default: '' }, supplyStatus: { type: String, default: '' }, unavailable: Boolean, disabled: Boolean, compact: Boolean });
+import { computed } from 'vue';
+import { dishNutritionPresentation, dishPriceText, dishRatingText } from '../../domain/dishPresentation.js';
+import { ragPresentation } from '../../domain/ragPresentation.js';
+
+const props = defineProps({ dish: { type: Object, required: true }, location: { type: String, default: '' }, badge: { type: String, default: '' }, supplyStatus: { type: String, default: '' }, unavailable: Boolean, disabled: Boolean, compact: Boolean, variant: { type: String, default: 'compact' }, media: { type: String, default: 'none' } });
 defineEmits(['tap']);
-const imageFailed = ref(false);
-watch(() => props.dish.id, () => { imageFailed.value = false; });
-const coverSrc = computed(() => !imageFailed.value && props.dish.imageUrl ? props.dish.imageUrl : '/static/food/bowl.svg');
-const calories = computed(() => Number(props.dish.nutrition?.calories || 0));
-const protein = computed(() => Number(props.dish.nutrition?.protein || 0));
-const rating = computed(() => Number(props.dish.displayRating ?? props.dish.computedRating ?? props.dish.rating ?? 0).toFixed(1));
+const priceText = computed(() => dishPriceText(props.dish));
+const ratingText = computed(() => dishRatingText(props.dish));
+const hasRating = computed(() => ratingText.value !== '暂无评分');
+const normalizedVariant = computed(() => props.variant === 'featured' ? 'featured' : 'compact');
+const showMedia = computed(() => normalizedVariant.value === 'featured' && props.media === 'auto');
+const nutrition = computed(() => dishNutritionPresentation(props.dish));
 const statusLabel = computed(() => props.supplyStatus || props.badge || '');
-const statusClass = computed(() => props.unavailable || /售罄|不可|非今日/.test(statusLabel.value) ? 'sold' : /紧张|限量/.test(statusLabel.value) ? 'limited' : 'available');
+const statusClass = computed(() => props.unavailable || /售罄|不可|非今日|未确认/.test(statusLabel.value) ? 'sold' : /紧张|限量/.test(statusLabel.value) ? 'limited' : 'available');
+const hasTrustWarning = computed(() => {
+  const model = ragPresentation(props.dish || {});
+  return [model.confidence?.tone, model.safety?.tone].some((tone) => ['caution', 'warning', 'danger'].includes(tone));
+});
 </script>
 
 <style scoped>
-.dish-card { position:relative; display:flex; align-items:stretch; gap:18rpx; width:100%; min-height:184rpx; padding:16rpx 46rpx 16rpx 16rpx; overflow:hidden; border:1rpx solid var(--line); border-radius:var(--radius); background:var(--surface); text-align:left; box-sizing:border-box; transition:transform 180ms ease,background-color 180ms ease; }
-.dish-card:active { transform:scale(.985); background:#fafcfa; }
-.dish-card.unavailable { opacity:.62; }
-.dish-card.compact { min-height:156rpx; }
-.dish-visual { position:relative; overflow:hidden; width:152rpx; min-height:152rpx; flex:0 0 152rpx; border-radius:12rpx; background:var(--surface-soft); }
-.compact .dish-visual { width:124rpx; min-height:124rpx; flex-basis:124rpx; }
-.dish-cover { width:100%; height:100%; }
-.status-badge { position:absolute; top:8rpx; left:8rpx; max-width:126rpx; padding:5rpx 9rpx; overflow:hidden; border-radius:8rpx; color:#fff; font-size:22rpx; font-weight:500; white-space:nowrap; text-overflow:ellipsis; }
-.status-badge.available { background:rgba(35,122,87,.92); }
-.status-badge.limited { background:rgba(213,139,34,.94); }
-.status-badge.sold { background:rgba(217,99,76,.94); }
+.dish-card { display:flex; width:100%; min-height:88px; align-items:center; gap:12px; padding:14px 4px; border-bottom:1px solid var(--line); background:transparent; text-align:left; transition:background-color 160ms ease,transform 160ms ease; }
+.dish-card:active { transform:translateY(1px); background:var(--surface-soft); }
+.dish-card.unavailable { opacity:.58; }
+.dish-card.compact { min-height:88px; }
+.dish-card:last-child { border-bottom:0; }
+.dish-card-media { width:112px; flex:0 0 112px; }
 .dish-body { display:flex; flex:1; min-width:0; flex-direction:column; justify-content:center; }
-.dish-title-row { display:flex; align-items:flex-start; gap:10rpx; }
-.dish-name { flex:1; min-width:0; overflow:hidden; color:var(--ink); font-size:28rpx; font-weight:600; white-space:nowrap; text-overflow:ellipsis; }
-.dish-price { flex:0 0 auto; color:var(--brand); font-size:28rpx; font-weight:600; }
-.dish-location,.dish-meta { display:block; overflow:hidden; margin-top:6rpx; color:var(--muted); font-size:22rpx; white-space:nowrap; text-overflow:ellipsis; }
-.dish-facts,.dish-tags { display:flex; flex-wrap:wrap; gap:8rpx; margin-top:10rpx; }
-.dish-facts text,.dish-tags text { min-height:36rpx; padding:0 8rpx; border-radius:8rpx; color:var(--ink-2); background:var(--surface-soft); font-size:22rpx; line-height:36rpx; }
-.dish-facts .rating { color:#9a6316; background:var(--rating-soft); }
-.dish-tags text { color:var(--brand); background:var(--brand-soft); }
-.chevron { position:absolute; top:50%; right:16rpx; color:#9aa59f; font-size:36rpx; transform:translateY(-50%); }
+.dish-title-row { display:flex; align-items:flex-start; gap:12px; }
+.dish-name { flex:1; min-width:0; overflow:hidden; color:var(--ink); font-size:16px; font-weight:600; white-space:nowrap; text-overflow:ellipsis; }
+.dish-price { flex:0 0 auto; color:var(--ink); font-size:16px; font-weight:600; font-variant-numeric:tabular-nums; }
+.dish-location { display:block; overflow:hidden; margin-top:4px; color:var(--muted); font-size:12px; white-space:nowrap; text-overflow:ellipsis; }
+.dish-meta-row { display:flex; min-width:0; flex-wrap:wrap; align-items:center; gap:6px; margin-top:9px; color:var(--muted); font-size:12px; line-height:22px; }
+.dish-meta-row .rating { color:var(--ink-2); font-weight:500; }
+.meta-divider { color:#a1a1aa; }
+.status-badge { margin-left:auto; min-height:22px; padding:0 7px; border-radius:999px; color:var(--ink-2); background:var(--surface-soft); font-size:12px; line-height:22px; }
+.status-badge.available { color:var(--success); background:var(--success-soft); }
+.status-badge.limited { color:var(--warning); border-color:var(--warning-line); background:var(--warning-soft); }
+.status-badge.sold { color:var(--danger); border-color:var(--danger-line); background:var(--danger-soft); }
+.variant-featured { min-height:132px; padding:12px; border:1px solid var(--module-line); border-radius:var(--radius-large); background:var(--surface); }
+@media (max-width:359px) { .dish-card-media { width:92px; flex-basis:92px; } }
 </style>
