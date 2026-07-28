@@ -58,6 +58,8 @@ describe('grounded answer 3x30 evaluation plan', () => {
     assert.match(script, /argument === '--resume'/);
     assert.match(script, /argument === '--retry-blocked-chat'/);
     assert.match(script, /generation\?\.status !== 'provider_failed'/);
+    assert.match(script, /completed_with_safety_fallbacks/);
+    assert.match(script, /chatProviderFailures/);
     assert.match(script, /checkpointEvery/);
     assert.match(script, /CHAT_EVALUATION_NOT_REQUESTED/);
     assert.doesNotMatch(script, /sk-[A-Za-z0-9_-]{20,}/);

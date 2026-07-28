@@ -332,6 +332,9 @@ try {
 
   const attempted = rows.filter((item) => ['completed', 'fallback', 'provider_failed'].includes(item.generation.status));
   const completed = rows.filter((item) => item.generation.status === 'completed');
+  const fallbacks = rows.filter((item) => item.generation.status === 'fallback');
+  const providerFailures = rows.filter((item) => item.generation.status === 'provider_failed'
+    || (item.generation.status === 'blocked' && item.citations.length));
   const summary = {
     queryCount: rows.length,
     rounds: Object.fromEntries([...new Set(rows.map((item) => item.round))].map((round) => {
@@ -344,13 +347,17 @@ try {
     groundedValidationRate: mean(rows.map((item) => item.checks.groundedOutput ? 1 : 0)),
     chatAttempted: attempted.length,
     chatCompleted: completed.length,
+    chatFallbacks: fallbacks.length,
+    chatProviderFailures: providerFailures.length,
     chatAcceptedRate: mean(attempted.map((item) => item.generation.status === 'completed' ? 1 : 0)),
     retrievalLatencyP50Ms: percentile(rows.map((item) => item.retrievalLatencyMs), 0.5),
     retrievalLatencyP95Ms: percentile(rows.map((item) => item.retrievalLatencyMs), 0.95),
     chatLatencyP95Ms: percentile(completed.map((item) => item.generation.latencyMs), 0.95),
   };
   const status = options.runChat
-    ? (provider.chat.enabled && completed.length === rows.filter((item) => item.citations.length).length ? 'completed' : 'blocked_chat_provider')
+    ? (!provider.chat.enabled || providerFailures.length
+      ? 'blocked_chat_provider'
+      : (fallbacks.length ? 'completed_with_safety_fallbacks' : 'completed'))
     : 'retrieval_and_fallback_completed_chat_not_run';
   const report = {
     generatedAt: new Date().toISOString(),
@@ -363,7 +370,7 @@ try {
       configured: provider.chat.enabled,
       model: provider.chat.model,
       source: provider.chat.source,
-      blocker: status === 'completed' ? null : chatBlocker,
+      blocker: status === 'blocked_chat_provider' ? chatBlocker : null,
     },
     summary,
     rows,
