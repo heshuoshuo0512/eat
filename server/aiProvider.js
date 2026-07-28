@@ -670,6 +670,40 @@ function evidenceGroup(item = {}) {
   return 'reviewed_knowledge';
 }
 
+function selectGroundingCitations(citations = [], query = '', intent = '', limit = 6) {
+  const normalizedQuery = normalizedClaimText(query);
+  const knowledgeIntent = intent === 'knowledge_qa';
+  const sourceWeights = knowledgeIntent
+    ? { campus_policy: 80, health_knowledge: 70, food_composition_reference: 60, campus_dining_knowledge: 45, dish: 40, stall: 25 }
+    : { dish: 80, stall: 65, campus_policy: 55, health_knowledge: 50, food_composition_reference: 45, campus_dining_knowledge: 35 };
+  const ranked = citations.slice(0, 12).map((item, index) => {
+    const title = normalizedClaimText(item.title || item.name);
+    const exactTitleMatch = title.length >= 2 && normalizedQuery.includes(title);
+    return {
+      item,
+      index,
+      group: evidenceGroup(item),
+      exactTitleMatch,
+      score: (exactTitleMatch ? 200 : 0) + (sourceWeights[item.sourceType] || 20) - index,
+    };
+  }).sort((left, right) => right.score - left.score || left.index - right.index);
+  const selected = [];
+  const selectedIds = new Set();
+  const add = (entry) => {
+    if (!entry || selected.length >= limit) return;
+    const id = String(entry.item.id || entry.item.sourceId || entry.index);
+    if (selectedIds.has(id)) return;
+    selectedIds.add(id);
+    selected.push(entry);
+  };
+  ranked.filter((entry) => entry.exactTitleMatch).slice(0, 2).forEach(add);
+  for (const group of [...new Set(ranked.map((entry) => entry.group))]) {
+    add(ranked.find((entry) => entry.group === group));
+  }
+  ranked.forEach(add);
+  return selected.sort((left, right) => left.index - right.index).map((entry) => entry.item);
+}
+
 function hasUnsupportedSafetyClaim(answer) {
   const withoutNegatedSafety = String(answer || '').replace(
     /(?:不能|无法|不可|不应|不建议|不要|未能|不可以)\s*(?:确认\s*)?(?:安全食用|放心吃|放心食用|不含|绝对不含|没有过敏风险)/g,
@@ -861,6 +895,8 @@ function groundedGenerationMetadata(overrides = {}) {
     promptVersion: GROUNDED_ANSWER_PROMPT_VERSION,
     firstPassLatencyMs: 0,
     repairLatencyMs: 0,
+    firstPassFinishReason: null,
+    repairFinishReason: null,
     ...overrides,
   };
 }
@@ -892,12 +928,12 @@ export async function generateGroundedAgentAnswer({
       ...groundedGenerationMetadata({ finalFailureReason: 'CHAT_PROVIDER_CIRCUIT_OPEN' }),
     };
   }
-  const evidence = citations.slice(0, 12).map(compactGroundingCitation);
+  const evidence = selectGroundingCitations(citations, query, intent).map(compactGroundingCitation);
   const requirements = buildGroundedAnswerRequirements(evidence);
   const request = {
     model: config.chatModel,
     temperature: 0,
-    max_tokens: 4000,
+    max_tokens: 2600,
     reasoning_effort: 'low',
     response_format: { type: 'json_object' },
     messages: [
@@ -928,7 +964,11 @@ export async function generateGroundedAgentAnswer({
       evidenceClasses: [...new Set(citedEvidence.flatMap((item) => item.evidenceClasses || []))],
       reason: null,
       model: config.chatModel,
-      ...groundedGenerationMetadata({ firstPassAccepted: true, firstPassLatencyMs }),
+      ...groundedGenerationMetadata({
+        firstPassAccepted: true,
+        firstPassLatencyMs,
+        firstPassFinishReason: first.finishReason,
+      }),
     };
   }
 
@@ -942,6 +982,7 @@ export async function generateGroundedAgentAnswer({
         initialFailureReason: first.reason,
         finalFailureReason: first.reason,
         firstPassLatencyMs,
+        firstPassFinishReason: first.finishReason,
       }),
       ...(includeRejectedOutput ? { rejectedOutput: first.rawOutput.slice(0, 4000) } : {}),
       ...(includeRejectedOutput ? { rejectedFinishReason: first.finishReason } : {}),
@@ -983,6 +1024,8 @@ export async function generateGroundedAgentAnswer({
         finalFailureReason: repaired.reason,
         firstPassLatencyMs,
         repairLatencyMs,
+        firstPassFinishReason: first.finishReason,
+        repairFinishReason: repaired.finishReason,
       }),
       ...(includeRejectedOutput ? {
         rejectedOutput: first.rawOutput.slice(0, 4000),
@@ -1005,6 +1048,8 @@ export async function generateGroundedAgentAnswer({
       initialFailureReason: first.reason,
       firstPassLatencyMs,
       repairLatencyMs,
+      firstPassFinishReason: first.finishReason,
+      repairFinishReason: repaired.finishReason,
     }),
   };
 }
