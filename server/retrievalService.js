@@ -1002,7 +1002,7 @@ function knowledgeAuthority(sourceType, metadata = {}) {
 }
 
 function normalizeKnowledgeResults(results = []) {
-  return results.filter((item) => !['dish', 'stall'].includes(item.sourceType)).map((item) => {
+  return results.filter((item) => !['dish', 'stall', 'canteen'].includes(item.sourceType)).map((item) => {
     const metadata = item.metadata || {};
     const sourceType = item.sourceType || 'knowledge';
     return {

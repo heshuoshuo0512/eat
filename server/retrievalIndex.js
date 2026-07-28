@@ -19,11 +19,12 @@ import {
 import { buildDishFacts } from './diningFacts.js';
 import { dishAiAnnotationSchema, listDishAiAnnotations } from './dishAiAnnotations.js';
 import { normalizeDishPricing } from './dishPricing.js';
+import { loadCatalogIntroductionInputHashes, loadCatalogIntroductionMap } from './catalogIntroductions.js';
 
 export const RETRIEVAL_EMBEDDING_DIM = 1024;
-export const RETRIEVAL_INDEX_VERSION = '008_multi_source_annotations';
+export const RETRIEVAL_INDEX_VERSION = '009_catalog_introductions';
 
-const DEFAULT_SOURCE_TYPES = ['dish', 'stall', 'health_knowledge', CAMPUS_POLICY_SOURCE_TYPE];
+const DEFAULT_SOURCE_TYPES = ['dish', 'stall', 'canteen', 'health_knowledge', CAMPUS_POLICY_SOURCE_TYPE];
 const VECTOR_MODES = new Set(['off', 'shadow', 'active']);
 const QUERY_CACHE_TTL_MS = Math.max(1_000, Number(process.env.RETRIEVAL_QUERY_CACHE_TTL_MS || 5 * 60 * 1000));
 const QUERY_CACHE_MAX = Math.max(16, Number(process.env.RETRIEVAL_QUERY_CACHE_MAX || 256));
@@ -220,6 +221,30 @@ function dishAiAnnotationSummary(annotation) {
   };
 }
 
+function catalogIntroductionSummary(entity) {
+  const introduction = rowValue(entity, 'introduction');
+  if (!introduction) return { content: [], searchTerms: [], metadata: null };
+  const inferred = introduction.status !== 'approved';
+  return {
+    content: [
+      introduction.factualSummary ? `目录事实摘要：${introduction.factualSummary}` : '',
+      introduction.recommendationCopy ? `目录推测建议${inferred ? '（候选，待审核）' : ''}：${introduction.recommendationCopy}` : '',
+    ].filter(Boolean),
+    searchTerms: [introduction.factualSummary, introduction.recommendationCopy, ...(introduction.semanticLabels || [])].filter(Boolean),
+    metadata: {
+      id: introduction.id,
+      batchId: introduction.batchId,
+      version: introduction.version,
+      status: introduction.status,
+      provenance: 'catalog_derived',
+      confidence: introduction.confidence,
+      boundaryCodes: introduction.boundaryCodes || [],
+      evidenceIds: introduction.evidenceIds || [],
+      evidenceType: inferred ? 'ai_estimated' : 'tenant_catalog_aggregate',
+    },
+  };
+}
+
 export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [], tenantId = 'default') {
   const stallById = new Map(stalls.map((stall) => [rowValue(stall, 'id'), stall]));
   const canteenById = new Map(canteens.map((canteen) => [rowValue(canteen, 'id'), canteen]));
@@ -247,6 +272,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
     const aiAnnotation = dishAiAnnotationForIndex(dish);
     const aiSummary = dishAiAnnotationSummary(aiAnnotation);
     const aiAnnotationMeta = rowValue(dish, 'aiAnnotationMeta', 'ai_annotation_meta') || {};
+    const introduction = catalogIntroductionSummary(dish);
     const name = requiredText(rowValue(dish, 'name'), 'dish.name');
     const stallName = rowValue(dish, 'stallName', 'stall_name') || rowValue(joinedStall, 'name') || '';
     const canteenName = rowValue(dish, 'canteenName', 'canteen_name') || rowValue(joinedCanteen, 'name') || '';
@@ -278,6 +304,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
         : '营养：待核验',
       `预约：${asBoolean(rowValue(dish, 'reservationEnabled', 'reservation_enabled')) ? '菜品支持预约，仍需以档口预约开关为准' : '暂停预约'}`,
       `描述：${rowValue(dish, 'description') || ''}`,
+      ...introduction.content,
       aiSummary.content,
     ].filter(Boolean);
     return {
@@ -287,7 +314,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
       chunkIndex: 0,
       title: name,
       content: details.join('。'),
-      searchText: [name, ...aliases, rowValue(dish, 'cuisine'), rowValue(dish, 'taste'), ...ingredients, ...allergens, ...tags, ...semanticLabels, ...aiSummary.searchTerms, stallName, canteenName, parentCanteenName, rowValue(dish, 'description')].filter(Boolean).join(' '),
+      searchText: [name, ...aliases, rowValue(dish, 'cuisine'), rowValue(dish, 'taste'), ...ingredients, ...allergens, ...tags, ...semanticLabels, ...aiSummary.searchTerms, ...introduction.searchTerms, stallName, canteenName, parentCanteenName, rowValue(dish, 'description')].filter(Boolean).join(' '),
       metadata: {
         tenantId: dishTenantId,
         dishId: rowValue(dish, 'id'),
@@ -315,6 +342,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
         supplyConfirmed: false,
         semanticLabelVersion: 'campus-dining-2026.07.1',
         evidenceType: 'tenant_dish_fact',
+        ...(introduction.metadata ? { catalogIntroduction: introduction.metadata } : {}),
         ...(aiSummary.metadata ? {
           aiEstimated: {
             ...aiSummary.metadata,
@@ -347,6 +375,7 @@ export function buildStallIndexDocuments(stalls = [], canteens = [], tenantId = 
     const floor = rowValue(stall, 'floor') || '未标注';
     const category = rowValue(stall, 'category') || '待核验';
     const location = [parentCanteenName, canteenName, floor].filter(Boolean).join(' > ') || '未标注';
+    const introduction = catalogIntroductionSummary(stall);
     const details = [
       `店铺：${name}`,
       aliases.length ? `别名：${aliases.join('、')}` : '',
@@ -356,6 +385,7 @@ export function buildStallIndexDocuments(stalls = [], canteens = [], tenantId = 
       `状态：${category}`,
       '目录说明：来源确认店铺与校园目录关系；预约状态由运营端独立维护',
       `描述：${rowValue(stall, 'description') || ''}`,
+      ...introduction.content,
     ].filter(Boolean);
     return {
       tenantId: stallTenantId,
@@ -364,7 +394,7 @@ export function buildStallIndexDocuments(stalls = [], canteens = [], tenantId = 
       chunkIndex: 0,
       title: name,
       content: details.join('。'),
-      searchText: [name, ...aliases, canteenName, parentCanteenName, floor, category, rowValue(stall, 'description')].filter(Boolean).join(' '),
+      searchText: [name, ...aliases, canteenName, parentCanteenName, floor, category, rowValue(stall, 'description'), ...introduction.searchTerms].filter(Boolean).join(' '),
       metadata: {
         tenantId: stallTenantId,
         stallId,
@@ -380,6 +410,50 @@ export function buildStallIndexDocuments(stalls = [], canteens = [], tenantId = 
         supplyConfirmed: false,
         availabilityStatus: 'catalog_only',
         evidenceType: 'tenant_stall_fact',
+        ...(introduction.metadata ? { catalogIntroduction: introduction.metadata } : {}),
+      },
+    };
+  });
+}
+
+export function buildCanteenIndexDocuments(canteens = [], tenantId = 'default') {
+  const canteenById = new Map(canteens.map((canteen) => [rowValue(canteen, 'id'), canteen]));
+  return canteens.map((canteen) => {
+    const canteenTenantId = normalizeTenantId(rowValue(canteen, 'tenantId', 'tenant_id') || tenantId);
+    const id = requiredText(rowValue(canteen, 'id'), 'canteen.id');
+    const name = requiredText(rowValue(canteen, 'name'), 'canteen.name');
+    const parentId = rowValue(canteen, 'parentId', 'parent_id') || null;
+    const parent = parentId ? canteenById.get(parentId) || {} : {};
+    const parentName = rowValue(canteen, 'parentCanteenName', 'parent_canteen_name') || rowValue(parent, 'name') || '';
+    const hierarchyLevel = parentId ? 'area' : 'venue';
+    const introduction = catalogIntroductionSummary(canteen);
+    const details = [
+      `${hierarchyLevel === 'venue' ? '餐饮场所' : '餐厅或楼层'}：${name}`,
+      parentName ? `上级场所：${parentName}` : '',
+      `位置：${rowValue(canteen, 'location') || '未标注'}`,
+      `目录状态：${rowValue(canteen, 'operatingStatus', 'operating_status') || 'open'}`,
+      `描述：${rowValue(canteen, 'description') || ''}`,
+      ...introduction.content,
+    ].filter(Boolean);
+    return {
+      tenantId: canteenTenantId,
+      sourceType: 'canteen',
+      sourceId: id,
+      chunkIndex: 0,
+      title: name,
+      content: details.join('。'),
+      searchText: [name, parentName, rowValue(canteen, 'displayName', 'display_name'), rowValue(canteen, 'location'), rowValue(canteen, 'description'), ...introduction.searchTerms].filter(Boolean).join(' '),
+      metadata: {
+        tenantId: canteenTenantId,
+        canteenId: id,
+        canteenName: name,
+        parentCanteenId: parentId,
+        parentCanteenName: parentName || null,
+        hierarchyLevel,
+        orderable: false,
+        supplyConfirmed: false,
+        evidenceType: 'tenant_canteen_fact',
+        ...(introduction.metadata ? { catalogIntroduction: introduction.metadata } : {}),
       },
     };
   });
@@ -1274,7 +1348,10 @@ async function loadDishRows(db, tenantId, dishId = null) {
   ).all(...params);
 }
 
-async function loadStallRows(db, tenantId) {
+async function loadStallRows(db, tenantId, stallId = null) {
+  const params = [tenantId];
+  const stallFilter = stallId ? ' AND s.id = ?' : '';
+  if (stallId) params.push(stallId);
   return db.prepare(
     `SELECT s.*,
             c.name AS canteen_name, c.parent_id AS parent_canteen_id,
@@ -1282,8 +1359,36 @@ async function loadStallRows(db, tenantId) {
      FROM stalls s
      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = s.tenant_id
-     WHERE s.tenant_id = ?`,
-  ).all(tenantId);
+     WHERE s.tenant_id = ?${stallFilter}`,
+  ).all(...params);
+}
+
+async function loadCanteenRows(db, tenantId, canteenId = null) {
+  const params = [tenantId];
+  const canteenFilter = canteenId ? ' AND c.id = ?' : '';
+  if (canteenId) params.push(canteenId);
+  return db.prepare(`SELECT c.*, parent.name AS parent_canteen_name
+    FROM canteens c
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE c.tenant_id = ?${canteenFilter}
+    ORDER BY c.parent_id, c.display_order, c.name, c.id`).all(...params);
+}
+
+async function attachCatalogIntroductions(db, tenantId, entityType, rows, options = {}) {
+  if (!rows.length) return rows;
+  const statuses = Array.isArray(options.catalogIntroductionStatuses) && options.catalogIntroductionStatuses.length
+    ? options.catalogIntroductionStatuses
+    : ['approved'];
+  const introductions = await loadCatalogIntroductionMap(db, {
+    tenantId,
+    entityType,
+    statuses,
+    batchId: options.catalogIntroductionBatchId || '',
+    entityIds: rows.map((row) => rowValue(row, 'id')),
+    requireCurrent: options.catalogIntroductionAllowStale !== true,
+    currentInputHashes: options.catalogIntroductionCurrentInputHashes || null,
+  });
+  return rows.map((row) => ({ ...row, introduction: introductions.get(`${entityType}:${rowValue(row, 'id')}`) || null }));
 }
 
 export async function syncDishRetrievalDocument(db, options = {}) {
@@ -1291,7 +1396,7 @@ export async function syncDishRetrievalDocument(db, options = {}) {
   const tenant = normalizeTenantId(tenantId);
   const sourceId = requiredText(dishId, 'dishId');
   await ensureRetrievalIndex(db);
-  const rows = await loadDishRows(db, tenant, sourceId);
+  const rows = await attachCatalogIntroductions(db, tenant, 'dish', await loadDishRows(db, tenant, sourceId), options);
   if (!rows.length) return deleteRetrievalSource(db, { tenantId: tenant, sourceType: 'dish', sourceId });
   return upsertRetrievalDocuments(db, buildDishIndexDocuments(rows, [], [], tenant), { ...options, tenantId: tenant });
 }
@@ -1361,6 +1466,26 @@ async function pruneDocuments(db, tenantId, sourceType, keepIds) {
   return deletedCount;
 }
 
+export async function syncStallRetrievalDocument(db, options = {}) {
+  const { tenantId = 'default', stallId } = options;
+  const tenant = normalizeTenantId(tenantId);
+  const sourceId = requiredText(stallId, 'stallId');
+  await ensureRetrievalIndex(db);
+  const rows = await attachCatalogIntroductions(db, tenant, 'stall', await loadStallRows(db, tenant, sourceId), options);
+  if (!rows.length) return deleteRetrievalSource(db, { tenantId: tenant, sourceType: 'stall', sourceId });
+  return upsertRetrievalDocuments(db, buildStallIndexDocuments(rows, [], tenant), { ...options, tenantId: tenant });
+}
+
+export async function syncCanteenRetrievalDocument(db, options = {}) {
+  const { tenantId = 'default', canteenId } = options;
+  const tenant = normalizeTenantId(tenantId);
+  const sourceId = requiredText(canteenId, 'canteenId');
+  await ensureRetrievalIndex(db);
+  const rows = await attachCatalogIntroductions(db, tenant, 'canteen', await loadCanteenRows(db, tenant, sourceId), options);
+  if (!rows.length) return deleteRetrievalSource(db, { tenantId: tenant, sourceType: 'canteen', sourceId });
+  return upsertRetrievalDocuments(db, buildCanteenIndexDocuments(rows, tenant), { ...options, tenantId: tenant });
+}
+
 export async function reindexRetrieval(db, options = {}) {
   await ensureRetrievalIndex(db);
   const tenantId = normalizeTenantId(options.tenantId || 'default');
@@ -1382,8 +1507,17 @@ export async function reindexRetrieval(db, options = {}) {
   let failureCount = 0;
   try {
     const documents = [];
+    const indexesCatalogEntities = sourceTypes.some((sourceType) => ['dish', 'stall', 'canteen'].includes(sourceType));
+    const catalogOptions = indexesCatalogEntities && options.catalogIntroductionAllowStale !== true
+      ? {
+        ...options,
+        catalogIntroductionCurrentInputHashes: options.catalogIntroductionCurrentInputHashes
+          || await loadCatalogIntroductionInputHashes(db, tenantId),
+      }
+      : options;
     if (sourceTypes.includes('dish')) {
       let dishRows = options.dishes !== undefined ? options.dishes : await loadDishRows(db, tenantId);
+      dishRows = await attachCatalogIntroductions(db, tenantId, 'dish', dishRows, catalogOptions);
       if (options.dishAnnotationBatchId) {
         const annotations = options.dishAiAnnotations || await listDishAiAnnotations(db, {
           tenantId,
@@ -1414,10 +1548,13 @@ export async function reindexRetrieval(db, options = {}) {
       documents.push(...dishDocuments);
     }
     if (sourceTypes.includes('stall')) {
-      const stallDocuments = options.stalls !== undefined
-        ? buildStallIndexDocuments(options.stalls, options.canteens || [], tenantId)
-        : buildStallIndexDocuments(await loadStallRows(db, tenantId), [], tenantId);
+      const stallRows = await attachCatalogIntroductions(db, tenantId, 'stall', options.stalls !== undefined ? options.stalls : await loadStallRows(db, tenantId), catalogOptions);
+      const stallDocuments = buildStallIndexDocuments(stallRows, options.canteens || [], tenantId);
       documents.push(...stallDocuments);
+    }
+    if (sourceTypes.includes('canteen')) {
+      const canteenRows = await attachCatalogIntroductions(db, tenantId, 'canteen', options.canteens !== undefined ? options.canteens : await loadCanteenRows(db, tenantId), catalogOptions);
+      documents.push(...buildCanteenIndexDocuments(canteenRows, tenantId));
     }
     if (sourceTypes.includes('health_knowledge')) {
       const healthDocuments = options.healthDocuments !== undefined

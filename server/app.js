@@ -43,6 +43,17 @@ import {
   reindexRetrieval,
   searchRetrievalIndex
 } from './retrievalIndex.js';
+import {
+  applyCatalogIntroduction,
+  approveCatalogIntroductionBatch,
+  listCatalogIntroductionBatches,
+  listCatalogIntroductionCandidates,
+  loadCatalogIntroductionMap,
+  previewCatalogIntroductionBatchApproval,
+  rollbackCatalogIntroductionBatch,
+  updateCatalogIntroductionCandidate,
+} from './catalogIntroductions.js';
+
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_IMPORT_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_IMPORT_ROWS = 1_000;
@@ -733,14 +744,25 @@ async function listAiUsage(db, tenantId = 'default', limit = 50, offset = 0) {
   };
 }
 
+async function applyApprovedIntroductions(db, tenantId, entityType, entities) {
+  if (!entities.length) return entities;
+  const introductions = await loadCatalogIntroductionMap(db, {
+    tenantId,
+    entityType,
+    statuses: ['approved'],
+    entityIds: entities.map((entity) => entity.id),
+  });
+  return entities.map((entity) => applyCatalogIntroduction(entity, introductions.get(`${entityType}:${entity.id}`)));
+}
+
 async function listCanteens(db, tenantId = 'default') {
   const canteens = (await db.prepare('SELECT * FROM canteens WHERE tenant_id = ? ORDER BY CASE WHEN parent_id IS NULL THEN display_order ELSE 999 END, parent_id, display_order, name, id').all(tenantId)).map(rowToCanteen);
-  return canteens;
+  return applyApprovedIntroductions(db, tenantId, 'canteen', canteens);
 }
 
 async function listStalls(db, tenantId = 'default') {
   const stalls = (await db.prepare('SELECT * FROM stalls WHERE tenant_id = ? ORDER BY canteen_id, floor, name').all(tenantId)).map(rowToStall);
-  return stalls;
+  return applyApprovedIntroductions(db, tenantId, 'stall', stalls);
 }
 
 function normalizeStallParentId(value) {
@@ -841,7 +863,8 @@ function rejectDatabaseStallParentWrite(entityName, body) {
 }
 
 async function listDishes(db, params = new URLSearchParams(), tenantId = 'default') {
-  const rows = (await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND status = 'active' ORDER BY name").all(tenantId)).map(rowToDish);
+  const mapped = (await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND status = 'active' ORDER BY name").all(tenantId)).map(rowToDish);
+  const rows = await applyApprovedIntroductions(db, tenantId, 'dish', mapped);
   const keyword = String(params.get('keyword') || '').trim().toLowerCase();
   const maxPrice = Number(params.get('maxPrice') || 999);
   const taste = params.get('taste') || '不限';
@@ -905,11 +928,11 @@ function enrichPost(post, catalog, currentUserId = '') {
 async function dishDetail(db, id, tenantId = 'default') {
   const row = await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, id);
   if (!row) return null;
-  const dish = rowToDish(row);
+  const [dish] = await applyApprovedIntroductions(db, tenantId, 'dish', [rowToDish(row)]);
   const stallRow = await db.prepare('SELECT * FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantId, dish.stallId);
-  const stall = stallRow ? rowToStall(stallRow) : null;
+  const stall = stallRow ? (await applyApprovedIntroductions(db, tenantId, 'stall', [rowToStall(stallRow)]))[0] : null;
   const canteenRow = stall ? await db.prepare('SELECT * FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, stall.canteenId) : null;
-  const canteen = canteenRow ? rowToCanteen(canteenRow) : null;
+  const canteen = canteenRow ? (await applyApprovedIntroductions(db, tenantId, 'canteen', [rowToCanteen(canteenRow)]))[0] : null;
   return { ...dish, stall, canteen, reviews: await listReviews(db, id, tenantId) };
 }
 
@@ -1524,7 +1547,7 @@ async function listCatalogStalls(db, tenantId, params) {
       (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active') AS dish_count
       ${from} WHERE ${where} ORDER BY s.canteen_id, s.floor, s.name LIMIT ? OFFSET ?`)
     .all(...values, pageSize, (page - 1) * pageSize);
-  const stalls = rows.map((row) => ({ ...rowToStall(row), dishCount: Number(row.dish_count || 0) }));
+  const stalls = await applyApprovedIntroductions(db, tenantId, 'stall', rows.map((row) => ({ ...rowToStall(row), dishCount: Number(row.dish_count || 0) })));
   return { stalls, page: { page, pageSize, total, hasMore: page * pageSize < total } };
 }
 
@@ -1544,8 +1567,8 @@ async function listAdminStallDishes(db, tenantId, stallId, params) {
   const total = Number((await db.prepare(`SELECT COUNT(*) AS count FROM dishes WHERE ${where}`).get(...values))?.count || 0);
   const rows = await db.prepare(`SELECT * FROM dishes WHERE ${where} ORDER BY name, id LIMIT ? OFFSET ?`)
     .all(...values, pageSize, (page - 1) * pageSize);
-  const items = rows.map(rowToDish);
-  const presentedStall = { ...rowToStall(stall), dishCount: total };
+  const items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map(rowToDish));
+  const [presentedStall] = await applyApprovedIntroductions(db, tenantId, 'stall', [{ ...rowToStall(stall), dishCount: total }]);
   return {
     items,
     total,
@@ -1616,7 +1639,7 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
     .all(...values, pageSize, offset);
-  const items = rows.map(catalogDishPresentation);
+  const items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map(catalogDishPresentation));
   return {
     query: keyword,
     items,
@@ -1642,21 +1665,21 @@ async function listCatalogRankings(db, tenantId, params) {
       JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
       WHERE d.tenant_id = ? AND d.status = 'active'
       ORDER BY d.rating DESC, d.review_count DESC, d.sales DESC, d.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
-    items = rows.map((row) => ({ ...catalogDishPresentation(row), rankScore: Number(row.rating || 0) }));
+    items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map((row) => ({ ...catalogDishPresentation(row), rankScore: Number(row.rating || 0) })));
   } else if (type === 'stalls') {
     total = Number((await db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ?').get(tenantId))?.count || 0);
     const rows = await db.prepare(`SELECT s.*, c.name AS canteen_name,
       (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active') AS dish_count
       FROM stalls s JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
       WHERE s.tenant_id = ? ORDER BY s.rating DESC, dish_count DESC, s.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
-    items = rows.map((row) => ({ ...rowToStall(row), canteenName: row.canteen_name || '', dishCount: Number(row.dish_count || 0), rankScore: Number(row.rating || 0) }));
+    items = await applyApprovedIntroductions(db, tenantId, 'stall', rows.map((row) => ({ ...rowToStall(row), canteenName: row.canteen_name || '', dishCount: Number(row.dish_count || 0), rankScore: Number(row.rating || 0) })));
   } else {
     total = Number((await db.prepare('SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = ?').get(tenantId))?.count || 0);
     const rows = await db.prepare(`SELECT c.*,
       (SELECT COUNT(*) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id) AS stall_count,
       (SELECT COALESCE(AVG(s.rating), 0) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id) AS rank_score
       FROM canteens c WHERE c.tenant_id = ? ORDER BY rank_score DESC, stall_count DESC, c.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
-    items = rows.map((row) => ({ ...rowToCanteen(row), stallCount: Number(row.stall_count || 0), rankScore: Number(Number(row.rank_score || 0).toFixed(2)) }));
+    items = await applyApprovedIntroductions(db, tenantId, 'canteen', rows.map((row) => ({ ...rowToCanteen(row), stallCount: Number(row.stall_count || 0), rankScore: Number(Number(row.rank_score || 0).toFixed(2)) })));
   }
   return { type, items, page: { page, pageSize, total, hasMore: offset + items.length < total } };
 }
@@ -1677,13 +1700,14 @@ async function listSavedCatalogDishes(db, user, params) {
   const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind, p.favorite, p.eaten_count, p.drawn_count, p.last_eaten_at, p.last_drawn_at
       ${from} ORDER BY p.updated_at DESC, d.name ASC LIMIT ? OFFSET ?`).all(...values, pageSize, offset);
-  const items = rows.map((row) => ({
+  const mappedItems = rows.map((row) => ({
     ...catalogDishPresentation(row),
     preference: {
       favorite: Boolean(row.favorite), eatenCount: Number(row.eaten_count || 0), drawnCount: Number(row.drawn_count || 0),
       lastEatenAt: row.last_eaten_at || null, lastDrawnAt: row.last_drawn_at || null,
     },
   }));
+  const items = await applyApprovedIntroductions(db, tenantId, 'dish', mappedItems);
   return { kind, items, page: { page, pageSize, total, hasMore: offset + items.length < total } };
 }
 
@@ -4009,6 +4033,83 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         await audit(db, activeUser, 'VIEW', 'database_overview', null);
         return send(res, 200, { driver: process.env.DB_DRIVER === 'postgres' || process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite', tables, quality, workflow: ['食堂', '档口', '菜品', '菜单', '菜单明细', '发布'] });
 
+      }
+      if (method === 'GET' && url.pathname === '/api/admin/catalog-introductions/batches') {
+        const activeUser = await requireCapability(db, req, 'catalog:introduction:review');
+        const batches = await listCatalogIntroductionBatches(db, tenantIdFor(activeUser));
+        await audit(db, activeUser, 'LIST', 'catalog_introduction_batch', null);
+        return send(res, 200, { batches });
+      }
+      if (method === 'GET' && url.pathname === '/api/admin/catalog-introductions') {
+        const activeUser = await requireCapability(db, req, 'catalog:introduction:review');
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
+        const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+        const result = await listCatalogIntroductionCandidates(db, {
+          tenantId: tenantIdFor(activeUser),
+          batchId: String(url.searchParams.get('batchId') || '').trim(),
+          status: String(url.searchParams.get('status') || '').trim(),
+          entityType: String(url.searchParams.get('entityType') || '').trim(),
+          query: String(url.searchParams.get('q') || '').trim().slice(0, 100),
+          limit,
+          offset,
+        });
+        return send(res, 200, { ...result, limit, offset });
+      }
+      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'catalog-introductions' && pathParts[3] && pathParts[3] !== 'batches') {
+        const activeUser = await requireCapability(db, req, 'catalog:introduction:review');
+        const body = await readBody(req);
+        const introduction = await updateCatalogIntroductionCandidate(db, {
+          tenantId: tenantIdFor(activeUser),
+          id: decodeURIComponent(pathParts[3]),
+          factualSummary: body.factualSummary,
+          recommendationCopy: body.recommendationCopy,
+          status: body.status,
+          expectedUpdatedAt: body.expectedUpdatedAt,
+          reviewedBy: activeUser.id,
+        });
+        await audit(db, activeUser, 'REVIEW', 'catalog_introduction', introduction.id, { status: introduction.status, entityType: introduction.entityType, entityId: introduction.entityId });
+        if (introduction.status === 'approved') {
+          await enqueueOutboxEvent(db, {
+            tenantId: tenantIdFor(activeUser), aggregateType: 'catalog_introduction', aggregateId: introduction.id,
+            eventType: 'retrieval.catalog-introductions.sync', payload: { entityType: introduction.entityType, entityId: introduction.entityId },
+            idempotencyKey: `retrieval.catalog-introduction:${introduction.id}:${introduction.contentHash}`,
+          });
+        }
+        return send(res, 200, { introduction });
+      }
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'catalog-introductions' && pathParts[3] === 'batches' && pathParts[4] && pathParts[5] === 'approval-preview') {
+        const activeUser = await requireCapability(db, req, 'catalog:introduction:approve_all');
+        const preview = await previewCatalogIntroductionBatchApproval(db, { tenantId: tenantIdFor(activeUser), batchId: decodeURIComponent(pathParts[4]) });
+        return send(res, 200, preview);
+      }
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'catalog-introductions' && pathParts[3] === 'batches' && pathParts[4] && pathParts[5] === 'approve') {
+        const activeUser = await requireCapability(db, req, 'catalog:introduction:approve_all');
+        const body = await readBody(req);
+        const tenantId = tenantIdFor(activeUser);
+        const result = await approveCatalogIntroductionBatch(db, {
+          tenantId, batchId: decodeURIComponent(pathParts[4]), confirmation: body.confirmation,
+          expectedDigest: body.expectedDigest, reviewedBy: activeUser.id,
+        });
+        await audit(db, activeUser, 'APPROVE_BATCH', 'catalog_introduction_batch', result.batchId, { approvedCount: result.approvedCount, approvalDigest: result.approvalDigest });
+        await enqueueOutboxEvent(db, {
+          tenantId, aggregateType: 'catalog_introduction_batch', aggregateId: result.batchId,
+          eventType: 'retrieval.catalog-introductions.sync', payload: { batchId: result.batchId },
+          idempotencyKey: `retrieval.catalog-introduction-batch:${result.batchId}:${result.approvalDigest}`,
+        });
+        return send(res, 200, result);
+      }
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'catalog-introductions' && pathParts[3] === 'batches' && pathParts[4] && pathParts[5] === 'rollback') {
+        const activeUser = await requireCapability(db, req, 'catalog:introduction:approve_all');
+        const body = await readBody(req);
+        const tenantId = tenantIdFor(activeUser);
+        const result = await rollbackCatalogIntroductionBatch(db, { tenantId, batchId: decodeURIComponent(pathParts[4]), confirmation: body.confirmation, reviewedBy: activeUser.id });
+        await audit(db, activeUser, 'ROLLBACK_BATCH', 'catalog_introduction_batch', result.batchId, { rolledBackCount: result.rolledBackCount });
+        await enqueueOutboxEvent(db, {
+          tenantId, aggregateType: 'catalog_introduction_batch', aggregateId: result.batchId,
+          eventType: 'retrieval.catalog-introductions.sync', payload: { batchId: result.batchId },
+          idempotencyKey: `retrieval.catalog-introduction-rollback:${result.batchId}:${result.rolledBackAt}`,
+        });
+        return send(res, 200, result);
       }
       if (method === 'GET' && url.pathname === '/api/admin/catalog/tree') {
         const activeUser = await requireAnyCapability(db, req, ['audit:read', 'canteen:write', 'stall:write', 'dish:write']);

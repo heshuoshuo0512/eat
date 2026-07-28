@@ -171,6 +171,10 @@ describe('grounded answer evidence boundaries', () => {
       citationIds: ['dish:unknown'],
     }, citations).valid, true);
     assert.equal(validateGroundedAgentAnswer({
+      answer: '过敏原信息尚未确认，无法确认是否能放心吃，请现场核实交叉接触风险。',
+      citationIds: ['dish:unknown'],
+    }, citations).valid, true);
+    assert.equal(validateGroundedAgentAnswer({
       answer: '过敏原信息尚未确认，但可以放心吃。', citationIds: ['dish:unknown'],
     }, citations).reason, 'UNSUPPORTED_SAFETY_CLAIM');
   });

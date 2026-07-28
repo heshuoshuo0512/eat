@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Smart Canteen Enterprise MVP API
-  version: 0.9.0
+  version: 0.10.0
   description: Database-backed campus smart canteen API with RBAC, tenant management, menu operations, authenticated uploads, student review overview, moderated campus posts, dual retrieval workflows, RAG evidence, agent routing, vision meal analysis, AI usage metering and quota governance. RAG is used for recall and explanation only; tenant authorization, price, inventory, sold-out state, serving windows and allergen constraints always come from relational SQL data.
 servers:
   - url: /api
@@ -112,6 +112,91 @@ components:
         children:
           type: array
           items: { $ref: '#/components/schemas/AdminCatalogStallNode' }
+    CatalogIntroductionConfidence:
+      type: object
+      required: [score, level]
+      properties:
+        score: { type: number, minimum: 0, maximum: 1 }
+        level: { type: string, enum: [high, medium, low] }
+    PublicCatalogIntroduction:
+      type: object
+      description: Approved catalog-derived copy. It may expand retrieval semantics but never proves price, availability, recipe, allergen, halal or nutrition facts.
+      required: [factualSummary, recommendationCopy, provenance, provenanceLabel, confidence, boundaryCodes, version]
+      properties:
+        factualSummary: { type: string, maxLength: 720 }
+        recommendationCopy: { type: string, maxLength: 540 }
+        provenance: { type: string, const: catalog_derived }
+        provenanceLabel: { type: string, const: 基于目录整理 }
+        confidence: { $ref: '#/components/schemas/CatalogIntroductionConfidence' }
+        boundaryCodes: { type: array, items: { type: string } }
+        version: { type: integer, minimum: 1 }
+        approvedAt: { type: [string, 'null'], format: date-time }
+    CatalogIntroductionRecord:
+      type: object
+      required: [id, batchId, entityType, hierarchyLevel, entityId, version, factualSummary, recommendationCopy, claims, semanticLabels, evidenceIds, boundaryCodes, confidence, model, promptVersion, inputHash, contentHash, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        batchId: { type: string }
+        entityType: { type: string, enum: [dish, stall, canteen] }
+        hierarchyLevel: { type: string, enum: [dish, stall, area, venue] }
+        entityId: { type: string }
+        version: { type: integer, minimum: 1 }
+        factualSummary: { type: string, maxLength: 720 }
+        recommendationCopy: { type: string, maxLength: 540 }
+        claims: { type: array, items: { type: object, additionalProperties: true } }
+        semanticLabels: { type: array, items: { type: string } }
+        evidenceIds: { type: array, items: { type: string } }
+        evidenceSnapshot: { type: object, additionalProperties: true }
+        boundaryCodes: { type: array, items: { type: string } }
+        confidence: { $ref: '#/components/schemas/CatalogIntroductionConfidence' }
+        model: { type: string }
+        promptVersion: { type: string, const: catalog-introduction-v1 }
+        inputHash: { type: string }
+        contentHash: { type: string }
+        status: { type: string, enum: [generated, schema_validated, approved, rejected, retired] }
+        previousIntroductionId: { type: [string, 'null'] }
+        error: { type: [string, 'null'] }
+        reviewedBy: { type: [string, 'null'] }
+        reviewedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CatalogIntroductionBatch:
+      type: object
+      required: [id, model, promptVersion, catalogSnapshotHash, status, entityCount, completedCount, failedCount, concurrency, metrics, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        model: { type: string }
+        promptVersion: { type: string }
+        catalogDataVersion: { type: string }
+        catalogSnapshotHash: { type: string }
+        status: { type: string, enum: [preparing, probing, generating, generated, paused, failed, approved, rolled_back] }
+        entityCount: { type: integer, minimum: 0 }
+        completedCount: { type: integer, minimum: 0 }
+        failedCount: { type: integer, minimum: 0 }
+        concurrency: { type: object, additionalProperties: true }
+        metrics: { type: object, additionalProperties: true }
+        error: { type: [string, 'null'] }
+        reviewedBy: { type: [string, 'null'] }
+        approvedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CatalogIntroductionApprovalPreview:
+      type: object
+      required: [batchId, entityCount, candidateCount, missingCount, staleCount, invalidCount, lowConfidenceCount, approvable, approvalDigest, requiredConfirmation]
+      properties:
+        batchId: { type: string }
+        entityCount: { type: integer, minimum: 0 }
+        candidateCount: { type: integer, minimum: 0 }
+        missingCount: { type: integer, minimum: 0 }
+        staleCount: { type: integer, minimum: 0 }
+        invalidCount: { type: integer, minimum: 0 }
+        lowConfidenceCount: { type: integer, minimum: 0 }
+        approvable: { type: boolean }
+        approvalDigest: { type: string }
+        requiredConfirmation: { type: string, description: Must equal 批准全校介绍 followed by the batch id. }
+        stale: { type: array, items: { type: object } }
+        invalid: { type: array, items: { type: object } }
+        sample: { type: array, items: { $ref: '#/components/schemas/CatalogIntroductionRecord' } }
     LoginRequest:
       type: object
       required: [identifier, password]
@@ -731,6 +816,11 @@ components:
         aliases: { type: array, items: { type: string }, description: Reviewed search aliases; not independent sale items. }
         semanticLabels: { type: array, items: { type: string }, description: Soft retrieval expansion only; never proves recipe, nutrition or safety facts. }
         sourceRef: { type: object, additionalProperties: true, description: Import batch and source locator used for audit traceability. }
+        displayDescription: { type: string, description: Approved factual catalog introduction when available, otherwise the legacy description. }
+        introduction:
+          oneOf:
+            - $ref: '#/components/schemas/PublicCatalogIntroduction'
+            - type: 'null'
         stallId: { type: string, nullable: true }
         stallName: { type: string, nullable: true }
         canteenId: { type: string, nullable: true }
@@ -1736,6 +1826,107 @@ paths:
       responses:
         '200': { description: items, total, page, pageSize, hasMore and stall summary }
         '404': { description: Stall does not exist in the active tenant }
+  /admin/catalog-introductions/batches:
+    get:
+      description: Lists tenant-scoped, versioned catalog-introduction generation batches. Requires catalog:introduction:review.
+      responses:
+        '200':
+          description: Introduction batches ordered newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batches]
+                properties:
+                  batches: { type: array, items: { $ref: '#/components/schemas/CatalogIntroductionBatch' } }
+        '403': { description: Missing catalog:introduction:review }
+  /admin/catalog-introductions:
+    get:
+      description: Lists review candidates for the active tenant. Requires catalog:introduction:review.
+      parameters:
+        - { name: batchId, in: query, schema: { type: string } }
+        - { name: entityType, in: query, schema: { type: string, enum: [dish, stall, canteen] } }
+        - { name: status, in: query, schema: { type: string, enum: [generated, schema_validated, approved, rejected, retired] } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Paginated introduction candidates.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, limit, offset]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/CatalogIntroductionRecord' } }
+                  total: { type: integer, minimum: 0 }
+                  limit: { type: integer, minimum: 1 }
+                  offset: { type: integer, minimum: 0 }
+  /admin/catalog-introductions/{id}:
+    patch:
+      description: Edits and reviews one candidate. Canteen administrators may review individual records; approval emits an incremental retrieval-index event.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                factualSummary: { type: string, maxLength: 720 }
+                recommendationCopy: { type: string, maxLength: 540 }
+                status: { type: string, enum: [schema_validated, approved, rejected] }
+                expectedUpdatedAt: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Updated introduction.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  introduction: { $ref: '#/components/schemas/CatalogIntroductionRecord' }
+        '409': { description: Candidate changed since it was loaded }
+  /admin/catalog-introductions/batches/{batchId}/approval-preview:
+    post:
+      description: Recomputes current entity hashes and returns the whole-school approval digest. Requires catalog:introduction:approve_all.
+      parameters: [{ name: batchId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Approval preview, content: { application/json: { schema: { $ref: '#/components/schemas/CatalogIntroductionApprovalPreview' } } } }
+  /admin/catalog-introductions/batches/{batchId}/approve:
+    post:
+      description: Transactionally approves a complete, current batch and retires prior approved versions. Requires catalog:introduction:approve_all.
+      parameters: [{ name: batchId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation, expectedDigest]
+              properties:
+                confirmation: { type: string }
+                expectedDigest: { type: string }
+      responses:
+        '200': { description: Approved count and approval metadata }
+        '409': { description: Missing, stale, invalid or concurrently changed candidate }
+  /admin/catalog-introductions/batches/{batchId}/rollback:
+    post:
+      description: Retires this batch and restores each prior approved version when present. Requires catalog:introduction:approve_all.
+      parameters: [{ name: batchId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation]
+              properties:
+                confirmation: { type: string, description: Must equal 回滚介绍批次 followed by the batch id. }
+      responses:
+        '200': { description: Rollback count and timestamp }
+        '409': { description: Batch has no active approved records }
   /admin/users:
     get:
       description: Requires user:read.

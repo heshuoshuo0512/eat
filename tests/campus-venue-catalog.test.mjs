@@ -38,6 +38,10 @@ describe('campus venue catalog hierarchy', () => {
     assert.match(migration, /east-yanminghu-1f'[\s\S]*'一楼'/);
     assert.match(migration, /east-yanminghu-2f'[\s\S]*'二楼'/);
     assert.match(promotion, /TARGET_CANTEEN_COUNT = 14/);
+    assert.match(promotion, /\[12, TARGET_CANTEEN_COUNT\]\.includes\(counts\.canteens\)/);
+    assert.match(promotion, /inspection\.counts\.canteens === TARGET_CANTEEN_COUNT/);
+    assert.match(promotion, /preparedSource && Object\.hasOwn\(row, column\)/);
+    assert.match(promotion, /Production catalog import changed runtime table/);
   });
 
   it('loads dishes only after a stall opens and paginates by thirty', () => {

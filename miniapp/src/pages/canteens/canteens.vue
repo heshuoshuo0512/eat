@@ -8,19 +8,19 @@
     <sc-state-card v-if="store.loading.value&&!store.loaded.value" type="loading" title="正在同步食堂目录" />
     <sc-state-card v-else-if="store.error.value&&!store.loaded.value" type="error" title="食堂目录加载失败" :desc="store.error.value" action-text="重试" @action="reload" />
     <view v-else class="canteen-grid">
-      <sc-list-row
-        v-for="(canteen,index) in primaryCanteens"
-        :key="canteen.id"
-        class="canteen-card"
-        icon-name="location"
-        :class="{ unavailable: canteen.operatingStatus!=='open' }"
-        :title="canteen.displayName||canteen.name"
-        :description="canteen.operatingStatus==='open'?`${canteen.location||'校内'} · ${stallCount(canteen.id)} 个档口 · ${canteen.hours||'营业时间待更新'}`:`${canteen.location||'校内'} · 开放时间待通知`"
-        :badge="canteen.operatingStatus==='renovating'?'装修中':canteen.operatingStatus==='closed'?'已关闭':crowdState(canteen.crowdLevel).label"
-        :badge-tone="canteen.operatingStatus==='open'?crowdState(canteen.crowdLevel).tone:'warning'"
-        :style="entryStyle(index)"
-        @tap="openCanteen(canteen.id)"
-      />
+      <view v-for="(canteen,index) in primaryCanteens" :key="canteen.id" class="canteen-entry" :style="entryStyle(index)">
+        <sc-list-row
+          class="canteen-card"
+          icon-name="location"
+          :class="{ unavailable: canteen.operatingStatus!=='open' }"
+          :title="canteen.displayName||canteen.name"
+          :description="canteen.operatingStatus==='open'?`${canteen.location||'校内'} · ${stallCount(canteen.id)} 个档口 · ${canteen.hours||'营业时间待更新'}`:`${canteen.location||'校内'} · 开放时间待通知`"
+          :badge="canteen.operatingStatus==='renovating'?'装修中':canteen.operatingStatus==='closed'?'已关闭':crowdState(canteen.crowdLevel).label"
+          :badge-tone="canteen.operatingStatus==='open'?crowdState(canteen.crowdLevel).tone:'warning'"
+          @tap="openCanteen(canteen.id)"
+        />
+        <sc-catalog-introduction :entity="canteen" compact />
+      </view>
     </view>
     <sc-state-card v-if="store.loaded.value&&!primaryCanteens.length" type="empty" title="暂无食堂目录" desc="等待管理员录入食堂和档口。" />
   </sc-page-shell>
@@ -48,7 +48,7 @@ function entryStyle(index){return store.motionReduced.value?{}:{animationDelay:`
 .navigation-summary .ui-strong { color:var(--module-dark); font-size:16px; }
 .navigation-summary text { margin-top:3px; color:var(--muted); font-size:12px; }
 .canteen-grid { padding:0 12px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); }
-.canteen-card { animation:canteen-in 200ms ease both; }
+.canteen-entry { padding-bottom:10px; animation:canteen-in 200ms ease both; }
 .canteen-card.unavailable { opacity:.72; }
 @keyframes canteen-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 @media (min-width:768px) {

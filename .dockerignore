@@ -5,6 +5,8 @@
 .local-ollama-models
 .rag-evals
 .rag-simulations
+.performance-results
+artifacts
 node_modules
 miniapp/node_modules
 miniapp/dist
@@ -16,7 +18,14 @@ coverage
 !.env.example
 *.sqlite
 *.sqlite-*
+**/*.sqlite
+**/*.sqlite-*
 data/imports/real
+data/imports/real/**
 uploads
+*.log
+*.bundle
+*.pptx
+*.docx
 npm-debug.log*
 .ollama-serve*.log

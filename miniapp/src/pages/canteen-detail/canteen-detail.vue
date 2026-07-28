@@ -10,19 +10,19 @@
             <text class="crowd" :class="crowdState.className">{{ crowdState.label }}</text>
             <view class="hero-copy"><text>{{ canteen.location||'校内食堂' }}</text><text class="ui-strong">{{ canteen.name }}</text><text class="ui-small">{{ canteen.hours||'营业时间待更新' }}</text></view>
           </view>
-          <text v-if="canteen.description" class="canteen-description">{{ canteen.description }}</text>
+          <sc-catalog-introduction :entity="canteen" />
           <view v-if="canteen.tags?.length" class="tag-row"><text v-for="tag in canteen.tags" :key="tag">{{ tag }}</text></view>
         </view>
 
         <view class="canteen-main">
           <view v-if="children.length" class="section-block">
             <view class="section-head"><text class="ui-strong">分区导航</text><text>{{ children.length }} 个子食堂</text></view>
-            <view class="sub-list"><sc-list-row v-for="item in children" :key="item.id" icon-name="location" :title="item.name" :description="item.location||canteen.name" :badge="`${stallCount(item.id)} 个档口`" @tap="openCanteen(item.id)" /></view>
+            <view class="sub-list"><view v-for="item in children" :key="item.id" class="catalog-entry"><sc-list-row icon-name="location" :title="item.name" :description="item.location||canteen.name" :badge="`${stallCount(item.id)} 个档口`" @tap="openCanteen(item.id)" /><sc-catalog-introduction :entity="item" compact /></view></view>
           </view>
 
           <view v-if="directStalls.length" class="section-block">
             <view class="section-head"><view><text class="ui-strong">档口目录</text><text>{{ directStalls.length }} 个档口</text></view><button @tap="openReviews">查看评价</button></view>
-            <view v-for="group in floorGroups" :key="group.floor" class="floor-group"><text class="floor-label">{{ group.floor }}</text><view class="floor-list"><sc-list-row v-for="stall in group.stalls" :key="stall.id" icon-name="store" :title="stall.name" :description="`${stall.category||'综合档口'} · ${stall.avgPrice?`${stall.avgPrice}元人均`:'人均待核验'} · ${dishCount(stall.id)} 道菜`" :meta="Number(stall.rating)>0?Number(stall.rating).toFixed(1):'暂无评分'" :badge="stall.open===false?'暂停营业':'营业中'" :badge-tone="stall.open===false?'warning':'default'" @tap="openStall(stall.id)" /></view></view>
+            <view v-for="group in floorGroups" :key="group.floor" class="floor-group"><text class="floor-label">{{ group.floor }}</text><view class="floor-list"><view v-for="stall in group.stalls" :key="stall.id" class="catalog-entry"><sc-list-row icon-name="store" :title="stall.name" :description="`${stall.category||'综合档口'} · ${stall.avgPrice?`${stall.avgPrice}元人均`:'人均待核验'} · ${dishCount(stall.id)} 道菜`" :meta="Number(stall.rating)>0?Number(stall.rating).toFixed(1):'暂无评分'" :badge="stall.open===false?'暂停营业':'营业中'" :badge-tone="stall.open===false?'warning':'default'" @tap="openStall(stall.id)" /><sc-catalog-introduction :entity="stall" compact /></view></view></view>
           </view>
           <sc-state-card v-if="!children.length&&!directStalls.length" type="empty" title="暂无档口" desc="等待档口目录同步。" />
         </view>
@@ -66,6 +66,8 @@ function openCanteen(id){const target=store.canteens.value.find((item)=>String(i
 .section-head view>text:not(.ui-strong),.section-head>text:not(.ui-strong) { margin-top:3px; color:var(--muted); font-size:12px; }
 .section-head button { display:flex; min-height:44px; padding:0 8px; align-items:center; justify-content:center; color:var(--ink); font-size:14px; font-weight:500; }
 .sub-list,.floor-list { padding:0 12px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); }
+.catalog-entry { padding-bottom:10px; border-bottom:1px solid var(--line); }
+.catalog-entry:last-child { border-bottom:0; }
 .floor-group { margin-bottom:16px; }
 .floor-label { display:block; margin:0 4px 7px; color:var(--muted); font-size:12px; font-weight:600; }
 @media (min-width:768px) {

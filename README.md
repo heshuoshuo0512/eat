@@ -6,7 +6,7 @@
 
 | 环境 | 地址 |
 |------|------|
-| 生产服务器 | http://101.34.216.33 |
+| 生产服务器 | http://49.233.254.183 |
 | GitHub 仓库 | https://github.com/heshuoshuo0512/eat |
 
 ## 快速开始
@@ -167,11 +167,17 @@ git push origin feature/your-name
 
 ### 更新服务器
 
-代码合并到 main 后，在本地执行：
+代码合并到 `main` 且 CI 通过后，由负责人执行人工发布。发布脚本会先备份，再构建镜像、执行迁移、切换前端并检查健康状态；失败时自动恢复上一提交和镜像。
 
 ```bash
-npm run build && scp -r dist ubuntu@101.34.216.33:/opt/smart-canteen/ && ssh ubuntu@101.34.216.33 "cd /opt/smart-canteen && git pull && pm2 restart smart-canteen"
+ssh root@SERVER_IP
+cd /opt/smart-canteen
+git fetch origin main
+TARGET_COMMIT="$(git rev-parse origin/main)"
+/usr/local/sbin/smart-canteen-release "$TARGET_COMMIT"
 ```
+
+禁止直接覆盖 `dist`、在生产目录执行未受控的 `git pull`，或绕过发布前备份。
 
 ## 服务器信息
 
@@ -179,30 +185,30 @@ npm run build && scp -r dist ubuntu@101.34.216.33:/opt/smart-canteen/ && ssh ubu
 |------|------|
 | 云厂商 | 腾讯云轻量应用服务器 |
 | 系统 | Ubuntu 24.04 LTS |
-| 配置 | 4 核 4G |
-| IP | 101.34.216.33 |
-| SSH 用户名 | `ubuntu` |
+| 配置 | 4 核 8G、60GB SSD、5Mbps |
+| SSH 用户名 | `root` |
 | 项目目录 | `/opt/smart-canteen` |
-| 进程管理 | PM2 |
-| Web 服务器 | Nginx |
+| 运行方式 | Docker Compose |
+| 数据库 | PostgreSQL 16 + pgvector |
+| Web 服务器 | Nginx 容器 |
 
 ### 服务器管理命令
 
 ```bash
-# SSH 登录
-ssh ubuntu@101.34.216.33
-
-# 查看后端状态
-pm2 status
+# 查看容器状态
+cd /opt/smart-canteen
+docker compose ps
 
 # 查看日志
-pm2 logs smart-canteen
+docker compose logs --since=10m api nginx db-migrate db-grants
 
-# 重启后端
-pm2 restart smart-canteen
+# 检查接口和页面
+curl -fsS http://127.0.0.1/api/health/ready
+curl -fsS http://127.0.0.1/
 
-# 重启 Nginx
-sudo nginx -s reload
+# 手工备份及恢复校验
+/usr/local/sbin/smart-canteen-backup
+/usr/local/sbin/smart-canteen-verify-backup
 ```
 
 ## 常用命令
@@ -267,6 +273,8 @@ VISION_EMBEDDING_BASE_URL=http://127.0.0.1:8090 npm run dev:api
 5. 有可用 AI key 时，LLM 基于 citations 生成自然语言建议；没有 key 时回退模板回答。
 
 约束：Agent 不允许编造数据库不存在的菜。
+
+真实目录可使用 `npm run generate:catalog-introductions` 自下而上生成待审核介绍。正式 RAG 只加载输入哈希仍有效的 `approved` 版本；并发探测、断点续跑、200 条人工抽检和整批回滚流程见 `docs/目录介绍生成与审核说明-2026-07-28.md`。
 
 ### Agent 架构图
 

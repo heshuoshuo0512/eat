@@ -20,41 +20,77 @@
       </div>
     </section>
 
-    <section class="login-panel auth-panel">
-      <div class="auth-box">
-        <div class="auth-tabs" role="tablist" aria-label="账号操作">
-          <button v-for="item in authModes" :key="item.value" type="button" :class="{ active: authMode === item.value }" @click="switchAuthMode(item.value)">{{ item.label }}</button>
-        </div>
+    <section :class="['login-panel', `view-${currentView}`]">
+      <!-- 左侧提示：去登录（注册 / 找回密码时可见） -->
+      <div class="con-box left">
+        <span class="con-icon">🍽️</span>
+        <h2>欢迎来到<span>智慧食堂</span></h2>
+        <p>已有<span>账号</span>？</p>
+        <button @click="slideToLogin">去登录</button>
+      </div>
 
-        <form v-if="authMode === 'login'" class="auth-form" @submit.prevent="handleLogin">
-          <div><p class="eyebrow">统一账号入口</p><h2>登录智慧食堂</h2><p>学生使用手机号，管理员继续使用原账号。</p></div>
-          <label>手机号或账号<input v-model.trim="loginForm.identifier" autocomplete="username" placeholder="请输入手机号或管理员账号"></label>
-          <label>密码<input v-model="loginForm.password" type="password" autocomplete="current-password" placeholder="请输入密码"></label>
+      <!-- 右侧提示：去注册（登录时可见，找回密码时隐藏） -->
+      <div class="con-box right" :class="{ 'con-hidden': currentView === 'forgot' }">
+        <span class="con-icon">🥗</span>
+        <h2>欢迎来到<span>智慧食堂</span></h2>
+        <p>还没有<span>账号</span>？</p>
+        <button @click="slideToRegister">去注册</button>
+      </div>
+
+      <!-- 滑动表单盒子 -->
+      <div class="form-box" :class="{ 'slide-register': currentView === 'register' }">
+
+        <!-- 登录 -->
+        <form v-show="currentView === 'login'" class="form-inner" @submit.prevent="handleLogin">
+          <h1>login</h1>
+          <p class="form-subtitle">统一账号入口</p>
+          <div class="input-group">
+            <input v-model.trim="loginForm.identifier" placeholder="手机号或账号" autocomplete="username">
+            <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password">
+          </div>
           <p v-if="authError || store.error" class="form-error">{{ authError || store.error }}</p>
           <button class="submit-btn" type="submit" :disabled="store.loading">{{ store.loading ? '登录中...' : '登录' }}</button>
+          <p class="forgot-link" @click="showForgotPassword">忘记密码？</p>
         </form>
 
-        <form v-else-if="authMode === 'register'" class="auth-form" @submit.prevent="handleRegister">
-          <div><p class="eyebrow">学生注册</p><h2>创建手机号账号</h2><p>验证码有效期 5 分钟，密码至少包含字母和数字。</p></div>
-          <label>手机号<input v-model.trim="registerForm.phone" inputmode="numeric" autocomplete="tel" maxlength="11" placeholder="请输入手机号"></label>
-          <label>验证码<span class="auth-code-row"><input v-model.trim="registerForm.verificationCode" inputmode="numeric" maxlength="6" placeholder="6 位验证码"><button type="button" :disabled="codeSending" @click="sendCode('register')">{{ codeSending ? '发送中' : '获取验证码' }}</button></span></label>
-          <label>昵称（可选）<input v-model.trim="registerForm.nickname" maxlength="32" placeholder="如何称呼你"></label>
-          <label>密码<input v-model="registerForm.password" type="password" autocomplete="new-password" placeholder="8-72 位，包含字母和数字"></label>
-          <label>确认密码<input v-model="registerForm.confirmPassword" type="password" autocomplete="new-password" placeholder="再次输入密码"></label>
+        <!-- 注册 -->
+        <form v-show="currentView === 'register'" class="form-inner" @submit.prevent="handleRegister">
+          <h1>register</h1>
+          <p class="form-subtitle">创建新账号进入系统</p>
+          <div class="input-group">
+            <input v-model.trim="registerForm.phone" inputmode="numeric" maxlength="11" placeholder="手机号" autocomplete="tel">
+            <div class="code-row">
+              <input v-model.trim="registerForm.verificationCode" inputmode="numeric" maxlength="6" placeholder="验证码">
+              <button type="button" :disabled="codeSending" @click="sendCode('register')">{{ codeSending ? '发送中' : '获取验证码' }}</button>
+            </div>
+            <input v-model.trim="registerForm.nickname" maxlength="32" placeholder="昵称（可选）">
+            <input v-model="registerForm.password" type="password" placeholder="密码（8-72位，含字母和数字）" autocomplete="new-password">
+            <input v-model="registerForm.confirmPassword" type="password" placeholder="确认密码" autocomplete="new-password">
+          </div>
           <label class="auth-agreement"><input v-model="registerForm.agreementAccepted" type="checkbox"><span>我已阅读并同意 <button type="button" @click="legalDocument='privacy'">隐私保护指引</button> 与 <button type="button" @click="legalDocument='terms'">用户服务协议</button></span></label>
           <p v-if="authError" class="form-error">{{ authError }}</p>
           <button class="submit-btn" type="submit" :disabled="store.loading">{{ store.loading ? '注册中...' : '注册并登录' }}</button>
+          <p class="back-link" @click="slideToLogin">← 返回登录</p>
         </form>
 
-        <form v-else class="auth-form" @submit.prevent="handleResetPassword">
-          <div><p class="eyebrow">找回密码</p><h2>重设学生密码</h2><p>验证注册手机号后，当前账号的旧登录状态会立即失效。</p></div>
-          <label>手机号<input v-model.trim="resetForm.phone" inputmode="numeric" maxlength="11" placeholder="请输入手机号"></label>
-          <label>验证码<span class="auth-code-row"><input v-model.trim="resetForm.verificationCode" inputmode="numeric" maxlength="6" placeholder="6 位验证码"><button type="button" :disabled="codeSending" @click="sendCode('reset_password')">{{ codeSending ? '发送中' : '获取验证码' }}</button></span></label>
-          <label>新密码<input v-model="resetForm.password" type="password" autocomplete="new-password" placeholder="8-72 位，包含字母和数字"></label>
-          <label>确认新密码<input v-model="resetForm.confirmPassword" type="password" autocomplete="new-password" placeholder="再次输入新密码"></label>
+        <!-- 找回密码 -->
+        <form v-show="currentView === 'forgot'" class="form-inner" @submit.prevent="handleResetPassword">
+          <h1>reset</h1>
+          <p class="form-subtitle">重设学生密码</p>
+          <div class="input-group">
+            <input v-model.trim="resetForm.phone" inputmode="numeric" maxlength="11" placeholder="手机号" autocomplete="tel">
+            <div class="code-row">
+              <input v-model.trim="resetForm.verificationCode" inputmode="numeric" maxlength="6" placeholder="验证码">
+              <button type="button" :disabled="codeSending" @click="sendCode('reset_password')">{{ codeSending ? '发送中' : '获取验证码' }}</button>
+            </div>
+            <input v-model="resetForm.password" type="password" placeholder="新密码（8-72位，含字母和数字）" autocomplete="new-password">
+            <input v-model="resetForm.confirmPassword" type="password" placeholder="确认新密码" autocomplete="new-password">
+          </div>
           <p v-if="authError" class="form-error">{{ authError }}</p>
           <button class="submit-btn" type="submit" :disabled="store.loading">确认重设</button>
+          <p class="back-link" @click="backToLogin">← 返回登录</p>
         </form>
+
       </div>
     </section>
   </div>
@@ -192,8 +228,7 @@ function isNavActive(item) {
   const params = new URLSearchParams(queryString);
   return [...params.entries()].every(([key, value]) => route.query[key] === value);
 }
-const authModes = [{ value: 'login', label: '登录' }, { value: 'register', label: '注册' }, { value: 'reset', label: '找回密码' }];
-const authMode = ref('login');
+const currentView = ref('login');   // 'login' | 'register' | 'forgot'
 const loginForm = reactive({ identifier: '', password: '' });
 const registerForm = reactive({ phone: '', verificationCode: '', nickname: '', password: '', confirmPassword: '', agreementAccepted: false });
 const resetForm = reactive({ phone: '', verificationCode: '', password: '', confirmPassword: '' });
@@ -219,6 +254,11 @@ onMounted(async () => {
     await router.replace(landingPathForRole(store.user?.role));
   }
 });
+function showView(view) { currentView.value = view; authError.value = ''; }
+function slideToLogin() { showView('login'); }
+function slideToRegister() { showView('register'); }
+function showForgotPassword() { showView('forgot'); }
+function backToLogin() { showView('login'); }
 function navBadge(item) { return item.to === '/health-profile' && profileIncomplete.value ? '待完善' : (item.badge || (item.featured ? 'NEW' : '')); }
 function handleNavClick(navigate, event) {
   navigate(event);
@@ -236,8 +276,6 @@ async function handleLogin() {
     authError.value = error.message;
   }
 }
-
-function switchAuthMode(mode) { authMode.value = mode; authError.value = ''; }
 
 async function sendCode(purpose) {
   const phone = purpose === 'register' ? registerForm.phone : resetForm.phone;
@@ -268,7 +306,7 @@ async function handleResetPassword() {
   try {
     await store.resetPassword({ phone: resetForm.phone, verificationCode: resetForm.verificationCode, newPassword: resetForm.password });
     Object.assign(loginForm, { identifier: resetForm.phone, password: '' });
-    switchAuthMode('login');
+    backToLogin();
   } catch (error) { authError.value = error.message; }
 }
 
@@ -287,27 +325,10 @@ async function deferOnboarding() {
 </script>
 
 <style scoped>
-.auth-panel { display:grid; place-items:center; padding:clamp(20px,4vw,48px); }
-.auth-box { width:min(100%,460px); max-height:calc(100vh - 72px); overflow:auto; border:1px solid rgba(31,122,77,.14); border-radius:20px; background:rgba(255,255,255,.94); padding:28px; box-shadow:0 24px 64px rgba(28,66,40,.14); }
-.auth-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; padding:5px; border-radius:12px; background:#eef5ef; }
-.auth-tabs button { min-height:40px; border:0; border-radius:9px; color:var(--muted); background:transparent; font-weight:700; }
-.auth-tabs button.active { color:#fff; background:var(--primary); }
-.auth-form { display:grid; gap:14px; margin-top:24px; }
-.auth-form h2 { margin:4px 0; font-size:24px; }
-.auth-form p { margin:0; color:var(--muted); line-height:1.55; }
-.auth-form label { display:grid; gap:7px; color:var(--text); font-size:14px; }
-.auth-code-row { display:grid; grid-template-columns:minmax(0,1fr) 112px; gap:8px; }
-.auth-code-row button { border:1px solid rgba(31,122,77,.2); border-radius:12px; color:var(--primary); background:#eff7ef; font-weight:700; }
-.auth-agreement { display:flex !important; grid-template-columns:none; align-items:flex-start; gap:8px !important; color:var(--muted) !important; font-size:13px !important; }
-.auth-agreement input { width:18px; margin-top:2px; }
-.auth-agreement button { display:inline; border:0; padding:0; color:var(--primary); background:transparent; font:inherit; }
-.demo-login-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.demo-login-row button { min-height:40px; border:1px solid rgba(31,122,77,.16); border-radius:10px; color:var(--primary); background:#fff; }
 .onboarding-backdrop { position:fixed; inset:0; z-index:50; display:grid; place-items:center; padding:20px; background:rgba(17,31,22,.48); }
 .onboarding-dialog { width:min(100%,440px); border-radius:16px; background:#fff; padding:28px; box-shadow:0 26px 80px rgba(0,0,0,.22); }
 .onboarding-dialog h2 { margin:6px 0 10px; font-size:24px; }
 .onboarding-dialog>p:not(.eyebrow):not(.form-error) { color:var(--muted); line-height:1.65; }
 .onboarding-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:22px; }
 .legal-dialog { max-height:min(680px,86vh); overflow:auto; }.legal-dialog .primary { width:100%; margin-top:14px; }
-@media (max-width:720px) { .auth-box { padding:20px; max-height:none; } .auth-code-row { grid-template-columns:minmax(0,1fr) 104px; } }
 </style>

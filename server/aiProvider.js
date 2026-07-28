@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { DISH_AI_ANNOTATION_BATCH_JSON_SCHEMA } from './dishAiAnnotations.js';
+import { CATALOG_INTRODUCTION_BATCH_JSON_SCHEMA } from './catalogIntroductions.js';
 
 const runtimeConfig = {
   apiKey: '',
@@ -519,7 +520,38 @@ async function postJson(url, payload, config = providerConfig()) {
       signal: controller.signal
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error?.message || data.error || `AI provider error: ${response.status}`);
+    if (!response.ok) {
+      const rawMessage = data.error?.message || data.error || data.message;
+      const message = typeof rawMessage === 'string' ? rawMessage : `AI provider error: ${response.status}`;
+      const retryAfter = response.headers.get('retry-after');
+      let retryAfterMs = null;
+      if (retryAfter && Number.isFinite(Number(retryAfter))) retryAfterMs = Math.max(0, Number(retryAfter) * 1000);
+      else if (retryAfter) {
+        const retryAt = Date.parse(retryAfter);
+        if (Number.isFinite(retryAt)) retryAfterMs = Math.max(0, retryAt - Date.now());
+      }
+      const error = Object.assign(new Error(message), {
+        status: response.status,
+        code: response.status === 429
+          ? 'AI_PROVIDER_RATE_LIMITED'
+          : [401, 403].includes(response.status)
+            ? 'AI_PROVIDER_AUTH_FAILED'
+            : response.status >= 500
+              ? 'AI_PROVIDER_UNAVAILABLE'
+              : 'AI_PROVIDER_HTTP_ERROR',
+        retryAfterMs,
+        requestId: response.headers.get('x-request-id') || response.headers.get('cf-ray') || null,
+        rateLimit: {
+          limitRequests: response.headers.get('x-ratelimit-limit-requests'),
+          remainingRequests: response.headers.get('x-ratelimit-remaining-requests'),
+          resetRequests: response.headers.get('x-ratelimit-reset-requests'),
+          limitTokens: response.headers.get('x-ratelimit-limit-tokens'),
+          remainingTokens: response.headers.get('x-ratelimit-remaining-tokens'),
+          resetTokens: response.headers.get('x-ratelimit-reset-tokens'),
+        },
+      });
+      throw error;
+    }
     return data;
   } catch (error) {
     const normalizedError = error?.name === 'AbortError' || error?.code === 20
@@ -527,7 +559,12 @@ async function postJson(url, payload, config = providerConfig()) {
         code: 'AI_PROVIDER_TIMEOUT',
         cause: error,
       })
-      : error;
+      : error instanceof TypeError && !error.code
+        ? Object.assign(new Error('AI provider network request failed'), {
+          code: 'AI_PROVIDER_NETWORK_ERROR',
+          cause: error,
+        })
+        : error;
     if (config.providerType === 'chat') openChatCircuit(normalizedError);
     throw normalizedError;
   } finally {
@@ -706,7 +743,7 @@ function selectGroundingCitations(citations = [], query = '', intent = '', limit
 
 function hasUnsupportedSafetyClaim(answer) {
   const withoutNegatedSafety = String(answer || '').replace(
-    /(?:不能|无法|不可|不应|不建议|不要|未能|不可以)\s*(?:(?:确认|判断|确定)\s*)?(?:(?:能否|是否)\s*)?(?:安全食用|放心吃|放心食用|不含|绝对不含|没有过敏风险)/g,
+    /(?:不能|无法|不可|不应|不建议|不要|未能|不可以)\s*(?:(?:确认|判断|确定)\s*)?(?:(?:能否|是否)\s*)?(?:能\s*)?(?:安全食用|放心吃|放心食用|不含|绝对不含|没有过敏风险)/g,
     '',
   );
   return /(?:安全食用|放心吃|放心食用|确认不含|绝对不含|没有过敏风险)/.test(withoutNegatedSafety);
@@ -1019,6 +1056,7 @@ export async function generateGroundedAgentAnswer({
   const repairStartedAt = performance.now();
   const repairData = await postJson(`${config.baseUrl}/chat/completions`, {
     ...request,
+    max_tokens: 5000,
     messages: [
       { role: 'system', content: groundedAnswerSystemPrompt({ repair: true }) },
       {
@@ -1027,12 +1065,8 @@ export async function generateGroundedAgentAnswer({
           task: 'repair_grounded_answer_once',
           failureReason: first.reason,
           rejectedOutput: first.rawOutput.slice(0, 2000),
-          query: String(query || '').slice(0, 1000),
-          intent: String(intent || ''),
-          hardConstraints,
           requirements: promptRequirements,
-          evidence,
-          deterministicAnswer: String(deterministicAnswer || '').slice(0, 600),
+          instruction: '只修复JSON、引用ID和必需边界声明；保留原答案已有事实，不得新增事实。',
         }),
       },
     ],
@@ -1154,6 +1188,108 @@ export async function generateDishAnnotationCandidates({ dishes = [], knowledge 
       `AI annotation JSON is invalid (finish=${choice.finish_reason || 'unknown'}, chars=${String(content).length}, completionTokens=${completionTokens}): ${error.message}`,
     ), { code: 'INVALID_ANNOTATION_JSON' });
   }
+  const usage = data.usage || {};
+  return {
+    ...parsed,
+    model: data.model || config.chatModel,
+    finishReason: choice.finish_reason || null,
+    usage: {
+      promptTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0,
+      completionTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0,
+      totalTokens: Number(usage.total_tokens ?? 0) || 0,
+    },
+  };
+}
+
+function catalogIntroductionSystemPrompt(promptVersion, { repair = false } = {}) {
+  return [
+    '你是校园餐饮目录介绍整理器，只能使用输入 evidence 中明确提供的目录信息。',
+    '按 outputSchema 只输出 JSON，不得输出 Markdown、解释或额外字段。',
+    '每个输入实体必须恰好返回一条 introduction，entityType 与 entityId 必须逐字复制。',
+    'factualClaims 只陈述名称、层级位置、目录数量、结构化价格形式、菜单中实际出现的名称和数据库经营状态。',
+    'factualClaims 必须明确写出当前实体名称；菜品还必须在正文中实际写出价格、位置、同档口菜品这三类证据中的至少两类。',
+    '有菜单的档口、餐厅或食堂必须在正文中写出输入提供的菜品数、档口数、代表菜、代表档口或下级场所之一，不能只写通用名称模板。',
+    'recommendationClaims 必须使用“目录显示”“从菜单结构看可能”“可优先了解”“待核验”之类的不确定措辞。',
+    '每条声明必须引用该实体 allowedEvidenceIds 中至少一个 ID，不得编造、改写或跨实体使用 ID。',
+    '不得声称真实配方、确定配料、过敏安全、确认不含、清真认证、精确营养、销量、人气、招牌、正宗、新鲜、现做、品质、营业时间、库存或今日供应。',
+    '不得把 semanticLabels、concepts 或同档口菜名升级为真实配料、营养或安全事实。',
+    'MENU_MISSING 表示没有菜单：只说明位置、名称、尚未收录菜单和信息待核验，不得依据品牌名猜测。',
+    '数字必须逐字来自对应 evidence，不得自行计算或四舍五入。',
+    'semanticLabels 只能选择 evidence.semanticLabels、concepts.name 或 menu.semanticGroups.label 中已有的值。',
+    'boundaryCodes 至少保留 evidence.boundaryCodes 中的边界。',
+    repair ? '这是一次定向修复：只能修复给出的校验错误，不得新增事实或证据。' : '',
+    `提示词版本：${String(promptVersion || 'unknown')}`,
+  ].filter(Boolean).join('\n');
+}
+
+function catalogIntroductionPayload(items, extra = {}) {
+  return {
+    outputSchema: CATALOG_INTRODUCTION_BATCH_JSON_SCHEMA,
+    items: items.map((item) => ({
+      entityType: item.entityType,
+      hierarchyLevel: item.hierarchyLevel,
+      entityId: item.entity.id,
+      evidence: item,
+    })),
+    ...extra,
+  };
+}
+
+/** Generate review-only catalog introductions. Local evidence validation remains authoritative. */
+export async function generateCatalogIntroductionCandidates({ items = [], promptVersion } = {}) {
+  const config = chatProviderConfig();
+  if (!config.enabled) throw Object.assign(new Error('AI Chat provider is not configured'), { code: 'CHAT_PROVIDER_NOT_CONFIGURED' });
+  if (!Array.isArray(items) || !items.length || items.length > 10) {
+    throw Object.assign(new Error('Catalog introduction batches must contain 1-10 entities'), { code: 'INVALID_CATALOG_INTRODUCTION_BATCH' });
+  }
+  const data = await postJson(`${config.baseUrl}/chat/completions`, {
+    model: config.chatModel,
+    temperature: 0,
+    max_tokens: Math.min(10_000, 1_200 + items.length * 850),
+    reasoning_effort: 'low',
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: catalogIntroductionSystemPrompt(promptVersion) },
+      { role: 'user', content: JSON.stringify(catalogIntroductionPayload(items)) },
+    ],
+  }, { ...config, providerType: 'chat', timeoutMs: Math.max(config.timeoutMs, 90_000) });
+  const choice = data.choices?.[0] || {};
+  const parsed = parseJsonObject(choice.message?.content || '');
+  const usage = data.usage || {};
+  return {
+    ...parsed,
+    model: data.model || config.chatModel,
+    finishReason: choice.finish_reason || null,
+    usage: {
+      promptTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0,
+      completionTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0,
+      totalTokens: Number(usage.total_tokens ?? 0) || 0,
+    },
+  };
+}
+
+export async function repairCatalogIntroductionCandidates({ items = [], previousOutput, validationError, promptVersion } = {}) {
+  const config = chatProviderConfig();
+  if (!config.enabled) throw Object.assign(new Error('AI Chat provider is not configured'), { code: 'CHAT_PROVIDER_NOT_CONFIGURED' });
+  const data = await postJson(`${config.baseUrl}/chat/completions`, {
+    model: config.chatModel,
+    temperature: 0,
+    max_tokens: Math.min(10_000, 1_200 + items.length * 850),
+    reasoning_effort: 'low',
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: catalogIntroductionSystemPrompt(promptVersion, { repair: true }) },
+      {
+        role: 'user',
+        content: JSON.stringify(catalogIntroductionPayload(items, {
+          previousOutput,
+          validationError: { code: validationError?.code || 'VALIDATION_FAILED', message: String(validationError?.message || validationError || '').slice(0, 800) },
+        })),
+      },
+    ],
+  }, { ...config, providerType: 'chat', timeoutMs: Math.max(config.timeoutMs, 90_000) });
+  const choice = data.choices?.[0] || {};
+  const parsed = parseJsonObject(choice.message?.content || '');
   const usage = data.usage || {};
   return {
     ...parsed,

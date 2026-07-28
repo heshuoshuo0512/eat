@@ -24,5 +24,7 @@ miniapp/dist/
 miniapp/node_modules/
 miniapp/unpackage/
 artifacts/miniapp-ui/
+artifacts/admin-*.png
+scripts/.tmp-smart-canteen-*
 __pycache__/
 *.py[cod]

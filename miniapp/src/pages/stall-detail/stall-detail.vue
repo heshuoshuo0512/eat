@@ -10,10 +10,10 @@
             <view><text>{{ stall.category||'综合档口' }}</text><text class="ui-strong">{{ stall.name }}</text><text class="ui-small">{{ stall.floor||'楼层待补' }} · {{ stall.avgPrice?`${stall.avgPrice}元人均`:'人均待核验' }} · {{ stall.open===false?'暂停营业':'营业中' }}</text></view>
             <view class="score"><text class="ui-strong">{{ Number(stall.rating)>0?Number(stall.rating).toFixed(1):'暂无评分' }}</text><text>评分</text></view>
           </view>
-          <text v-if="stall.description" class="description">{{ stall.description }}</text>
-          <view v-if="childStalls.length" class="child-section"><view class="section-head"><text class="ui-strong">子档口</text><text>{{ childStalls.length }} 个窗口</text></view><view class="child-list"><sc-list-row v-for="item in childStalls" :key="item.id" icon-name="store" :title="item.name" :description="`${item.category||'综合档口'} · ${item.floor||stall.floor}`" :badge="`${dishesFor(item.id).length} 道菜`" @tap="openStall(item.id)" /></view></view>
+          <sc-catalog-introduction :entity="stall" />
+          <view v-if="childStalls.length" class="child-section"><view class="section-head"><text class="ui-strong">子档口</text><text>{{ childStalls.length }} 个窗口</text></view><view class="child-list"><view v-for="item in childStalls" :key="item.id" class="catalog-entry"><sc-list-row icon-name="store" :title="item.name" :description="`${item.category||'综合档口'} · ${item.floor||stall.floor}`" :badge="`${dishesFor(item.id).length} 道菜`" @tap="openStall(item.id)" /><sc-catalog-introduction :entity="item" compact /></view></view></view>
         </view>
-        <view class="dish-section"><view class="section-head"><text class="ui-strong">菜品目录</text><text>{{ dishPage.total||displayedDishes.length }} 道菜</text></view><view class="dish-list"><sc-dish-card v-for="dish in displayedDishes" :key="dish.id" :dish="dish" :location="location" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" @tap="openDish(dish.id)" /><text v-if="dishPage.hasMore" class="page-progress">{{ loadingMore?'正在加载更多':'继续上拉加载更多' }}</text><sc-state-card v-if="!displayedDishes.length" type="empty" title="暂无菜品" desc="等待该档口补充菜品信息。" /></view></view>
+        <view class="dish-section"><view class="section-head"><text class="ui-strong">菜品目录</text><text>{{ dishPage.total||displayedDishes.length }} 道菜</text></view><view class="dish-list"><view v-for="dish in displayedDishes" :key="dish.id" class="catalog-entry"><sc-dish-card :dish="dish" :location="location" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" @tap="openDish(dish.id)" /><sc-catalog-introduction :entity="dish" compact /></view><text v-if="dishPage.hasMore" class="page-progress">{{ loadingMore?'正在加载更多':'继续上拉加载更多' }}</text><sc-state-card v-if="!displayedDishes.length" type="empty" title="暂无菜品" desc="等待该档口补充菜品信息。" /></view></view>
       </view>
     </template>
   </sc-page-shell>
@@ -53,6 +53,8 @@ function openStall(id){uni.navigateTo({url:`/pages/stall-detail/stall-detail?id=
 .section-head .ui-strong { color:var(--ink); font-size:16px; }
 .child-list { padding:0 12px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); }
 .dish-list { display:grid; gap:0; padding:0 12px; border-radius:var(--radius-large); background:var(--surface); }
+.catalog-entry { min-width:0; padding-bottom:10px; border-bottom:1px solid var(--line); }
+.catalog-entry:last-child { border-bottom:0; }
 .page-progress { display:block; min-height:44px; color:var(--muted); font-size:12px; line-height:44px; text-align:center; }
 @media (min-width:768px) {
   .detail-workspace { grid-template-columns:320px minmax(0,1fr); align-items:start; }

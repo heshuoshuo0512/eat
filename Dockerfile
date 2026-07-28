@@ -17,6 +17,9 @@ COPY src ./src
 COPY migrations ./migrations
 COPY scripts/reindex-retrieval.mjs ./scripts/reindex-retrieval.mjs
 COPY scripts/migrate-postgres.mjs ./scripts/migrate-postgres.mjs
+COPY scripts/promote-real-catalog-postgres.mjs ./scripts/promote-real-catalog-postgres.mjs
+COPY scripts/import-catalog-introductions-postgres.mjs ./scripts/import-catalog-introductions-postgres.mjs
+COPY scripts/bootstrap-admin.mjs ./scripts/bootstrap-admin.mjs
 COPY data/health-knowledge-bases ./knowledge/health-knowledge-bases
 COPY data/campus-dining-knowledge ./data/campus-dining-knowledge
 COPY --from=build /app/dist ./dist

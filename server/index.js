@@ -7,7 +7,9 @@ import {
   ensureRetrievalIndex,
   listRetrievalTenantIds,
   reindexRetrieval,
-  syncDishRetrievalDocument
+  syncCanteenRetrievalDocument,
+  syncDishRetrievalDocument,
+  syncStallRetrievalDocument
 } from './retrievalIndex.js';
 import { createOutboxWorker } from './outbox.js';
 
@@ -72,6 +74,20 @@ const outboxWorker = createOutboxWorker({
         tenantId: event.tenantId,
         sourceType: event.payload.sourceType,
         sourceId: event.payload.sourceId || event.aggregateId
+      });
+    },
+    async 'retrieval.catalog-introductions.sync'(event) {
+      const entityType = String(event.payload.entityType || '');
+      const entityId = String(event.payload.entityId || '');
+      if (!event.payload.batchId && entityType && entityId) {
+        if (entityType === 'dish') return syncDishRetrievalDocument(workerDb, { tenantId: event.tenantId, dishId: entityId });
+        if (entityType === 'stall') return syncStallRetrievalDocument(workerDb, { tenantId: event.tenantId, stallId: entityId });
+        if (entityType === 'canteen') return syncCanteenRetrievalDocument(workerDb, { tenantId: event.tenantId, canteenId: entityId });
+      }
+      await reindexRetrieval(workerDb, {
+        tenantId: event.tenantId,
+        sourceTypes: ['dish', 'stall', 'canteen'],
+        prune: true,
       });
     }
   }

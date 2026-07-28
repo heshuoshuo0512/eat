@@ -38,6 +38,15 @@ describe('Deployment contract', () => {
     assert.match(script, /REASSIGN OWNED BY :"legacy_owner" TO smart_canteen_migrator/);
   });
 
+  it('grants the Worker read access to approved catalog introductions', () => {
+    const grants = readText('scripts/provision-postgres-roles.sql');
+    assert.match(grants, /GRANT SELECT ON[\s\S]*catalog_introduction_batches, catalog_entity_introductions TO smart_canteen_worker/);
+    const migration = readText('server/migrations/021_catalog_entity_introductions.sql');
+    assert.match(migration, /'preparing','probing','generating','generated','approved','paused','failed','rolled_back'/);
+    assert.match(migration, /ALTER TABLE catalog_introduction_batches ENABLE ROW LEVEL SECURITY/);
+    assert.match(migration, /ALTER TABLE catalog_entity_introductions ENABLE ROW LEVEL SECURITY/);
+  });
+
   it('packages both retrieval knowledge bases in the runtime image', () => {
     const dockerfile = readText('Dockerfile');
     assert.match(dockerfile, /COPY data\/health-knowledge-bases \.\/knowledge\/health-knowledge-bases/);

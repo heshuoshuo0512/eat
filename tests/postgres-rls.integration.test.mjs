@@ -29,6 +29,8 @@ describe('PostgreSQL row-level security integration', { skip: enabled ? false : 
 
     const migration = await migrationDb.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('014_row_level_security');
     assert.ok(migration, 'run migrations and the post-migration role grant before this integration test');
+    const introductionsMigration = await migrationDb.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('021_catalog_entity_introductions');
+    assert.ok(introductionsMigration, 'catalog introduction migration 021 must be applied');
 
     const timestamp = new Date().toISOString();
     for (const [tenantId, name] of [[tenantA, 'RLS A'], [tenantB, 'RLS B']]) {
@@ -90,11 +92,36 @@ describe('PostgreSQL row-level security integration', { skip: enabled ? false : 
         ) VALUES (?, ?, 'rls_fixture', 'rls.fixture', ?, 'pending', ?, ?)
       `).run(eventId, tenantId, eventId, timestamp, timestamp);
     }
+    for (const [batchId, tenantId, status] of [
+      [id('intro-batch-a'), tenantA, 'paused'],
+      [id('intro-batch-b'), tenantB, 'generated'],
+    ]) {
+      await migrationDb.prepare(`
+        INSERT INTO catalog_introduction_batches (
+          id, tenant_id, model, prompt_version, catalog_snapshot_hash, status,
+          entity_count, completed_count, failed_count, created_at, updated_at
+        ) VALUES (?, ?, 'fixture-model', 'fixture-prompt', ?, ?, 2, 1, 0, ?, ?)
+      `).run(batchId, tenantId, id(`snapshot-${tenantId}`), status, timestamp, timestamp);
+    }
+    for (const [introductionId, tenantId, batchId, entityId, status, version] of [
+      [id('intro-a-approved'), tenantA, id('intro-batch-a'), id('canteen-a'), 'approved', 1],
+      [id('intro-a-draft'), tenantA, id('intro-batch-a'), id('canteen-a-draft'), 'schema_validated', 1],
+      [id('intro-b-approved'), tenantB, id('intro-batch-b'), id('canteen-b'), 'approved', 1],
+    ]) {
+      await migrationDb.prepare(`
+        INSERT INTO catalog_entity_introductions (
+          id, tenant_id, batch_id, entity_type, hierarchy_level, entity_id, version,
+          factual_summary, recommendation_copy, input_hash, content_hash, status,
+          model, prompt_version, created_at, updated_at
+        ) VALUES (?, ?, ?, 'canteen', 'venue', ?, ?, 'fixture fact', 'fixture estimate', ?, ?, ?,
+          'fixture-model', 'fixture-prompt', ?, ?)
+      `).run(introductionId, tenantId, batchId, entityId, version, id(`input-${introductionId}`), id(`content-${introductionId}`), status, timestamp, timestamp);
+    }
   });
 
   after(async () => {
     if (migrationDb) {
-      for (const table of ['outbox_events', 'rag_documents', 'campus_posts', 'health_profiles', 'canteens', 'users']) {
+      for (const table of ['catalog_entity_introductions', 'catalog_introduction_batches', 'outbox_events', 'rag_documents', 'campus_posts', 'health_profiles', 'canteens', 'users']) {
         await migrationDb.prepare(`DELETE FROM ${table} WHERE tenant_id IN (?, ?)`).run(tenantA, tenantB);
       }
       await migrationDb.prepare('DELETE FROM rag_documents WHERE id = ?').run(id('rag-global'));
@@ -147,6 +174,28 @@ describe('PostgreSQL row-level security integration', { skip: enabled ? false : 
         `).run(id('student-approved'), tenantA, userA, id('target'), new Date().toISOString(), new Date().toISOString()),
         /row-level security|policy/i
       );
+    });
+  });
+
+  it('exposes approved introductions to students while keeping drafts tenant-staff only', async () => {
+    await apiDb.runWithContext({ tenantId: tenantA, userId: userA, role: 'student', requestId: id('request-intro-student') }, async () => {
+      const rows = await apiDb.prepare('SELECT id FROM catalog_entity_introductions ORDER BY id').all();
+      assert.deepEqual(rows.map((row) => row.id), [id('intro-a-approved')]);
+      await apiDb.prepare("UPDATE catalog_entity_introductions SET factual_summary = 'forbidden' WHERE id = ?").run(id('intro-a-approved'));
+      const unchanged = await apiDb.prepare('SELECT factual_summary FROM catalog_entity_introductions WHERE id = ?').get(id('intro-a-approved'));
+      assert.equal(unchanged.factual_summary, 'fixture fact');
+    });
+
+    await apiDb.runWithContext({ tenantId: tenantA, userId: userA, role: 'canteen_admin', requestId: id('request-intro-staff') }, async () => {
+      const rows = await apiDb.prepare('SELECT id FROM catalog_entity_introductions ORDER BY id').all();
+      assert.deepEqual(rows.map((row) => row.id), [id('intro-a-approved'), id('intro-a-draft')].sort());
+    });
+
+    await workerDb.runWithContext({ tenantId: tenantA, userId: '', role: 'worker', requestId: id('request-intro-worker') }, async () => {
+      const rows = await workerDb.prepare('SELECT id FROM catalog_entity_introductions ORDER BY id').all();
+      assert.deepEqual(rows.map((row) => row.id), [id('intro-a-approved'), id('intro-a-draft')].sort());
+      const batches = await workerDb.prepare('SELECT id, status FROM catalog_introduction_batches ORDER BY id').all();
+      assert.deepEqual(batches, [{ id: id('intro-batch-a'), status: 'paused' }]);
     });
   });
 

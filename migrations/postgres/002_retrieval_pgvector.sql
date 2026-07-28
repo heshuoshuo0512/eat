@@ -1,4 +1,4 @@
--- Retrieval foundation for PostgreSQL 17 + pgvector.
+-- Retrieval foundation for PostgreSQL 16 + pgvector.
 -- Extension creation is intentionally fail-fast: production must not silently
 -- start with a lexical-only schema when pgvector or pg_trgm is unavailable.
 

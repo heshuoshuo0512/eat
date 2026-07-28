@@ -573,6 +573,60 @@ CREATE TABLE IF NOT EXISTS dish_ai_annotations (
   UNIQUE(tenant_id, dish_id, batch_id, input_hash)
 );
 
+CREATE TABLE IF NOT EXISTS catalog_introduction_batches (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  model TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  catalog_data_version TEXT NOT NULL DEFAULT '',
+  catalog_snapshot_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'preparing' CHECK(status IN ('preparing','probing','generating','generated','approved','paused','failed','rolled_back')),
+  entity_count INTEGER NOT NULL DEFAULT 0 CHECK(entity_count >= 0),
+  completed_count INTEGER NOT NULL DEFAULT 0 CHECK(completed_count >= 0),
+  failed_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_count >= 0),
+  concurrency_json TEXT NOT NULL DEFAULT '{}',
+  metrics_json TEXT NOT NULL DEFAULT '{}',
+  error TEXT,
+  created_by TEXT,
+  reviewed_by TEXT,
+  approved_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(tenant_id, catalog_snapshot_hash, prompt_version, model)
+);
+
+CREATE TABLE IF NOT EXISTS catalog_entity_introductions (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  batch_id TEXT NOT NULL REFERENCES catalog_introduction_batches(id) ON DELETE CASCADE,
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('dish','stall','canteen')),
+  hierarchy_level TEXT NOT NULL CHECK(hierarchy_level IN ('dish','stall','area','venue')),
+  entity_id TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK(version > 0),
+  factual_summary TEXT NOT NULL DEFAULT '',
+  recommendation_copy TEXT NOT NULL DEFAULT '',
+  claim_evidence_json TEXT NOT NULL DEFAULT '[]',
+  semantic_labels_json TEXT NOT NULL DEFAULT '[]',
+  evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+  evidence_snapshot_json TEXT NOT NULL DEFAULT '{}',
+  boundary_codes_json TEXT NOT NULL DEFAULT '[]',
+  confidence_score REAL NOT NULL DEFAULT 0 CHECK(confidence_score BETWEEN 0 AND 1),
+  confidence_level TEXT NOT NULL DEFAULT 'low' CHECK(confidence_level IN ('high','medium','low')),
+  model TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'generated' CHECK(status IN ('generated','schema_validated','approved','rejected','retired')),
+  previous_introduction_id TEXT,
+  error TEXT,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(tenant_id, entity_type, entity_id, version),
+  UNIQUE(tenant_id, entity_type, entity_id, batch_id, input_hash)
+);
+
 CREATE TABLE IF NOT EXISTS campus_posts (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -651,6 +705,10 @@ CREATE INDEX IF NOT EXISTS idx_import_batches_tenant_status ON data_import_batch
 CREATE INDEX IF NOT EXISTS idx_catalog_import_rows_batch ON catalog_import_rows(tenant_id, batch_id, status);
 CREATE INDEX IF NOT EXISTS idx_dish_ai_annotations_tenant_status ON dish_ai_annotations(tenant_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_dish_ai_annotations_dish ON dish_ai_annotations(tenant_id, dish_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_catalog_intro_batches_tenant_status ON catalog_introduction_batches(tenant_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_catalog_introductions_tenant_batch ON catalog_entity_introductions(tenant_id, batch_id, status, hierarchy_level);
+CREATE INDEX IF NOT EXISTS idx_catalog_introductions_entity ON catalog_entity_introductions(tenant_id, entity_type, entity_id, version DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_introductions_one_approved ON catalog_entity_introductions(tenant_id, entity_type, entity_id) WHERE status = 'approved';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_import_rows_source
   ON catalog_import_rows(batch_id, source_hash, source_locator, entity_type, COALESCE(entity_id, ''));
 CREATE INDEX IF NOT EXISTS idx_campus_posts_tenant_status ON campus_posts(tenant_id, status, created_at);

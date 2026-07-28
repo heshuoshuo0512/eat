@@ -42,7 +42,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO smart_can
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO smart_canteen_api;
 REVOKE ALL ON schema_migrations FROM smart_canteen_api, smart_canteen_worker;
 
-GRANT SELECT ON outbox_events, rag_documents, retrieval_index_runs, dishes, stalls, canteens, menus, menu_items, tenants TO smart_canteen_worker;
+GRANT SELECT ON outbox_events, rag_documents, retrieval_index_runs, dishes, stalls, canteens, menus, menu_items, tenants,
+  catalog_introduction_batches, catalog_entity_introductions TO smart_canteen_worker;
 GRANT INSERT, UPDATE, DELETE ON outbox_events, rag_documents, retrieval_index_runs TO smart_canteen_worker;
 GRANT SELECT ON dish_reference_images, dish_image_embeddings, dish_recipe_versions, dish_recipe_ingredients, dish_nutrition_versions TO smart_canteen_worker;
 GRANT INSERT, UPDATE, DELETE ON dish_image_embeddings TO smart_canteen_worker;

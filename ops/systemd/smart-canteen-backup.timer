@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Smart Canteen backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=10m
+Unit=smart-canteen-backup.service
+
+[Install]
+WantedBy=timers.target

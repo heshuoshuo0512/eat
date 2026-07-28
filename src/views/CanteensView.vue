@@ -51,7 +51,7 @@
         <span v-else-if="canteen.operatingStatus === 'closed'" class="venue-availability closed">已关闭</span>
         <span v-else class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
       </div>
-      <p class="muted">{{ canteen.description }}</p>
+      <CatalogIntroduction :entity="canteen" compact />
       <div class="meta-row">
         <span>营业 {{ canteen.hours }}</span>
         <span v-for="tag in canteen.tags" :key="tag" class="pill">{{ tag }}</span>
@@ -92,7 +92,7 @@
           <div><p class="eyebrow">{{ canteen.location }}</p><h2>{{ canteen.displayName || canteen.name }}</h2></div>
           <span class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
         </div>
-        <p class="muted">{{ canteen.description }}</p>
+        <CatalogIntroduction :entity="canteen" compact />
         <div class="meta-row"><span class="pill">{{ store.stalls.filter((stall) => stall.canteenId === canteen.id).length }} 个档口</span><span class="pill">营业 {{ canteen.hours }}</span></div>
         <p class="muted enter-hint">进入子食堂 →</p>
       </article>
@@ -112,7 +112,7 @@
         </div>
         <span class="crowd" :class="crowdClass(selectedSubCanteen?.crowdLevel || 0)">{{ selectedSubCanteen?.crowdLevel || 0 }}%</span>
       </div>
-      <p class="muted">{{ selectedSubCanteen?.description }}</p>
+      <CatalogIntroduction :entity="selectedSubCanteen" />
       <div class="meta-row">
         <span>营业 {{ selectedSubCanteen?.hours }}</span>
         <span v-for="tag in (selectedSubCanteen?.tags || [])" :key="tag" class="pill">{{ tag }}</span>
@@ -140,7 +140,7 @@
             <span class="rating">{{ Number(stall.rating) > 0 ? Number(stall.rating).toFixed(1) : '暂无评分' }}</span>
           </div>
           <small class="muted">{{ stall.category }} · 人均 ¥{{ stall.avgPrice }}</small>
-          <p class="muted">{{ stall.description }}</p>
+          <CatalogIntroduction :entity="stall" compact />
           <div class="meta-row">
             <span class="pill" :class="stall.open ? 'open-tag' : 'closed-tag'">{{ stall.open ? '营业中' : '已关闭' }}</span>
             <span class="pill">{{ dishCountForStall(stall.id) }} 个菜品</span>
@@ -185,7 +185,8 @@
   <section v-if="level === 'stall-dishes'" class="stall-dishes-area">
     <header class="card stall-detail-header">
       <h2>{{ selectedStall?.name }}</h2>
-      <p class="muted">{{ selectedStall?.category }} · 人均 ¥{{ selectedStall?.avgPrice }} · {{ selectedStall?.description }}</p>
+      <p class="muted">{{ selectedStall?.category }} · 人均 ¥{{ selectedStall?.avgPrice }}</p>
+      <CatalogIntroduction :entity="selectedStall" />
       <div class="meta-row">
         <span class="pill" :class="selectedStall?.open ? 'open-tag' : 'closed-tag'">{{ selectedStall?.open ? '营业中' : '已关闭' }}</span>
         <span class="pill">{{ Number(selectedStall?.rating) > 0 ? `⭐ ${Number(selectedStall.rating).toFixed(1)}` : '暂无评分' }}</span>
@@ -206,6 +207,7 @@
           <strong>{{ dish.name }}</strong>
           <small class="muted">{{ dish.cuisine }} · {{ dish.taste || '口味待核验' }} · {{ dishPriceText(dish) }}</small>
           <small class="muted">{{ dishNutritionPresentation(dish).label }}</small>
+          <CatalogIntroduction :entity="dish" compact />
           <div class="meta-row">
             <span class="pill">{{ dishRatingText(dish) }}</span>
             <span v-for="tag in (dish.tags || []).slice(0, 2)" :key="tag" class="pill">{{ tag }}</span>
@@ -221,6 +223,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import CatalogIntroduction from '../components/CatalogIntroduction.vue';
 import { dishNutritionPresentation, dishPriceText, dishRatingText } from '../domain/dishPresentation.js';
 import { validateReviewForm } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';

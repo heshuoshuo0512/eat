@@ -82,21 +82,59 @@ function alignRealCampusVenueCatalog(db) {
     ['east-yanminghu-1f', null, '一楼', 1, 'open', null],
     ['east-yanminghu-2f', null, '二楼', 2, 'open', null],
   ];
-  const update = db.prepare(`UPDATE canteens SET name = COALESCE(?, name), display_name = ?, display_order = ?, operating_status = ?,
-    location = COALESCE(?, location), updated_at = ? WHERE tenant_id = 'default' AND id = ?`);
+  const selectCanteen = db.prepare(`SELECT name, display_name, display_order, operating_status, location,
+    parent_id, canteen_type, venue_kind, hours, description FROM canteens WHERE tenant_id = 'default' AND id = ?`);
+  const update = db.prepare(`UPDATE canteens SET name = ?, display_name = ?, display_order = ?, operating_status = ?,
+    location = ?, updated_at = ? WHERE tenant_id = 'default' AND id = ?`);
   for (const [id, name, displayName, displayOrder, operatingStatus, location] of metadata) {
-    update.run(name, displayName, displayOrder, operatingStatus, location, now, id);
+    const current = selectCanteen.get(id);
+    if (!current) continue;
+    const next = {
+      name: name ?? current.name,
+      displayName,
+      displayOrder,
+      operatingStatus,
+      location: location ?? current.location,
+    };
+    if (current.name !== next.name
+      || current.display_name !== next.displayName
+      || Number(current.display_order) !== next.displayOrder
+      || current.operating_status !== next.operatingStatus
+      || current.location !== next.location) {
+      update.run(next.name, next.displayName, next.displayOrder, next.operatingStatus, next.location, now, id);
+    }
   }
-  db.prepare("UPDATE canteens SET parent_id = NULL, canteen_type = 'primary', venue_kind = 'supermarket', updated_at = ? WHERE tenant_id = 'default' AND id = 'east-guangyuan'").run(now);
-  db.prepare("UPDATE canteens SET parent_id = NULL, canteen_type = 'primary', venue_kind = 'service_building', updated_at = ? WHERE tenant_id = 'default' AND id = 'east-dongdahuo'").run(now);
-  const insert = db.prepare(`INSERT INTO canteens
+  db.prepare("UPDATE canteens SET parent_id = NULL, canteen_type = 'primary', venue_kind = 'supermarket', updated_at = ? WHERE tenant_id = 'default' AND id = 'east-guangyuan' AND (parent_id IS NOT NULL OR canteen_type <> 'primary' OR venue_kind <> 'supermarket')").run(now);
+  db.prepare("UPDATE canteens SET parent_id = NULL, canteen_type = 'primary', venue_kind = 'service_building', updated_at = ? WHERE tenant_id = 'default' AND id = 'east-dongdahuo' AND (parent_id IS NOT NULL OR canteen_type <> 'primary' OR venue_kind <> 'service_building')").run(now);
+  const insertPlaceholder = db.prepare(`INSERT INTO canteens
     (id, tenant_id, name, display_name, display_order, operating_status, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, venue_kind, created_at, updated_at)
-    VALUES (?, 'default', ?, ?, ?, 'renovating', ?, '装修中', 0, '["装修中"]', ?, NULL, 'primary', '', 'dining_hall', ?, ?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name, display_name=excluded.display_name, display_order=excluded.display_order,
-      operating_status='renovating', location=excluded.location, hours='装修中', description=excluded.description, parent_id=NULL, updated_at=excluded.updated_at
-      WHERE canteens.tenant_id=excluded.tenant_id`);
-  insert.run('west-yanyuan', '西区燕园', '燕园', 3, '西区', '西区燕园正在装修，开放后将提供正式校园餐饮目录。', now, now);
-  insert.run('east-shanshuiyuan', '东区山水园', '山水园', 4, '东区', '东区山水园正在装修，开放后将提供正式校园餐饮目录。', now, now);
+    VALUES (?, 'default', ?, ?, ?, 'renovating', ?, '装修中', 0, '["装修中"]', ?, NULL, 'primary', '', 'dining_hall', ?, ?)`);
+  const updatePlaceholder = db.prepare(`UPDATE canteens SET name = ?, display_name = ?, display_order = ?,
+    operating_status = 'renovating', location = ?, hours = '装修中', description = ?, parent_id = NULL,
+    canteen_type = 'primary', venue_kind = 'dining_hall', updated_at = ?
+    WHERE tenant_id = 'default' AND id = ?`);
+  for (const [id, name, displayName, displayOrder, location, description] of [
+    ['west-yanyuan', '西区燕园', '燕园', 3, '西区', '西区燕园正在装修，开放后将提供正式校园餐饮目录。'],
+    ['east-shanshuiyuan', '东区山水园', '山水园', 4, '东区', '东区山水园正在装修，开放后将提供正式校园餐饮目录。'],
+  ]) {
+    const current = selectCanteen.get(id);
+    if (!current) {
+      insertPlaceholder.run(id, name, displayName, displayOrder, location, description, now, now);
+      continue;
+    }
+    if (current.name !== name
+      || current.display_name !== displayName
+      || Number(current.display_order) !== displayOrder
+      || current.operating_status !== 'renovating'
+      || current.location !== location
+      || current.hours !== '装修中'
+      || current.description !== description
+      || current.parent_id !== null
+      || current.canteen_type !== 'primary'
+      || current.venue_kind !== 'dining_hall') {
+      updatePlaceholder.run(name, displayName, displayOrder, location, description, now, id);
+    }
+  }
 }
 
 function migrate(db) {
@@ -243,6 +281,60 @@ function migrate(db) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       UNIQUE(tenant_id, dish_id, batch_id, input_hash)
+    );
+
+    CREATE TABLE IF NOT EXISTS catalog_introduction_batches (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      model TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      catalog_data_version TEXT NOT NULL DEFAULT '',
+      catalog_snapshot_hash TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'preparing' CHECK(status IN ('preparing','probing','generating','generated','approved','paused','failed','rolled_back')),
+      entity_count INTEGER NOT NULL DEFAULT 0 CHECK(entity_count >= 0),
+      completed_count INTEGER NOT NULL DEFAULT 0 CHECK(completed_count >= 0),
+      failed_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_count >= 0),
+      concurrency_json TEXT NOT NULL DEFAULT '{}',
+      metrics_json TEXT NOT NULL DEFAULT '{}',
+      error TEXT,
+      created_by TEXT,
+      reviewed_by TEXT,
+      approved_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, catalog_snapshot_hash, prompt_version, model)
+    );
+
+    CREATE TABLE IF NOT EXISTS catalog_entity_introductions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      batch_id TEXT NOT NULL REFERENCES catalog_introduction_batches(id) ON DELETE CASCADE,
+      entity_type TEXT NOT NULL CHECK(entity_type IN ('dish','stall','canteen')),
+      hierarchy_level TEXT NOT NULL CHECK(hierarchy_level IN ('dish','stall','area','venue')),
+      entity_id TEXT NOT NULL,
+      version INTEGER NOT NULL CHECK(version > 0),
+      factual_summary TEXT NOT NULL DEFAULT '',
+      recommendation_copy TEXT NOT NULL DEFAULT '',
+      claim_evidence_json TEXT NOT NULL DEFAULT '[]',
+      semantic_labels_json TEXT NOT NULL DEFAULT '[]',
+      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+      evidence_snapshot_json TEXT NOT NULL DEFAULT '{}',
+      boundary_codes_json TEXT NOT NULL DEFAULT '[]',
+      confidence_score REAL NOT NULL DEFAULT 0 CHECK(confidence_score BETWEEN 0 AND 1),
+      confidence_level TEXT NOT NULL DEFAULT 'low' CHECK(confidence_level IN ('high','medium','low')),
+      model TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'generated' CHECK(status IN ('generated','schema_validated','approved','rejected','retired')),
+      previous_introduction_id TEXT,
+      error TEXT,
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, entity_type, entity_id, version),
+      UNIQUE(tenant_id, entity_type, entity_id, batch_id, input_hash)
     );
 
     CREATE TABLE IF NOT EXISTS dish_reference_images (
@@ -937,6 +1029,10 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_catalog_import_rows_batch ON catalog_import_rows(tenant_id, batch_id, status);
     CREATE INDEX IF NOT EXISTS idx_dish_ai_annotations_tenant_status ON dish_ai_annotations(tenant_id, status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_dish_ai_annotations_dish ON dish_ai_annotations(tenant_id, dish_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_catalog_intro_batches_tenant_status ON catalog_introduction_batches(tenant_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_catalog_introductions_tenant_batch ON catalog_entity_introductions(tenant_id, batch_id, status, hierarchy_level);
+    CREATE INDEX IF NOT EXISTS idx_catalog_introductions_entity ON catalog_entity_introductions(tenant_id, entity_type, entity_id, version DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_introductions_one_approved ON catalog_entity_introductions(tenant_id, entity_type, entity_id) WHERE status = 'approved';
     CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_import_rows_source
       ON catalog_import_rows(batch_id, source_hash, source_locator, entity_type, COALESCE(entity_id, ''));
   `);

@@ -24,6 +24,9 @@
       </form>
 
       <div class="catalog-toolbar-actions">
+        <button v-if="canReviewIntroductions" class="tool-button" type="button" @click="toggleIntroductionPanel">
+          <span aria-hidden="true">文</span><span>介绍审核</span>
+        </button>
         <button class="tool-button" type="button" :disabled="refreshing" title="刷新目录" @click="refreshTree">
           <span class="refresh-symbol" :class="{ spinning: refreshing }" aria-hidden="true">↻</span>
           <span>刷新</span>
@@ -42,6 +45,45 @@
       <button type="button" @click="refreshTree">重试</button>
     </div>
     <div v-else-if="successMessage" class="catalog-notice success" role="status">{{ successMessage }}</div>
+
+    <section v-if="introductionPanelOpen" class="introduction-review" aria-label="目录介绍审核">
+      <header class="introduction-review-head">
+        <div><p class="catalog-eyebrow">AI目录整理 / 人工审核</p><h2>分层介绍审核</h2></div>
+        <button class="icon-action" type="button" @click="introductionPanelOpen=false">关闭</button>
+      </header>
+      <div class="introduction-filters">
+        <label>批次<select v-model="selectedIntroductionBatch" @change="loadIntroductions(0)"><option value="">选择批次</option><option v-for="batch in introductionBatches" :key="batch.id" :value="batch.id">{{ batch.id }} · {{ batch.status }} · {{ batch.completedCount }}/{{ batch.entityCount }}</option></select></label>
+        <label>实体<select v-model="introductionFilters.entityType" @change="loadIntroductions(0)"><option value="">全部</option><option value="dish">菜品</option><option value="stall">档口</option><option value="canteen">餐厅/食堂</option></select></label>
+        <label>状态<select v-model="introductionFilters.status" @change="loadIntroductions(0)"><option value="">全部</option><option value="schema_validated">待审核</option><option value="approved">已批准</option><option value="rejected">已拒绝</option></select></label>
+        <label>搜索<input v-model.trim="introductionFilters.q" type="search" @keyup.enter="loadIntroductions(0)" /></label>
+        <button type="button" :disabled="introductionLoading" @click="loadIntroductions(0)">查询</button>
+        <button v-if="canApproveIntroductionBatch&&selectedIntroductionBatch" type="button" @click="previewIntroductionApproval">整批批准预览</button>
+        <button v-if="canRollbackIntroductionBatch" type="button" @click="prepareIntroductionRollback">整批回滚</button>
+      </div>
+      <div v-if="introductionPreview" class="introduction-preview">
+        <p>候选 {{ introductionPreview.candidateCount }}/{{ introductionPreview.entityCount }} · 缺失 {{ introductionPreview.missingCount }} · 过期 {{ introductionPreview.staleCount }} · 无效 {{ introductionPreview.invalidCount }} · 低置信 {{ introductionPreview.lowConfidenceCount }}</p>
+        <label>确认文字<input v-model="introductionConfirmation" :placeholder="introductionPreview.requiredConfirmation" /></label>
+        <button type="button" :disabled="!introductionPreview.approvable||introductionConfirmation!==introductionPreview.requiredConfirmation" @click="approveIntroductionBatch">批准全校介绍</button>
+      </div>
+      <div v-if="introductionRollback" class="introduction-preview">
+        <p>回滚后将停用本批介绍，并恢复各实体上一版已批准介绍。</p>
+        <label>确认文字<input v-model="introductionRollbackConfirmation" :placeholder="introductionRollback.requiredConfirmation" /></label>
+        <button type="button" :disabled="introductionRollbackConfirmation!==introductionRollback.requiredConfirmation" @click="rollbackIntroductionBatch">确认整批回滚</button>
+      </div>
+      <p v-if="introductionMessage" class="catalog-notice" role="status">{{ introductionMessage }}</p>
+      <div v-if="introductionLoading" class="catalog-loading"><span v-for="index in 4" :key="index"></span></div>
+      <div v-else class="introduction-table">
+        <article v-for="item in introductionItems" :key="item.id" class="introduction-row">
+          <header><strong>{{ introductionEntityLabel(item) }} · {{ item.entityId }}</strong><span :class="['venue-status',item.status==='approved'?'active':item.status==='rejected'?'inactive':'renovating']">{{ item.status }}</span></header>
+          <label>目录事实摘要<textarea v-model="item.factualSummary" maxlength="720" /></label>
+          <label>推测性推荐文案<textarea v-model="item.recommendationCopy" maxlength="540" /></label>
+          <p class="introduction-meta">置信度 {{ item.confidence.level }} {{ Math.round(item.confidence.score*100) }}% · {{ item.evidenceIds.length }} 条证据 · {{ item.boundaryCodes.join(' / ') }}</p>
+          <div class="introduction-actions"><button type="button" @click="saveIntroduction(item,'schema_validated')">保存</button><button type="button" @click="saveIntroduction(item,'approved')">批准</button><button type="button" @click="saveIntroduction(item,'rejected')">拒绝</button></div>
+        </article>
+        <p v-if="!introductionItems.length" class="inline-empty">该筛选条件下没有介绍候选。</p>
+      </div>
+      <footer v-if="introductionTotal>introductionLimit" class="introduction-pagination"><button type="button" :disabled="introductionOffset===0" @click="loadIntroductions(Math.max(0,introductionOffset-introductionLimit))">上一页</button><span>{{ introductionOffset+1 }}-{{ Math.min(introductionOffset+introductionItems.length,introductionTotal) }} / {{ introductionTotal }}</span><button type="button" :disabled="introductionOffset+introductionLimit>=introductionTotal" @click="loadIntroductions(introductionOffset+introductionLimit)">下一页</button></footer>
+    </section>
 
     <div v-if="loading && !venues.length" class="venue-grid loading-grid" aria-label="正在加载真实餐饮目录">
       <article v-for="index in 2" :key="index" class="venue-panel venue-panel-placeholder">
@@ -383,6 +425,7 @@ import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, rea
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 import CatalogEditorDrawer from '../components/CatalogEditorDrawer.vue';
 import { dishPriceText } from '../domain/dishPresentation.js';
+import { apiClient } from '../services/apiClient.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const HighlightText = defineComponent({
@@ -419,6 +462,20 @@ const scrollElements = new Map();
 const areaElements = new Map();
 const modeByVenue = reactive({});
 const highlightedNode = ref('');
+const introductionPanelOpen = ref(false);
+const introductionBatches = ref([]);
+const selectedIntroductionBatch = ref('');
+const introductionFilters = reactive({ entityType: '', status: 'schema_validated', q: '' });
+const introductionItems = ref([]);
+const introductionTotal = ref(0);
+const introductionLimit = 24;
+const introductionOffset = ref(0);
+const introductionLoading = ref(false);
+const introductionMessage = ref('');
+const introductionPreview = ref(null);
+const introductionConfirmation = ref('');
+const introductionRollback = ref(null);
+const introductionRollbackConfirmation = ref('');
 let searchTimer = null;
 let messageTimer = null;
 let highlightTimer = null;
@@ -430,10 +487,10 @@ let loadedSearchQuery = null;
 const roleCapabilities = {
   operator: ['stall:write', 'dish:write', 'dish:bulk_import'],
   stall_admin: ['stall:write', 'dish:write', 'dish:bulk_import'],
-  canteen_admin: ['canteen:write', 'stall:write', 'dish:write', 'dish:bulk_import'],
-  tenant_admin: ['canteen:write', 'stall:write', 'dish:write', 'dish:bulk_import'],
-  admin: ['canteen:write', 'stall:write', 'dish:write', 'dish:bulk_import'],
-  super_admin: ['canteen:write', 'stall:write', 'dish:write', 'dish:bulk_import']
+  canteen_admin: ['canteen:write', 'stall:write', 'dish:write', 'dish:bulk_import', 'catalog:introduction:review'],
+  tenant_admin: ['canteen:write', 'stall:write', 'dish:write', 'dish:bulk_import', 'catalog:introduction:review', 'catalog:introduction:approve_all'],
+  admin: ['canteen:write', 'stall:write', 'dish:write', 'dish:bulk_import', 'catalog:introduction:review', 'catalog:introduction:approve_all'],
+  super_admin: ['canteen:write', 'stall:write', 'dish:write', 'dish:bulk_import', 'catalog:introduction:review', 'catalog:introduction:approve_all']
 };
 
 function hasCapability(permission) {
@@ -447,6 +504,10 @@ const canWriteCanteens = computed(() => hasCapability('canteen:write'));
 const canWriteStalls = computed(() => hasCapability('stall:write'));
 const canWriteDishes = computed(() => hasCapability('dish:write'));
 const canBulkImportDishes = computed(() => hasCapability('dish:bulk_import'));
+const canReviewIntroductions = computed(() => hasCapability('catalog:introduction:review'));
+const canApproveIntroductionBatch = computed(() => hasCapability('catalog:introduction:approve_all'));
+const selectedIntroductionBatchRecord = computed(() => introductionBatches.value.find((batch) => batch.id === selectedIntroductionBatch.value) || null);
+const canRollbackIntroductionBatch = computed(() => canApproveIntroductionBatch.value && selectedIntroductionBatchRecord.value?.status === 'approved');
 const tenantLabel = computed(() => store.user?.tenantName || store.user?.tenantId || store.user?.nickname || '当前租户');
 
 const venues = computed(() => (store.adminCatalogTree?.regions || []).map((current) => ({
@@ -796,6 +857,151 @@ function formatCatalogError(error, fallback) {
   return detail && detail !== prefix ? `${prefix}：${detail}` : prefix;
 }
 
+async function toggleIntroductionPanel() {
+  introductionPanelOpen.value = !introductionPanelOpen.value;
+  if (!introductionPanelOpen.value || introductionBatches.value.length) return;
+  await loadIntroductionBatches();
+}
+
+async function loadIntroductionBatches() {
+  introductionLoading.value = true;
+  introductionMessage.value = '';
+  try {
+    const result = await apiClient.listCatalogIntroductionBatches();
+    introductionBatches.value = result.batches || [];
+    if (!selectedIntroductionBatch.value && introductionBatches.value.length) {
+      selectedIntroductionBatch.value = introductionBatches.value[0].id;
+    }
+    if (selectedIntroductionBatch.value) await loadIntroductions(0, { preserveLoading: true });
+  } catch (error) {
+    introductionMessage.value = formatCatalogError(error, '介绍批次加载失败，请稍后重试。');
+  } finally {
+    introductionLoading.value = false;
+  }
+}
+
+async function loadIntroductions(offset = 0, { preserveLoading = false } = {}) {
+  introductionOffset.value = Math.max(0, Number(offset) || 0);
+  introductionPreview.value = null;
+  introductionConfirmation.value = '';
+  introductionRollback.value = null;
+  introductionRollbackConfirmation.value = '';
+  introductionMessage.value = '';
+  if (!selectedIntroductionBatch.value) {
+    introductionItems.value = [];
+    introductionTotal.value = 0;
+    return;
+  }
+  if (!preserveLoading) introductionLoading.value = true;
+  try {
+    const result = await apiClient.listCatalogIntroductions({
+      batchId: selectedIntroductionBatch.value,
+      entityType: introductionFilters.entityType,
+      status: introductionFilters.status,
+      q: introductionFilters.q,
+      limit: introductionLimit,
+      offset: introductionOffset.value
+    });
+    introductionItems.value = result.items || [];
+    introductionTotal.value = Number(result.total || 0);
+  } catch (error) {
+    introductionMessage.value = formatCatalogError(error, '介绍候选加载失败，请稍后重试。');
+  } finally {
+    if (!preserveLoading) introductionLoading.value = false;
+  }
+}
+
+async function previewIntroductionApproval() {
+  if (!selectedIntroductionBatch.value || !canApproveIntroductionBatch.value) return;
+  introductionLoading.value = true;
+  introductionMessage.value = '';
+  introductionConfirmation.value = '';
+  try {
+    introductionPreview.value = await apiClient.previewCatalogIntroductionApproval(selectedIntroductionBatch.value);
+  } catch (error) {
+    introductionMessage.value = formatCatalogError(error, '整批批准预览失败。');
+  } finally {
+    introductionLoading.value = false;
+  }
+}
+
+async function approveIntroductionBatch() {
+  const preview = introductionPreview.value;
+  if (!preview?.approvable || introductionConfirmation.value !== preview.requiredConfirmation) return;
+  introductionLoading.value = true;
+  introductionMessage.value = '';
+  try {
+    const result = await apiClient.approveCatalogIntroductionBatch(selectedIntroductionBatch.value, {
+      confirmation: introductionConfirmation.value,
+      expectedDigest: preview.approvalDigest
+    });
+    introductionMessage.value = `已批准 ${result.approvedCount} 条目录介绍，并提交增量索引任务。`;
+    introductionPreview.value = null;
+    introductionConfirmation.value = '';
+    await loadIntroductionBatches();
+  } catch (error) {
+    introductionMessage.value = formatCatalogError(error, '整批批准失败，请重新预览后再试。');
+  } finally {
+    introductionLoading.value = false;
+  }
+}
+
+function prepareIntroductionRollback() {
+  if (!canRollbackIntroductionBatch.value) return;
+  introductionPreview.value = null;
+  introductionConfirmation.value = '';
+  introductionRollbackConfirmation.value = '';
+  introductionRollback.value = {
+    requiredConfirmation: `回滚介绍批次 ${selectedIntroductionBatch.value}`
+  };
+}
+
+async function rollbackIntroductionBatch() {
+  const rollback = introductionRollback.value;
+  if (!rollback || introductionRollbackConfirmation.value !== rollback.requiredConfirmation) return;
+  introductionLoading.value = true;
+  introductionMessage.value = '';
+  try {
+    const result = await apiClient.rollbackCatalogIntroductionBatch(selectedIntroductionBatch.value, {
+      confirmation: introductionRollbackConfirmation.value
+    });
+    introductionMessage.value = `已回滚 ${result.rolledBackCount} 条目录介绍，并提交索引更新任务。`;
+    introductionRollback.value = null;
+    introductionRollbackConfirmation.value = '';
+    await loadIntroductionBatches();
+  } catch (error) {
+    introductionMessage.value = formatCatalogError(error, '整批回滚失败，请刷新批次状态后重试。');
+  } finally {
+    introductionLoading.value = false;
+  }
+}
+
+async function saveIntroduction(item, status) {
+  if (!item?.id || !canReviewIntroductions.value) return;
+  introductionLoading.value = true;
+  introductionMessage.value = '';
+  try {
+    const result = await apiClient.updateCatalogIntroduction(item.id, {
+      factualSummary: item.factualSummary,
+      recommendationCopy: item.recommendationCopy,
+      status,
+      expectedUpdatedAt: item.updatedAt
+    });
+    const index = introductionItems.value.findIndex((entry) => entry.id === item.id);
+    if (index >= 0) introductionItems.value.splice(index, 1, result.introduction);
+    introductionMessage.value = status === 'approved' ? '该介绍已批准并提交增量索引任务。' : status === 'rejected' ? '该介绍已拒绝。' : '修改已保存。';
+    introductionPreview.value = null;
+  } catch (error) {
+    introductionMessage.value = formatCatalogError(error, '介绍保存失败，请刷新后重试。');
+  } finally {
+    introductionLoading.value = false;
+  }
+}
+
+function introductionEntityLabel(item) {
+  return ({ dish: '菜品', stall: '档口', area: '餐厅/楼层', venue: '食堂' })[item?.hierarchyLevel] || ({ dish: '菜品', stall: '档口', canteen: '餐厅/食堂' })[item?.entityType] || '目录实体';
+}
+
 function findDeepLinkSelection() {
   const requestedArea = String(route.query.areaId || '');
   const requestedStall = String(route.query.stallId || '');
@@ -1097,6 +1303,26 @@ onBeforeUnmount(() => {
 .catalog-notice.error { border: 1px solid #efc8c3; background: #fff1ef; color: #8a3128; }
 .catalog-notice.success { border: 1px solid #b8ddc2; background: #eef9f0; color: #23653d; }
 .catalog-notice button { background: transparent; color: inherit; font-weight: 750; }
+.introduction-review { min-width: 0; border: 1px solid #cddfd1; border-radius: .5rem; padding: .8rem; background: #f8fbf8; box-shadow: 0 .55rem 1.4rem rgba(27,65,42,.08); }
+.introduction-review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: .7rem; }
+.introduction-review-head h2 { margin: 0; color: #173b28; font-size: 1.05rem; letter-spacing: 0; }
+.introduction-filters { display: grid; grid-template-columns: minmax(12rem, 1.4fr) repeat(2, minmax(7rem, .7fr)) minmax(9rem, 1fr) auto auto; align-items: end; gap: .55rem; }
+.introduction-filters label, .introduction-preview label, .introduction-row label { display: grid; gap: .22rem; color: #53695a; font-size: .68rem; font-weight: 720; }
+.introduction-filters input, .introduction-filters select, .introduction-preview input, .introduction-row textarea { width: 100%; border: 1px solid #cbd9cd; border-radius: .32rem; padding: .42rem .5rem; background: #fff; color: #1d3e2b; font: inherit; }
+.introduction-filters button, .introduction-preview button, .introduction-actions button, .introduction-pagination button { min-height: 2.15rem; border: 1px solid #bad2bf; border-radius: .32rem; padding: .38rem .58rem; background: #fff; color: #245c3b; font-size: .68rem; font-weight: 750; }
+.introduction-filters button:last-child, .introduction-preview button, .introduction-actions button:nth-child(2) { border-color: #1f7a4d; background: #1f7a4d; color: #fff; }
+.introduction-review button:disabled { cursor: not-allowed; opacity: .48; }
+.introduction-preview { display: grid; grid-template-columns: minmax(14rem, 1fr) minmax(17rem, 1fr) auto; align-items: end; gap: .7rem; margin-top: .7rem; border: 1px solid #e4d49f; border-radius: .36rem; padding: .6rem; background: #fff9e8; }
+.introduction-preview p { margin: 0; align-self: center; color: #654f1c; font-size: .72rem; }
+.introduction-table { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr)); gap: .65rem; max-height: 58dvh; margin-top: .7rem; overflow: auto; scrollbar-gutter: stable; }
+.introduction-row { min-width: 0; display: grid; gap: .48rem; border: 1px solid #dce7de; border-radius: .4rem; padding: .65rem; background: #fff; }
+.introduction-row header { display: flex; align-items: center; justify-content: space-between; gap: .55rem; }
+.introduction-row header strong { min-width: 0; overflow: hidden; color: #264c35; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
+.introduction-row textarea { min-height: 5.2rem; resize: vertical; line-height: 1.5; }
+.introduction-meta { min-height: 1.2rem; margin: 0; overflow-wrap: anywhere; color: #77847b; font-size: .62rem; }
+.introduction-actions, .introduction-pagination { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; }
+.introduction-actions button:last-child { border-color: #dfc7c3; color: #8a3128; }
+.introduction-pagination { margin-top: .65rem; color: #607166; font-size: .68rem; }
 .venue-grid { min-height: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(31rem, 100%), 1fr)); align-items: start; gap: .75rem; }
 .venue-panel { --venue-accent: #1f7a4d; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(37,91,58,.16); border-top: 3px solid var(--venue-accent); border-radius: .5rem; background: rgba(250,252,249,.94); box-shadow: 0 .6rem 1.6rem rgba(26,67,42,.08); }
 .venue-panel:nth-child(4n + 2) { --venue-accent: #3f7990; }
@@ -1251,6 +1477,9 @@ mark { border-radius: .12rem; padding: 0 .08rem; background: #ffe19a; color: inh
   .catalog-search { width: 100%; justify-self: stretch; }
   .catalog-toolbar-actions { grid-column: auto; justify-content: stretch; margin-top: 0; }
   .tool-button { flex: 1; min-width: 0; }
+  .introduction-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .introduction-preview { grid-template-columns: 1fr; }
+  .introduction-table { max-height: none; }
   .venue-grid { display: grid; grid-template-columns: 1fr; grid-template-rows: none; gap: .75rem; }
   .venue-panel { height: 60dvh; min-height: 20rem; max-height: 36rem; }
   .venue-header-actions .icon-action { display: inline-flex; }
@@ -1262,6 +1491,7 @@ mark { border-radius: .12rem; padding: 0 .08rem; background: #ffe19a; color: inh
   .tenant-badge { max-width: 100%; }
   .catalog-toolbar-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tool-button { padding-inline: .35rem; }
+  .introduction-filters { grid-template-columns: 1fr; }
   .venue-panel-header { padding-inline: .62rem; }
   .venue-heading-row { align-items: flex-start; }
   .venue-header-actions { flex-wrap: wrap; justify-content: flex-end; }

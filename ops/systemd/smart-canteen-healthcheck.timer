@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Smart Canteen health every five minutes
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=5m
+AccuracySec=30s
+Unit=smart-canteen-healthcheck.service
+
+[Install]
+WantedBy=timers.target

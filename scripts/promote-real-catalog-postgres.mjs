@@ -7,7 +7,6 @@ import pg from 'pg';
 
 const { Pool } = pg;
 const SOURCE_EXPECTED = Object.freeze({
-  canteens: 12,
   stalls: 138,
   dishes: 2563,
   catalog_import_rows: 3146,
@@ -55,6 +54,9 @@ function inspectSource(path) {
       rag_documents: scalar(db, 'SELECT COUNT(*) AS count FROM rag_documents'),
       dish_ai_annotations: scalar(db, 'SELECT COUNT(*) AS count FROM dish_ai_annotations'),
     };
+    if (![12, TARGET_CANTEEN_COUNT].includes(counts.canteens)) {
+      throw new Error(`Source count mismatch for canteens: expected 12 or ${TARGET_CANTEEN_COUNT}, received ${counts.canteens}`);
+    }
     for (const [key, expected] of Object.entries(SOURCE_EXPECTED)) {
       if (counts[key] !== expected) throw new Error(`Source count mismatch for ${key}: expected ${expected}, received ${counts[key]}`);
     }
@@ -102,7 +104,11 @@ function venueKind(row) {
   return 'dining_hall';
 }
 
-function valueForColumn(table, column, row, checksum) {
+function valueForColumn(table, column, row, checksum, { preparedSource = false } = {}) {
+  if (preparedSource && Object.hasOwn(row, column)) return row[column];
+  if (preparedSource && table === 'rag_documents' && column === 'metadata') return JSON.parse(row.metadata_json || '{}');
+  if (preparedSource && table === 'rag_documents' && column === 'embedding') return null;
+  if (preparedSource && (table === 'stalls' || table === 'dishes') && column === 'reservation_enabled') return true;
   if (table === 'canteens' && column === 'venue_kind') return venueKind(row);
   if (table === 'canteens' && column === 'name' && row.id === 'east-zone') return '东区燕鸣湖';
   if (table === 'canteens' && column === 'name' && row.id === 'east-dongdahuo') return '东区东大活';
@@ -156,7 +162,7 @@ async function targetColumns(client, table) {
   return result.rows.filter((row) => row.is_generated === 'NEVER').map((row) => row.column_name);
 }
 
-async function insertRows(client, sourceDb, table, checksum, extraColumns = []) {
+async function insertRows(client, sourceDb, table, checksum, extraColumns = [], options = {}) {
   const sourceColumns = sourceDb.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
   const target = await targetColumns(client, table);
   const columns = target.filter((column) => sourceColumns.includes(column) || extraColumns.includes(column));
@@ -166,7 +172,7 @@ async function insertRows(client, sourceDb, table, checksum, extraColumns = []) 
   const quoted = columns.map((column) => `"${column}"`).join(', ');
   const sql = `INSERT INTO ${table} (${quoted}) VALUES (${placeholders})`;
   for (const row of rows) {
-    await client.query(sql, columns.map((column) => valueForColumn(table, column, row, checksum)));
+    await client.query(sql, columns.map((column) => valueForColumn(table, column, row, checksum, options)));
   }
   return rows.length;
 }
@@ -184,8 +190,20 @@ async function targetCounts(client, tenantId) {
 
 async function assertEmptyTarget(client, tenantId) {
   const counts = await targetCounts(client, tenantId);
-  const populated = Object.entries(counts).filter(([, count]) => count > 0);
+  const seededVenues = await client.query(`SELECT id FROM canteens WHERE tenant_id = $1
+    AND id IN ('west-yanyuan','east-shanshuiyuan') AND operating_status = 'renovating'`, [tenantId]);
+  const unexpectedCanteens = counts.canteens - seededVenues.rowCount;
+  const catalogTables = ['stalls', 'dishes', 'catalog_import_rows', 'dish_ai_annotations'];
+  const populated = catalogTables.map((name) => [name, counts[name]]).filter(([, count]) => count > 0);
+  if (unexpectedCanteens > 0) populated.unshift(['canteens', unexpectedCanteens]);
   if (populated.length) throw new Error(`Tenant ${tenantId} is not empty: ${populated.map(([name, count]) => `${name}=${count}`).join(', ')}`);
+  return counts;
+}
+
+async function removeSeededRenovatingVenues(client, tenantId) {
+  const result = await client.query(`DELETE FROM canteens WHERE tenant_id = $1
+    AND id IN ('west-yanyuan','east-shanshuiyuan') AND operating_status = 'renovating'`, [tenantId]);
+  return result.rowCount;
 }
 
 async function rollback(client, sourceDb, batchId, tenantId) {
@@ -235,27 +253,37 @@ try {
     await client.query('COMMIT');
     console.log(JSON.stringify({ ...summary, mode: 'rollback', batchId: rollbackBatch, deleted }, null, 2));
   } else {
-    if (option('empty-only', true)) await assertEmptyTarget(client, tenantId);
+    const beforeCounts = option('empty-only', true)
+      ? await assertEmptyTarget(client, tenantId)
+      : await targetCounts(client, tenantId);
+    const preparedSource = inspection.counts.canteens === TARGET_CANTEEN_COUNT;
+    const removedSeedPlaceholders = preparedSource ? await removeSeededRenovatingVenues(client, tenantId) : 0;
     await client.query(`INSERT INTO tenants (id, name, status, plan, ai_quota, storage_quota_mb, created_at, updated_at)
       VALUES ($1, $2, 'active', 'enterprise', 1000, 10240, $3, $3) ON CONFLICT (id) DO NOTHING`, [tenantId, '燕山大学校园', new Date().toISOString()]);
-    const inserted = {};
-    inserted.data_import_batches = await insertRows(client, sourceDb, 'data_import_batches', inspection.checksum);
-    inserted.canteens = await insertRows(client, sourceDb, 'canteens', inspection.checksum, ['venue_kind', 'display_name', 'display_order', 'operating_status']);
-    inserted.renovating_venues = await insertRenovatingVenues(client, tenantId);
-    inserted.stalls = await insertRows(client, sourceDb, 'stalls', inspection.checksum, ['reservation_enabled']);
-    inserted.dishes = await insertRows(client, sourceDb, 'dishes', inspection.checksum, ['reservation_enabled']);
-    inserted.catalog_import_rows = await insertRows(client, sourceDb, 'catalog_import_rows', inspection.checksum);
-    inserted.rag_documents = await insertRows(client, sourceDb, 'rag_documents', inspection.checksum, ['metadata', 'embedding']);
-    inserted.dish_ai_annotations = await insertRows(client, sourceDb, 'dish_ai_annotations', inspection.checksum);
+    const inserted = { removed_seed_placeholders: removedSeedPlaceholders };
+    inserted.data_import_batches = await insertRows(client, sourceDb, 'data_import_batches', inspection.checksum, [], { preparedSource });
+    inserted.canteens = await insertRows(client, sourceDb, 'canteens', inspection.checksum, ['venue_kind', 'display_name', 'display_order', 'operating_status'], { preparedSource });
+    inserted.renovating_venues = inspection.counts.canteens === TARGET_CANTEEN_COUNT
+      ? 0
+      : await insertRenovatingVenues(client, tenantId);
+    inserted.stalls = await insertRows(client, sourceDb, 'stalls', inspection.checksum, ['reservation_enabled'], { preparedSource });
+    inserted.dishes = await insertRows(client, sourceDb, 'dishes', inspection.checksum, ['reservation_enabled'], { preparedSource });
+    inserted.catalog_import_rows = await insertRows(client, sourceDb, 'catalog_import_rows', inspection.checksum, [], { preparedSource });
+    inserted.rag_documents = await insertRows(client, sourceDb, 'rag_documents', inspection.checksum, ['metadata', 'embedding'], { preparedSource });
+    inserted.dish_ai_annotations = await insertRows(client, sourceDb, 'dish_ai_annotations', inspection.checksum, [], { preparedSource });
     const counts = await targetCounts(client, tenantId);
     for (const key of ['canteens', 'stalls', 'dishes', 'catalog_import_rows', 'rag_documents', 'dish_ai_annotations']) {
       const expected = key === 'canteens' ? TARGET_CANTEEN_COUNT : SOURCE_EXPECTED[key];
       if (counts[key] !== expected) throw new Error(`Post-import count mismatch for ${key}: ${counts[key]}`);
     }
-    if (counts.users || counts.reviews || counts.menus || counts.menu_items) throw new Error('Production catalog import introduced runtime demo data');
+    for (const key of ['users', 'reviews', 'menus', 'menu_items']) {
+      if (counts[key] !== beforeCounts[key]) throw new Error(`Production catalog import changed runtime table ${key}`);
+    }
     const audit = await client.query('SELECT status, COUNT(*)::integer AS count FROM catalog_import_rows WHERE tenant_id = $1 GROUP BY status', [tenantId]);
     const auditCounts = Object.fromEntries(audit.rows.map((row) => [row.status, Number(row.count)]));
-    for (const key of ['accepted', 'review_required', 'excluded']) if (auditCounts[key] !== EXPECTED[key]) throw new Error(`Audit count mismatch for ${key}`);
+    for (const key of ['accepted', 'review_required', 'excluded']) {
+      if (auditCounts[key] !== SOURCE_EXPECTED[key]) throw new Error(`Audit count mismatch for ${key}`);
+    }
     await client.query('COMMIT');
     console.log(JSON.stringify({ ...summary, mode: 'approved', inserted, counts, auditCounts }, null, 2));
   }

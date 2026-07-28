@@ -1,0 +1,8 @@
+[Unit]
+Description=Smart Canteen health and backup freshness check
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smart-canteen-healthcheck

@@ -416,6 +416,26 @@ export const apiClient = {
     }
     return request(`/api/admin/catalog/stalls/${encodeURIComponent(stallId)}/dishes?${query}`);
   },
+  async listCatalogIntroductionBatches() {
+    return request('/api/admin/catalog-introductions/batches');
+  },
+  async listCatalogIntroductions(params = {}) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value !== '' && value != null) query.set(key, value);
+    return request(`/api/admin/catalog-introductions?${query}`);
+  },
+  async updateCatalogIntroduction(id, payload) {
+    return request(`/api/admin/catalog-introductions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+  async previewCatalogIntroductionApproval(batchId) {
+    return request(`/api/admin/catalog-introductions/batches/${encodeURIComponent(batchId)}/approval-preview`, { method: 'POST', body: '{}' });
+  },
+  async approveCatalogIntroductionBatch(batchId, payload) {
+    return request(`/api/admin/catalog-introductions/batches/${encodeURIComponent(batchId)}/approve`, { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async rollbackCatalogIntroductionBatch(batchId, payload) {
+    return request(`/api/admin/catalog-introductions/batches/${encodeURIComponent(batchId)}/rollback`, { method: 'POST', body: JSON.stringify(payload) });
+  },
   async listDatabaseEntities() {
     return request('/api/admin/database/entities');
   },

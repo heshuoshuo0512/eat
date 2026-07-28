@@ -1,0 +1,11 @@
+[Unit]
+Description=Smart Canteen daily backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smart-canteen-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

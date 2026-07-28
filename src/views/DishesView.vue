@@ -79,7 +79,7 @@
         <img :src="detail.imageUrl" :alt="detail.name" />
       </div>
       <span v-else class="emoji large" style="display:block;margin-bottom:0.75rem;">{{ detail.image }}</span>
-      <p class="muted">{{ detail.description }}</p>
+      <CatalogIntroduction :entity="detail" />
 
       <!-- Precise location: primary → sub → stall -->
       <div class="detail-location">
@@ -544,3 +544,4 @@ onMounted(async () => {
   .assistant-prompt, .citation-chip, .pick-chip, .chip, .sort-btn, .dish-card { transition: none; }
 }
 </style>
+import CatalogIntroduction from '../components/CatalogIntroduction.vue';
