@@ -29,11 +29,11 @@ describe('administrator companion UI contracts', () => {
     assert.match(admin, /linkedReviewStatus/);
   });
 
-  it('pins the four dining regions in the required order and responsive grid', () => {
-    const ids = ['campus-main', 'north-zone', 'south-zone', 'east-zone'];
-    const positions = ids.map((id) => admin.indexOf(`id: '${id}'`));
-    assert.ok(positions.every((position) => position >= 0));
-    assert.deepEqual([...positions].sort((left, right) => left - right), positions);
+  it('derives dining venues from the catalog and keeps a responsive grid', () => {
+    assert.match(admin, /store\.adminCatalogTree\?\.regions/);
+    assert.match(admin, /!canteen\.parentId\s*\|\|\s*!ids\.has\(canteen\.parentId\)/);
+    assert.doesNotMatch(admin, /const fixedRegions\s*=\s*\[/);
+    assert.doesNotMatch(admin, /north-zone|south-zone/);
     assert.match(admin, /\.region-management-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
     assert.match(admin, /@media \(max-width: 720px\)[\s\S]*\.region-management-grid[^}]*grid-template-columns:\s*1fr/);
     assert.match(admin, /餐饮场所 → 餐饮分区 → 档口 → 菜品/);
@@ -72,9 +72,9 @@ describe('administrator companion UI contracts', () => {
 
     const areaLabelDefinition = admin.match(/const entryAreaLabel\s*=\s*computed\(\(\)\s*=>\s*\{?[\s\S]*?\}\);/)?.[0];
     assert.ok(areaLabelDefinition, 'area terminology should be computed from the selected venue');
-    assert.match(areaLabelDefinition, /campus-main|dining_complex/);
-    assert.match(areaLabelDefinition, /餐厅/);
-    assert.match(areaLabelDefinition, /楼层餐区/);
+    assert.match(areaLabelDefinition, /fixedRegions\.value/);
+    assert.match(areaLabelDefinition, /areaLabel/);
+    assert.match(areaLabelDefinition, /下属场所/);
     assert.match(admin, /\{\{\s*entryAreaLabel\s*\}\}/);
     assert.match(admin, /v-model="entryContext\.venueId"/);
     assert.match(admin, /v-model="entryContext\.areaId"/);

@@ -32,7 +32,7 @@ function requestServer(handler) {
     let body = '';
     for await (const chunk of request) body += chunk;
     const payload = JSON.parse(body || '{}');
-    const result = handler({ request, payload });
+    const result = await handler({ request, payload });
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify(result));
   });
@@ -110,10 +110,16 @@ describe('split chat and embedding providers', () => {
     assert.deepEqual(result.embeddings, [[1, 0, 0, 0], [1, 1, 0, 0]]);
     assert.equal(result.grounded.answer.includes('鸡肉饭'), true);
     assert.deepEqual(result.grounded.citationIds, ['dish-1']);
+    assert.equal(result.grounded.firstPassAccepted, true);
+    assert.equal(result.grounded.repairAttempted, false);
+    assert.equal(result.grounded.promptVersion, 'grounded-answer-v2');
+    assert.equal('rejectedOutput' in result.grounded, false);
     assert.equal(chatRequests.at(-1).authorization, 'Bearer chat-secret');
     assert.equal(chatRequests.at(-1).payload.model, 'deepseek-test');
     const groundedPrompt = JSON.parse(chatRequests.at(-1).payload.messages.at(-1).content);
     assert.deepEqual(groundedPrompt.evidence[0].evidenceClasses, ['tenant_fact']);
+    assert.deepEqual(groundedPrompt.requirements.allowedCitationIds, ['dish-1']);
+    assert.equal(chatRequests.at(-1).payload.temperature, 0);
     assert.equal(embeddingRequests.at(-1).authorization, 'Bearer embedding-secret');
     assert.equal(embeddingRequests.at(-1).payload.model, 'qwen-test');
     assert.equal(embeddingRequests.at(-1).payload.dimensions, 4);
@@ -154,6 +160,98 @@ describe('split chat and embedding providers', () => {
     assert.equal(validateGroundedAgentAnswer({ answer: '推荐鸡肉饭，价格 ¥99。', citationIds: ['dish-1'] }, citations).reason, 'UNSUPPORTED_PRICE_CLAIM');
     assert.equal(validateGroundedAgentAnswer({ answer: '推荐鸡肉饭，价格99元。', citationIds: ['dish-1'] }, citations).reason, 'UNSUPPORTED_PRICE_CLAIM');
     assert.equal(validateGroundedAgentAnswer({ answer: '鸡肉饭约500kcal。', citationIds: ['dish-1'] }, citations).reason, 'UNSUPPORTED_PRICE_CLAIM');
+  });
+
+  it('repairs a rejected grounded answer once without adding evidence', async () => {
+    let requestCount = 0;
+    const repairServer = requestServer(({ payload }) => {
+      requestCount += 1;
+      const input = JSON.parse(payload.messages.at(-1).content);
+      if (requestCount === 1) {
+        return { choices: [{ message: { content: JSON.stringify({ answer: '可以放心吃。', citationIds: ['dish-unknown'] }) } }] };
+      }
+      assert.equal(input.task, 'repair_grounded_answer_once');
+      assert.equal(input.failureReason, 'UNSUPPORTED_SAFETY_CLAIM');
+      assert.deepEqual(input.requirements.allowedCitationIds, ['dish-unknown']);
+      return {
+        choices: [{ message: { content: JSON.stringify({
+          answer: input.requirements.exactStatements.allergenUnknown,
+          citationIds: ['dish-unknown'],
+        }) } }],
+      };
+    });
+    const repairBaseUrl = await listen(repairServer);
+    try {
+      const result = await withAiRuntimeConfig({
+        chatBaseUrl: repairBaseUrl,
+        chatApiKey: 'chat-secret',
+        chatModel: 'deepseek-test',
+      }, () => generateGroundedAgentAnswer({
+        query: '这道菜能放心吃吗？',
+        intent: 'dish_search',
+        deterministicAnswer: '过敏信息未知。',
+        citations: [{ id: 'dish-unknown', sourceType: 'dish', title: '测试菜', metadata: { safetyStatus: 'unknown' } }],
+      }));
+      assert.equal(requestCount, 2);
+      assert.equal(result.firstPassAccepted, false);
+      assert.equal(result.repairAttempted, true);
+      assert.equal(result.repairAccepted, true);
+      assert.equal(result.initialFailureReason, 'UNSUPPORTED_SAFETY_CLAIM');
+      assert.equal(result.finalFailureReason, null);
+      assert.deepEqual(result.citationIds, ['dish-unknown']);
+    } finally {
+      await close(repairServer);
+    }
+  });
+
+  it('stops after one failed repair and returns a deterministic fallback signal', async () => {
+    let requestCount = 0;
+    const repairServer = requestServer(() => {
+      requestCount += 1;
+      return { choices: [{ message: { content: 'not-json' } }] };
+    });
+    const repairBaseUrl = await listen(repairServer);
+    try {
+      const result = await withAiRuntimeConfig({
+        chatBaseUrl: repairBaseUrl,
+        chatApiKey: 'chat-secret',
+        chatModel: 'deepseek-test',
+      }, () => generateGroundedAgentAnswer({
+        query: '推荐午餐',
+        intent: 'dish_search',
+        deterministicAnswer: '使用确定性回答。',
+        citations: [{ id: 'dish-1', sourceType: 'dish', title: '鸡肉饭' }],
+      }));
+      assert.equal(requestCount, 2);
+      assert.equal(result.answer, null);
+      assert.equal(result.repairAttempted, true);
+      assert.equal(result.repairAccepted, false);
+      assert.equal(result.initialFailureReason, 'INVALID_MODEL_JSON');
+      assert.equal(result.finalFailureReason, 'INVALID_MODEL_JSON');
+    } finally {
+      await close(repairServer);
+    }
+  });
+
+  it('reports chat timeouts with a stable provider error code', async () => {
+    const slowServer = requestServer(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return { choices: [{ message: { content: '{"answer":"late","citationIds":["dish-1"]}' } }] };
+    });
+    const slowBaseUrl = await listen(slowServer);
+    try {
+      await assert.rejects(withAiRuntimeConfig({
+        chatBaseUrl: slowBaseUrl,
+        chatApiKey: 'chat-secret',
+        chatModel: 'deepseek-test',
+        chatTimeoutMs: 10,
+      }, () => generateGroundedAgentAnswer({
+        query: '推荐午餐',
+        citations: [{ id: 'dish-1', sourceType: 'dish', title: '鸡肉饭' }],
+      })), (error) => error.code === 'AI_PROVIDER_TIMEOUT');
+    } finally {
+      await close(slowServer);
+    }
   });
 
   it('opens a request-local chat circuit after routing fails and skips grounded generation', async () => {

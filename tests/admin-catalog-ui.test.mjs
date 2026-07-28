@@ -11,15 +11,15 @@ const admin = readFileSync('src/views/AdminView.vue', 'utf8');
 const apiClient = readFileSync('src/services/apiClient.js', 'utf8');
 
 describe('administrator catalog workspace UI contracts', () => {
-  it('uses a fixed four-quadrant workspace with independent scrolling', () => {
-    const positions = ['campus-main', 'north-zone', 'south-zone', 'east-zone'].map((id) => view.indexOf(`id: '${id}'`));
-    assert.ok(positions.every((position) => position >= 0));
-    assert.deepEqual([...positions].sort((left, right) => left - right), positions);
-    assert.match(view, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
-    assert.match(view, /grid-template-rows:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  it('uses a database-driven responsive workspace with independent scrolling', () => {
+    assert.doesNotMatch(view, /REGION_ORDER|FALLBACK_VENUES|north-zone|south-zone/);
+    assert.match(view, /store\.adminCatalogTree\?\.regions/);
+    assert.match(view, /grid-template-columns:\s*repeat\(auto-fit,\s*minmax/);
     assert.match(view, /\.venue-panel-scroll[^}]*overflow-y:\s*auto/s);
     assert.match(view, /scrollbar-gutter:\s*stable/);
     assert.match(view, /position:\s*sticky/);
+    assert.match(view, /include:\s*searchTerm\.value\.trim\(\)\s*\?\s*'dishes'\s*:\s*'summary'/);
+    assert.match(view, /loadAdminCatalogArea/);
   });
 
   it('renders the missing-venue state before the statistics branch', () => {
@@ -46,12 +46,12 @@ describe('administrator catalog workspace UI contracts', () => {
   });
 
   it('uses unified venue, area, stall and dish terminology', () => {
-    for (const label of ['餐饮场所', '餐饮分区', '餐厅', '楼层餐区', '餐饮区域', '档口', '菜品', '待归类档口', '历史层级']) {
+    for (const label of ['餐饮场所', '餐饮分区', '下属场所', '校园超市', '档口', '菜品', '待归类档口', '历史层级']) {
       assert.ok(view.includes(label) || drawer.includes(label), `missing ${label}`);
     }
     assert.doesNotMatch(view, /一级档口|子档口/);
-    assert.match(view, /venueType === 'dining_complex'/);
-    assert.match(view, /东区餐饮与服务区/);
+    assert.match(view, /venue\.venueType/);
+    assert.doesNotMatch(view, /固定展示四个餐饮场所/);
   });
 
   it('provides directory and CSS chart views without adding a chart dependency', () => {

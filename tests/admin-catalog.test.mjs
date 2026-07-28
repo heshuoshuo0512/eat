@@ -103,32 +103,25 @@ describe('admin catalog tree', () => {
 
   after(() => server.close());
 
-  it('exposes the fixed four regions in stable order with summary counts', async () => {
+  it('derives root venues from the tenant database with lightweight summary counts', async () => {
     const result = await request('/api/admin/catalog/tree?include=summary&limit=20&offset=0', { token: adminToken });
     assert.equal(result.status, 200);
-    assert.deepEqual(result.data.regions.map((region) => region.id), ['campus-main', 'north-zone', 'south-zone', 'east-zone']);
-    assert.equal(result.data.total, 4);
-    assert.ok(result.data.regions.every((region) => region.counts && typeof region.missing === 'boolean'));
-    const [complex, north, south, east] = result.data.regions;
-    assert.equal(complex.venueType, 'dining_complex');
-    assert.equal(complex.areaType, 'restaurant');
-    assert.equal(complex.areaLabel, '餐厅');
-    assert.equal(complex.labels.area, '餐厅');
-    assert.ok(complex.canteens.every((area) => area.areaType === 'restaurant' && area.areaLabel === '餐厅' && area.displayName === area.canteen.name));
-    assert.ok([north, south].every((region) => region.venueType === 'multi_floor_canteen'));
-    assert.ok([north, south].every((region) => region.areaType === 'floor_area' && region.labels.area === '楼层餐区'));
-    assert.ok([north, south].every((region) => region.canteens.every((area) => area.areaType === 'floor_area' && area.areaLabel === '楼层餐区')));
-    assert.equal(east.defaultName, '东区餐饮与服务区');
-    assert.equal(east.venueType, 'dining_service_zone');
-    assert.equal(east.areaType, 'dining_area');
-    assert.equal(east.labels.area, '餐饮区域');
-    assert.ok(east.canteens.every((area) => area.areaType === 'dining_area' && area.areaLabel === '餐饮区域'));
+    const rows = (await db.prepare('SELECT id, parent_id FROM canteens WHERE tenant_id = ? ORDER BY name ASC, id ASC').all('default'));
+    const ids = new Set(rows.map((row) => row.id));
+    const expectedRoots = rows.filter((row) => !row.parent_id || !ids.has(row.parent_id)).map((row) => row.id);
+    assert.deepEqual(result.data.regions.map((region) => region.id), expectedRoots);
+    assert.equal(result.data.total, expectedRoots.length);
+    assert.ok(result.data.regions.every((region) => region.counts && region.missing === false));
+    assert.ok(result.data.regions.every((region) => region.region?.id === region.id));
+    assert.ok(result.data.regions.every((region) => region.labels.area === region.areaLabel));
+    assert.ok(result.data.regions.flatMap((region) => region.canteens).every((area) => area.displayName === area.canteen.name));
     assert.ok(result.data.regions.every((region) => typeof region.counts.openStalls === 'number'));
+    assert.ok(result.data.regions.every((region) => region.canteens.every((area) => area.stalls.every((stall) => stall.directDishes.length === 0))));
     const serialized = JSON.stringify(result.data);
     assert.doesNotMatch(serialized, /allDirectDishes/);
   });
 
-  it('uses the tenant database name while retaining the fixed venue default', async () => {
+  it('uses the tenant database name without a hard-coded venue fallback', async () => {
     const existing = await db.prepare('SELECT name FROM canteens WHERE tenant_id = ? AND id = ?').get('default', 'campus-main');
     assert.ok(existing);
     const databaseName = '学校正式综合餐饮楼';
@@ -139,13 +132,13 @@ describe('admin catalog tree', () => {
       assert.equal(result.data.regions[0].name, databaseName);
       assert.equal(result.data.regions[0].displayName, databaseName);
       assert.equal(result.data.regions[0].region.name, databaseName);
-      assert.equal(result.data.regions[0].defaultName, '综合餐饮楼');
+      assert.equal(result.data.regions[0].defaultName, databaseName);
     } finally {
       await db.prepare('UPDATE canteens SET name = ? WHERE tenant_id = ? AND id = ?').run(existing.name, 'default', 'campus-main');
     }
   });
 
-  it('can restore a missing fixed venue without changing its fixed id', async () => {
+  it('does not fabricate a deleted venue and allows it to be recreated explicitly', async () => {
     const id = 'east-zone';
     const original = await db.prepare('SELECT * FROM canteens WHERE tenant_id = ? AND id = ?').get('default', id);
     assert.ok(original);
@@ -153,10 +146,10 @@ describe('admin catalog tree', () => {
 
     const missing = await request(`/api/admin/catalog/tree?venueId=${id}`, { token: adminToken });
     assert.equal(missing.status, 200);
-    assert.equal(missing.data.regions[0].missing, true);
+    assert.equal(missing.data.regions.length, 0);
 
-    const restored = await request(`/api/admin/canteens/${id}`, {
-      method: 'PUT',
+    const restored = await request('/api/admin/canteens', {
+      method: 'POST',
       token: adminToken,
       body: {
         id,
@@ -171,16 +164,16 @@ describe('admin catalog tree', () => {
         imageUrl: original.image || undefined
       }
     });
-    assert.equal(restored.status, 200);
+    assert.equal(restored.status, 201);
     assert.equal(restored.data.savedId, id);
     assert.ok(restored.data.canteens.some((canteen) => canteen.id === id));
   });
 
-  it('never overwrites another tenant when a fixed venue id is already reserved', async () => {
+  it('never overwrites another tenant when a venue id is already reserved', async () => {
     const before = await db.prepare('SELECT tenant_id, name FROM canteens WHERE id = ?').get('campus-main');
     assert.equal(before.tenant_id, 'default');
-    const result = await request('/api/admin/canteens/campus-main', {
-      method: 'PUT',
+    const result = await request('/api/admin/canteens', {
+      method: 'POST',
       token: tenantAdminToken,
       body: {
         id: 'campus-main',
@@ -200,7 +193,7 @@ describe('admin catalog tree', () => {
     assert.equal(tenantRecord, undefined);
   });
 
-  it('enforces fixed venue and dining-area parent boundaries', async () => {
+  it('enforces dynamic root venue and dining-area parent boundaries', async () => {
     const fixedVenue = await db.prepare('SELECT * FROM canteens WHERE tenant_id = ? AND id = ?').get('default', 'campus-main');
     const area = await db.prepare('SELECT * FROM canteens WHERE tenant_id = ? AND parent_id = ? ORDER BY id LIMIT 1').get('default', 'campus-main');
     assert.ok(fixedVenue);
@@ -223,8 +216,8 @@ describe('admin catalog tree', () => {
       token: adminToken,
       body: bodyFor(fixedVenue, 'east-zone')
     });
-    assert.equal(fixedParent.status, 400);
-    assert.equal(fixedParent.data.code, 'CANTEEN_FIXED_PARENT_FORBIDDEN');
+    assert.equal(fixedParent.status, 409);
+    assert.equal(fixedParent.data.code, 'CANTEEN_PARENT_HAS_CHILDREN');
 
     const normalizedFixedBody = bodyFor(fixedVenue, null);
     normalizedFixedBody.canteenType = 'sub';
@@ -345,7 +338,7 @@ describe('admin catalog tree', () => {
     for (const token of [operatorToken, stallAdminToken]) {
       const allowed = await request('/api/admin/catalog/tree?include=summary', { token });
       assert.equal(allowed.status, 200);
-      assert.equal(allowed.data.total, 4);
+      assert.ok(allowed.data.total >= 1);
     }
 
     const result = await request('/api/admin/catalog/tree?include=dishes', { token: adminToken });

@@ -31,7 +31,7 @@
         <button v-if="canBulkImportDishes" class="tool-button" type="button" @click="openImport">
           <span aria-hidden="true">⇧</span><span>批量导入</span>
         </button>
-        <button v-if="canWriteCanteens" class="tool-button primary-action" type="button" @click="handlePrimaryVenueAction">
+        <button v-if="canWriteCanteens && activeVenue" class="tool-button primary-action" type="button" @click="handlePrimaryVenueAction">
           <span aria-hidden="true">{{ activeVenue.missing ? '⌂' : '＋' }}</span><span>{{ activeVenue.missing ? '配置餐饮场所' : `新增${activeVenue.areaLabel}` }}</span>
         </button>
       </div>
@@ -43,7 +43,13 @@
     </div>
     <div v-else-if="successMessage" class="catalog-notice success" role="status">{{ successMessage }}</div>
 
-    <div class="venue-grid">
+    <div v-if="loading && !venues.length" class="venue-grid loading-grid" aria-label="正在加载真实餐饮目录">
+      <article v-for="index in 2" :key="index" class="venue-panel venue-panel-placeholder">
+        <div class="catalog-loading"><span v-for="row in 6" :key="row"></span></div>
+      </article>
+    </div>
+
+    <div v-else class="venue-grid">
       <article
         v-for="venue in venues"
         :key="venue.id"
@@ -176,7 +182,7 @@
                   type="button"
                   :aria-expanded="isAreaExpanded(areaNode.canteen.id)"
                   :aria-label="`${isAreaExpanded(areaNode.canteen.id) ? '收起' : '展开'}${areaNode.canteen.name}`"
-                  @click="toggleArea(areaNode.canteen.id)"
+                  @click="toggleArea(venue, areaNode.canteen.id)"
                 ><span :class="{ expanded: isAreaExpanded(areaNode.canteen.id) }" aria-hidden="true">›</span></button>
                 <button class="area-title" type="button" @click="openArea(venue, areaNode, 'view')">
                   <strong><HighlightText :text="areaNode.canteen.name" :query="searchTerm" /></strong>
@@ -190,7 +196,10 @@
               </header>
 
               <div v-if="isAreaExpanded(areaNode.canteen.id)" class="area-content">
-                <div v-if="displayedStalls(areaNode).length" class="stall-table" role="table" :aria-label="`${areaNode.canteen.name}档口目录`">
+                <div v-if="isAreaLoading(areaNode.canteen.id)" class="catalog-loading area-loading" aria-label="正在加载菜品">
+                  <span v-for="index in 3" :key="index"></span>
+                </div>
+                <div v-else-if="displayedStalls(areaNode).length" class="stall-table" role="table" :aria-label="`${areaNode.canteen.name}档口目录`">
                   <div class="stall-table-heading" role="row">
                     <span role="columnheader">档口</span><span role="columnheader">品类</span><span role="columnheader">状态</span><span role="columnheader">菜品 / 均价</span><span role="columnheader">操作</span>
                   </div>
@@ -348,14 +357,6 @@ import CatalogEditorDrawer from '../components/CatalogEditorDrawer.vue';
 import { dishPriceText } from '../domain/dishPresentation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
-const REGION_ORDER = ['campus-main', 'north-zone', 'south-zone', 'east-zone'];
-const FALLBACK_VENUES = [
-  { id: 'campus-main', name: '综合餐饮楼', defaultName: '综合餐饮楼', position: 'top-left', venueType: 'dining_complex', areaType: 'restaurant', areaLabel: '餐厅' },
-  { id: 'north-zone', name: '北苑食堂', defaultName: '北苑食堂', position: 'top-right', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' },
-  { id: 'south-zone', name: '南湖食堂', defaultName: '南湖食堂', position: 'bottom-left', venueType: 'multi_floor_canteen', areaType: 'floor_area', areaLabel: '楼层餐区' },
-  { id: 'east-zone', name: '东区餐饮与服务区', defaultName: '东区餐饮与服务区', position: 'bottom-right', venueType: 'dining_service_zone', areaType: 'dining_area', areaLabel: '餐饮区域' }
-];
-
 const HighlightText = defineComponent({
   name: 'HighlightText',
   props: { text: { type: [String, Number], default: '' }, query: { type: String, default: '' } },
@@ -382,9 +383,10 @@ const errorMessage = ref('');
 const successMessage = ref('');
 const searchTerm = ref(String(route.query.q || ''));
 const expandedAreas = ref(new Set());
+const loadingAreas = ref(new Set());
 const scrollElements = new Map();
 const areaElements = new Map();
-const modeByVenue = reactive(Object.fromEntries(REGION_ORDER.map((id) => [id, 'directory'])));
+const modeByVenue = reactive({});
 const highlightedNode = ref('');
 let searchTimer = null;
 let messageTimer = null;
@@ -416,22 +418,16 @@ const canWriteDishes = computed(() => hasCapability('dish:write'));
 const canBulkImportDishes = computed(() => hasCapability('dish:bulk_import'));
 const tenantLabel = computed(() => store.user?.tenantName || store.user?.tenantId || store.user?.nickname || '当前租户');
 
-const venues = computed(() => REGION_ORDER.map((id) => {
-  const fallback = FALLBACK_VENUES.find((entry) => entry.id === id);
-  const current = store.adminCatalogTree?.regions?.find((entry) => entry.id === id);
-  if (!current) return { ...fallback, missing: true, counts: {}, canteens: [], unassignedStalls: [] };
-  return {
-    ...fallback,
-    ...current,
-    name: current.region?.name || current.name || fallback.name,
-    areaLabel: current.areaLabel || current.labels?.area || fallback.areaLabel,
-    counts: current.counts || {},
-    canteens: current.canteens || [],
-    unassignedStalls: current.unassignedStalls || []
-  };
-}));
-
-const selectedVenueId = computed(() => String(route.query.venueId || REGION_ORDER[0]));
+const venues = computed(() => (store.adminCatalogTree?.regions || []).map((current) => ({
+  ...current,
+  name: current.region?.name || current.name,
+  areaLabel: current.areaLabel || current.labels?.area || '下属场所',
+  counts: current.counts || {},
+  canteens: current.canteens || [],
+  unassignedStalls: current.unassignedStalls || []
+})));
+const venueIds = computed(() => venues.value.map((venue) => venue.id));
+const selectedVenueId = computed(() => String(route.query.venueId || venueIds.value[0] || ''));
 const activeVenue = computed(() => venues.value.find((venue) => venue.id === selectedVenueId.value) || venues.value[0]);
 const allAreas = computed(() => venues.value.flatMap((venue) => venue.canteens.map((node) => node.canteen)));
 const allStalls = computed(() => {
@@ -452,11 +448,11 @@ function storageKey(suffix) { return `admin-catalog:${storageScope.value}:${suff
 
 function loadWorkspaceMemory() {
   if (typeof sessionStorage === 'undefined') return;
-  for (const venueId of REGION_ORDER) modeByVenue[venueId] = 'directory';
+  for (const venueId of venueIds.value) modeByVenue[venueId] = 'directory';
   try {
     const expanded = JSON.parse(sessionStorage.getItem(storageKey('expanded')) || '[]');
     expandedAreas.value = new Set(Array.isArray(expanded) ? expanded : []);
-    for (const venueId of REGION_ORDER) {
+    for (const venueId of venueIds.value) {
       const mode = sessionStorage.getItem(storageKey(`mode:${venueId}`));
       if (mode === 'stats' || mode === 'directory') modeByVenue[venueId] = mode;
     }
@@ -488,7 +484,7 @@ function rememberScroll(venueId, event) {
 
 async function restoreScrollPositions() {
   await nextTick();
-  for (const venueId of REGION_ORDER) {
+  for (const venueId of venueIds.value) {
     const element = scrollElements.get(venueId);
     if (!element || typeof sessionStorage === 'undefined') continue;
     element.scrollTop = Number(sessionStorage.getItem(storageKey(`scroll:${venueId}`)) || 0);
@@ -502,7 +498,8 @@ async function refreshTree() {
   errorMessage.value = '';
   let loaded = false;
   try {
-    await store.loadAdminCatalogTree({ include: 'dishes', q: searchTerm.value.trim(), limit: 20, offset: 0 });
+    await store.loadAdminCatalogTree({ include: searchTerm.value.trim() ? 'dishes' : 'summary', q: searchTerm.value.trim(), limit: 20, offset: 0 });
+    for (const venueId of venueIds.value) if (!modeByVenue[venueId]) modeByVenue[venueId] = 'directory';
     loadedSearchQuery = searchTerm.value.trim();
     loaded = true;
     expandSearchPaths();
@@ -538,7 +535,26 @@ function setAreaExpanded(areaId, expanded, persist = true) {
   expandedAreas.value = next;
   if (persist) persistExpanded();
 }
-function toggleArea(areaId) { setAreaExpanded(areaId, !isAreaExpanded(areaId)); }
+function isAreaLoading(areaId) { return loadingAreas.value.has(areaId); }
+async function ensureAreaDetails(venue, areaId) {
+  const area = venue?.canteens?.find((node) => node.canteen?.id === areaId);
+  if (!area || area.detailsLoaded || normalizedQuery() || isAreaLoading(areaId)) return;
+  loadingAreas.value = new Set([...loadingAreas.value, areaId]);
+  try {
+    await store.loadAdminCatalogArea({ venueId: venue.id, areaId, limit: 20, offset: 0 });
+  } catch (error) {
+    errorMessage.value = formatCatalogError(error, '菜品加载失败，请稍后重试。');
+  } finally {
+    const next = new Set(loadingAreas.value);
+    next.delete(areaId);
+    loadingAreas.value = next;
+  }
+}
+async function toggleArea(venue, areaId) {
+  const expanding = !isAreaExpanded(areaId);
+  setAreaExpanded(areaId, expanding);
+  if (expanding) await ensureAreaDetails(venue, areaId);
+}
 
 function normalizedQuery() { return searchTerm.value.trim().toLocaleLowerCase(); }
 function asList(value) {
@@ -852,8 +868,10 @@ function nodeClasses(type, id) {
   const key = `${type}:${id}`;
   return { 'is-selected': selectedNodeId(type) === String(id), 'is-highlighted': highlightedNode.value === key };
 }
-function venueIndex(id) { return String(REGION_ORDER.indexOf(id) + 1).padStart(2, '0'); }
-function venueTypeLabel(venue) { return venue.venueType === 'dining_complex' ? '综合餐饮楼' : '多层食堂'; }
+function venueIndex(id) { return String(Math.max(0, venueIds.value.indexOf(id)) + 1).padStart(2, '0'); }
+function venueTypeLabel(venue) {
+  return ({ campus: '校区餐饮', dining_hall: '餐饮场所', service_building: '生活服务', supermarket: '校园超市' })[venue.venueType] || '餐饮与生活服务';
+}
 function areaOperating(areaNode) { return Number(areaNode.openStallCount || 0) > 0; }
 function openRate(venue) {
   const total = Number(venue.counts?.stalls || 0);
@@ -882,7 +900,12 @@ watch(() => route.query.q, async (value) => {
   expandSearchPaths();
 });
 watch(() => route.query.areaId, (areaId) => {
-  if (areaId) setAreaExpanded(String(areaId), true);
+  if (areaId) {
+    const id = String(areaId);
+    setAreaExpanded(id, true);
+    const venue = venues.value.find((entry) => entry.canteens.some((node) => node.canteen.id === id));
+    if (venue) ensureAreaDetails(venue, id);
+  }
 });
 watch(storageScope, async (nextScope, previousScope) => {
   if (nextScope === previousScope) return;
@@ -903,6 +926,8 @@ onMounted(async () => {
   const areaId = String(route.query.areaId || '');
   if (areaId) {
     setAreaExpanded(areaId, true);
+    const venue = venues.value.find((entry) => entry.canteens.some((node) => node.canteen.id === areaId));
+    if (venue) await ensureAreaDetails(venue, areaId);
     await nextTick();
     const dishId = String(route.query.dishId || '');
     const stallId = String(route.query.stallId || '');
@@ -936,7 +961,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.catalog-page { position: relative; height: calc(100dvh - 4.25rem); min-height: 42rem; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: .75rem; color: #173b28; }
+.catalog-page { position: relative; min-height: calc(100dvh - 4.25rem); display: grid; grid-template-rows: auto minmax(0, 1fr); gap: .75rem; color: #173b28; }
 .catalog-toolbar { min-width: 0; display: grid; grid-template-columns: minmax(15rem, auto) minmax(16rem, 1fr) auto; gap: 1rem; align-items: center; padding: .1rem .15rem; }
 .catalog-heading { min-width: 0; }
 .catalog-eyebrow { margin: 0 0 .12rem; color: #5d7565; font-size: .7rem; font-weight: 750; letter-spacing: 0; }
@@ -957,11 +982,12 @@ onBeforeUnmount(() => {
 .catalog-notice.error { border: 1px solid #efc8c3; background: #fff1ef; color: #8a3128; }
 .catalog-notice.success { border: 1px solid #b8ddc2; background: #eef9f0; color: #23653d; }
 .catalog-notice button { background: transparent; color: inherit; font-weight: 750; }
-.venue-grid { min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.venue-grid { min-height: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(31rem, 100%), 1fr)); align-items: start; gap: .75rem; }
 .venue-panel { --venue-accent: #1f7a4d; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(37,91,58,.16); border-top: 3px solid var(--venue-accent); border-radius: .5rem; background: rgba(250,252,249,.94); box-shadow: 0 .6rem 1.6rem rgba(26,67,42,.08); }
-.venue-panel[data-position="top-right"] { --venue-accent: #3f7990; }
-.venue-panel[data-position="bottom-left"] { --venue-accent: #b17b27; }
-.venue-panel[data-position="bottom-right"] { --venue-accent: #8a675d; }
+.venue-panel:nth-child(4n + 2) { --venue-accent: #3f7990; }
+.venue-panel:nth-child(4n + 3) { --venue-accent: #b17b27; }
+.venue-panel:nth-child(4n + 4) { --venue-accent: #8a675d; }
+.venue-panel-placeholder { min-height: 24rem; }
 .venue-panel.selected { box-shadow: 0 0 0 2px rgba(31,122,77,.13), 0 .8rem 1.8rem rgba(26,67,42,.1); }
 .venue-panel-header { flex: 0 0 auto; padding: .65rem .8rem .45rem; border-bottom: 1px solid #e0e9e0; background: rgba(255,255,255,.96); }
 .venue-heading-row { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: .7rem; }
@@ -985,7 +1011,7 @@ onBeforeUnmount(() => {
 .venue-view-switch > button { min-height: 1.75rem; border-radius: .28rem; padding: .25rem .62rem; background: transparent; color: #66756b; font-size: .68rem; font-weight: 720; }
 .venue-view-switch > button.active { background: #e7f1e8; color: #1e6640; }
 .venue-view-switch .add-area-button { margin-left: auto; border: 1px solid #d8e5da; background: #fff; color: #2b6542; }
-.venue-panel-scroll { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-color: #8eaa95 #edf2ed; scrollbar-width: thin; scroll-behavior: smooth; background: #f7faf6; }
+.venue-panel-scroll { min-height: 12rem; max-height: 62dvh; flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-color: #8eaa95 #edf2ed; scrollbar-width: thin; scroll-behavior: smooth; background: #f7faf6; }
 .venue-panel-scroll::-webkit-scrollbar { width: .65rem; }
 .venue-panel-scroll::-webkit-scrollbar-track { background: #edf2ed; }
 .venue-panel-scroll::-webkit-scrollbar-thumb { border: 2px solid #edf2ed; border-radius: .25rem; background: #8eaa95; }
@@ -1079,12 +1105,11 @@ mark { border-radius: .12rem; padding: 0 .08rem; background: #ffe19a; color: inh
 @keyframes catalog-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 @keyframes node-highlight { 0%, 24% { background: #fff0b8; box-shadow: inset 4px 0 #d49a2d; } 100% { background: inherit; box-shadow: none; } }
 
-:global(.main-panel:has(.catalog-page)) { max-width: none; height: 100dvh; overflow: hidden; }
+:global(.main-panel:has(.catalog-page)) { max-width: none; min-height: 100dvh; overflow: auto; }
 
 @media (max-width: 1180px) {
   .catalog-toolbar { grid-template-columns: minmax(13rem, auto) minmax(14rem, 1fr); }
   .catalog-toolbar-actions { grid-column: 1 / -1; justify-content: flex-end; margin-top: -.35rem; }
-  .catalog-page { height: calc(100dvh - 4.25rem); }
   .stall-table-heading { display: none; }
   .stall-table-row { grid-template-columns: minmax(8rem, 1fr) 4rem minmax(6rem, auto); }
   .stall-category { display: none; }
@@ -1092,7 +1117,7 @@ mark { border-radius: .12rem; padding: 0 .08rem; background: #ffe19a; color: inh
 }
 
 @media (max-width: 1020px) and (min-width: 821px) {
-  .catalog-page { height: calc(100dvh - 8rem); min-height: 38rem; }
+  .catalog-page { min-height: calc(100dvh - 8rem); }
 }
 
 @media (max-width: 900px) {

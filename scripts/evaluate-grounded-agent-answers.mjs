@@ -17,6 +17,8 @@ function parseArguments(argv) {
     checkpointEvery: 5,
     resume: false,
     retryBlockedChat: false,
+    chatRepair: true,
+    limit: null,
   };
   for (const argument of argv) {
     if (argument.startsWith('--database=')) options.databasePath = resolve(argument.slice(11));
@@ -26,9 +28,11 @@ function parseArguments(argv) {
     else if (argument.startsWith('--dimension=')) options.dimension = Number(argument.slice(12));
     else if (argument.startsWith('--vector-mode=')) options.vectorMode = argument.slice(14).trim();
     else if (argument.startsWith('--checkpoint-every=')) options.checkpointEvery = Math.max(1, Number(argument.slice(19)) || 5);
+    else if (argument.startsWith('--limit=')) options.limit = Math.max(1, Number(argument.slice(8)) || 1);
     else if (argument === '--run-chat') options.runChat = true;
     else if (argument === '--resume') options.resume = true;
     else if (argument === '--retry-blocked-chat') options.retryBlockedChat = true;
+    else if (argument === '--no-chat-repair') options.chatRepair = false;
     else if (argument === '--help') options.help = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
@@ -83,8 +87,10 @@ if (options.help) {
   --output=<json>           Ignored detailed report path
   --run-chat                Call the configured AI_CHAT provider; otherwise only retrieval and fallback contracts run
   --checkpoint-every=N      Save partial progress every N questions (default: 5)
+  --limit=N                 Run only the first N frozen questions for local diagnostics
   --resume                  Continue a compatible partial report
-  --retry-blocked-chat      With --resume, retry provider_failed and evidence-backed blocked rows`);
+  --retry-blocked-chat      With --resume, retry provider_failed and evidence-backed blocked rows
+  --no-chat-repair          Measure first-pass prompt output without the one allowed repair`);
   process.exit(0);
 }
 
@@ -193,7 +199,8 @@ async function evidenceForCase(db, evaluation, references) {
 const db = await createDatabase();
 try {
   const references = loadFoodCompositionReferences();
-  const evaluations = buildGroundedAnswerEvaluationCases({ dishes: await catalogDishes(db), references });
+  const frozenEvaluations = buildGroundedAnswerEvaluationCases({ dishes: await catalogDishes(db), references });
+  const evaluations = options.limit ? frozenEvaluations.slice(0, options.limit) : frozenEvaluations;
   const provider = getAiProviderStatus();
   let chatOperational = Boolean(options.runChat && provider.chat.enabled);
   let chatBlocker = options.runChat
@@ -208,6 +215,7 @@ try {
         && Number(existing.embedding?.dimension) === options.dimension
         && existing.embedding?.vectorMode === options.vectorMode
         && Boolean(existing.chat?.requested) === options.runChat
+        && Boolean(existing.chat?.repairEnabled ?? true) === options.chatRepair
         && (!options.runChat || existing.chat?.model === provider.chat.model);
       if (compatible && Array.isArray(existing.rows)) {
         rows = options.retryBlockedChat
@@ -225,7 +233,7 @@ try {
       label: options.label,
       databasePath: options.databasePath,
       embedding: { model: options.model, dimension: options.dimension, vectorMode: options.vectorMode },
-      chat: { requested: options.runChat, configured: provider.chat.enabled, model: provider.chat.model, blocker: chatBlocker },
+      chat: { requested: options.runChat, configured: provider.chat.enabled, model: provider.chat.model, repairEnabled: options.chatRepair, blocker: chatBlocker },
       processedCount: rows.length,
       queryCount: evaluations.length,
       rows,
@@ -263,20 +271,46 @@ try {
           deterministicAnswer,
           citations,
           hardConstraints: evaluation.hardConstraints,
+          allowRepair: options.chatRepair,
+          includeRejectedOutput: true,
         });
         generation = generated.answer ? {
           status: 'completed',
           answer: generated.answer,
-          answerSource: 'llm_grounded',
+          answerSource: generated.repairAccepted ? 'llm_grounded_repaired' : 'llm_grounded',
           citationIds: generated.citationIds,
           evidenceClasses: generated.evidenceClasses || [],
           model: generated.model || provider.chat.model,
           reason: null,
+          firstPassAccepted: generated.firstPassAccepted,
+          repairAttempted: generated.repairAttempted,
+          repairAccepted: generated.repairAccepted,
+          initialFailureReason: generated.initialFailureReason,
+          finalFailureReason: generated.finalFailureReason,
+          promptVersion: generated.promptVersion,
+          firstPassLatencyMs: generated.firstPassLatencyMs,
+          repairLatencyMs: generated.repairLatencyMs,
+          rejectedOutput: generated.rejectedOutput,
+          repairRejectedOutput: generated.repairRejectedOutput,
+          rejectedFinishReason: generated.rejectedFinishReason,
+          repairRejectedFinishReason: generated.repairRejectedFinishReason,
           latencyMs: Number((performance.now() - generationStartedAt).toFixed(2)),
         } : {
           ...generation,
           status: 'fallback',
           reason: generated.reason || 'MODEL_OUTPUT_REJECTED',
+          firstPassAccepted: generated.firstPassAccepted,
+          repairAttempted: generated.repairAttempted,
+          repairAccepted: generated.repairAccepted,
+          initialFailureReason: generated.initialFailureReason,
+          finalFailureReason: generated.finalFailureReason,
+          promptVersion: generated.promptVersion,
+          firstPassLatencyMs: generated.firstPassLatencyMs,
+          repairLatencyMs: generated.repairLatencyMs,
+          rejectedOutput: generated.rejectedOutput,
+          repairRejectedOutput: generated.repairRejectedOutput,
+          rejectedFinishReason: generated.rejectedFinishReason,
+          repairRejectedFinishReason: generated.repairRejectedFinishReason,
           latencyMs: Number((performance.now() - generationStartedAt).toFixed(2)),
         };
       } catch (error) {
@@ -335,6 +369,10 @@ try {
   const fallbacks = rows.filter((item) => item.generation.status === 'fallback');
   const providerFailures = rows.filter((item) => item.generation.status === 'provider_failed'
     || (item.generation.status === 'blocked' && item.citations.length));
+  const chatResponses = rows.filter((item) => ['completed', 'fallback'].includes(item.generation.status));
+  const firstPassAccepted = chatResponses.filter((item) => item.generation.firstPassAccepted);
+  const repairAttempted = chatResponses.filter((item) => item.generation.repairAttempted);
+  const repairAccepted = chatResponses.filter((item) => item.generation.repairAccepted);
   const summary = {
     queryCount: rows.length,
     rounds: Object.fromEntries([...new Set(rows.map((item) => item.round))].map((round) => {
@@ -350,9 +388,20 @@ try {
     chatFallbacks: fallbacks.length,
     chatProviderFailures: providerFailures.length,
     chatAcceptedRate: mean(attempted.map((item) => item.generation.status === 'completed' ? 1 : 0)),
+    firstPassEligible: chatResponses.length,
+    firstPassAccepted: firstPassAccepted.length,
+    firstPassAcceptedRate: mean(chatResponses.map((item) => item.generation.firstPassAccepted ? 1 : 0)),
+    repairAttempted: repairAttempted.length,
+    repairAccepted: repairAccepted.length,
+    repairAcceptedRate: mean(repairAttempted.map((item) => item.generation.repairAccepted ? 1 : 0)),
+    finalModelAccepted: completed.length,
+    finalModelAcceptedRate: mean(chatResponses.map((item) => item.generation.status === 'completed' ? 1 : 0)),
+    deterministicFallbacks: fallbacks.length + rows.filter((item) => item.generation.status === 'deterministic_empty').length,
     retrievalLatencyP50Ms: percentile(rows.map((item) => item.retrievalLatencyMs), 0.5),
     retrievalLatencyP95Ms: percentile(rows.map((item) => item.retrievalLatencyMs), 0.95),
     chatLatencyP95Ms: percentile(completed.map((item) => item.generation.latencyMs), 0.95),
+    firstPassLatencyP95Ms: percentile(chatResponses.map((item) => item.generation.firstPassLatencyMs || 0), 0.95),
+    repairPathLatencyP95Ms: percentile(repairAttempted.map((item) => item.generation.latencyMs), 0.95),
   };
   const status = options.runChat
     ? (!provider.chat.enabled || providerFailures.length
@@ -370,6 +419,7 @@ try {
       configured: provider.chat.enabled,
       model: provider.chat.model,
       source: provider.chat.source,
+      repairEnabled: options.chatRepair,
       blocker: status === 'blocked_chat_provider' ? chatBlocker : null,
     },
     summary,

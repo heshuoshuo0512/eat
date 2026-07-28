@@ -175,9 +175,9 @@
     <section class="card admin-form data-overview-bar">
       <div class="section-title horizontal">
         <div>
-          <p class="eyebrow">Four Dining Areas</p>
-          <h2>四区数据管理</h2>
-          <p class="muted">固定展示四个餐饮场所，统一按餐饮场所 → 餐饮分区 → 档口 → 菜品管理（餐厅 / 楼层餐区作为分区类型）。</p>
+          <p class="eyebrow">Campus Dining Catalog</p>
+          <h2>校园餐饮目录</h2>
+          <p class="muted">按真实数据库动态展示餐饮场所、下属区域、档口和菜品，新增场所无需修改前端模板。</p>
         </div>
         <div class="summary-bar compact-summary">
           <div class="summary-item"><strong>{{ store.canteens.length }}</strong><span>餐饮场所 / 分区</span></div>
@@ -194,9 +194,9 @@
           <div>
             <p class="region-position">{{ regionCard.positionLabel }}</p>
             <h2>{{ regionCard.name }}</h2>
-            <p>{{ regionCard.region?.location || '尚未建立该固定餐饮区的数据' }}</p>
+            <p>{{ regionCard.region?.location || '场所位置待补充' }}</p>
           </div>
-          <button v-if="canWriteCanteens" class="region-add-button" type="button" :title="`新增${regionCard.id === 'campus-main' ? '餐厅' : '楼层餐区'}`" @click="openEntry({ task: 'area', venueId: regionCard.id })">+</button>
+          <button v-if="canWriteCanteens" class="region-add-button" type="button" :title="`新增${regionCard.areaLabel}`" @click="openEntry({ task: 'area', venueId: regionCard.id })">+</button>
         </div>
 
         <div class="region-stats" aria-label="区域数据统计">
@@ -215,7 +215,7 @@
           <span>不会使用其他餐饮场所补位。</span>
         </div>
         <div v-else-if="!regionCard.canteens.length" class="region-empty-state">
-          <strong>{{ regionSearch[regionCard.id] ? '未找到匹配数据' : `暂无下属${regionCard.id === 'campus-main' ? '餐厅' : '楼层餐区'}` }}</strong>
+          <strong>{{ regionSearch[regionCard.id] ? '未找到匹配数据' : `暂无${regionCard.areaLabel}` }}</strong>
           <span>{{ regionSearch[regionCard.id] ? '请尝试其他关键词。' : '可从右上角新增该区域的食堂。' }}</span>
         </div>
         <div v-else class="region-hierarchy">
@@ -732,7 +732,7 @@ const pageMeta = computed(() => {
   if (isAiPage.value) return { eyebrow: 'AI 配置', title: 'AI 提供商与部署配置', description: '配置 OpenAI-compatible API，查看模型状态、连接测试、使用量、配额和部署就绪度。' };
   if (isEntryPage.value) return { eyebrow: '数据中心', title: '餐饮目录数据录入', description: '按餐饮场所、餐饮分区、档口、菜品的统一层级录入数据。' };
   if (activePanel.value === 'reviews') return { eyebrow: '内容治理', title: '内容审核', description: '集中审核菜品评价、食堂评价和校园帖子，并查看关联对象与评价同步状态。' };
-  if (activePanel.value === 'data') return { eyebrow: '数据管理', title: '四区数据管理', description: '固定四个餐饮场所，按餐饮分区、档口和菜品逐级管理。' };
+  if (activePanel.value === 'data') return { eyebrow: '数据管理', title: '校园餐饮目录', description: '按真实场所、下属区域、档口和菜品逐级管理。' };
   return { eyebrow: '内容治理', title: '内容审核', description: '集中审核评价与校园帖子。' };
 });
 const message = ref('');
@@ -772,13 +772,20 @@ const menuItemForm = reactive(defaultMenuItemForm());
 const deploymentReadiness = ref(null);
 const databaseOverview = ref(null);
 
-// ===== 四区层级数据 =====
-const fixedRegions = [
-  { id: 'campus-main', name: '综合餐饮楼', positionLabel: '左上' },
-  { id: 'north-zone', name: '北苑食堂', positionLabel: '右上' },
-  { id: 'south-zone', name: '南湖食堂', positionLabel: '左下' },
-  { id: 'east-zone', name: '东苑食堂', positionLabel: '右下' }
-];
+// ===== 数据库驱动的餐饮场所层级 =====
+const fixedRegions = computed(() => {
+  const catalogRegions = store.adminCatalogTree?.regions || [];
+  if (catalogRegions.length) return catalogRegions.map((region, index) => ({
+    id: region.id,
+    name: region.region?.name || region.name,
+    positionLabel: `场所 ${String(index + 1).padStart(2, '0')}`,
+    areaLabel: region.areaLabel || region.labels?.area || '下属场所'
+  }));
+  const ids = new Set(store.canteens.map((canteen) => canteen.id));
+  return store.canteens
+    .filter((canteen) => !canteen.parentId || !ids.has(canteen.parentId))
+    .map((canteen, index) => ({ id: canteen.id, name: canteen.name, positionLabel: `场所 ${String(index + 1).padStart(2, '0')}`, areaLabel: '下属场所' }));
+});
 function regionDisplayName(definition) {
   return store.canteens.find((canteen) => canteen.id === definition.id)?.name || definition.name;
 }
@@ -801,16 +808,16 @@ const entryMode = ref(entryTasks.value.some((task) => task.id === requestedIniti
 const entryContext = reactive({ venueId: '', areaId: '', stallId: '' });
 const entryAreaLabel = computed(() => {
   if (!entryContext.venueId) return '餐厅 / 楼层餐区';
-  return entryContext.venueId === 'campus-main' ? '餐厅' : '楼层餐区';
+  return fixedRegions.value.find((item) => item.id === entryContext.venueId)?.areaLabel || '下属场所';
 });
 const entryEntityLabel = computed(() => entryMode.value === 'venue' ? '餐饮场所' : entryAreaLabel.value);
 const entryContextPath = computed(() => {
-  const venue = fixedRegions.find((item) => item.id === entryContext.venueId);
+  const venue = fixedRegions.value.find((item) => item.id === entryContext.venueId);
   const area = store.canteens.find((item) => item.id === entryContext.areaId);
   const stall = store.stalls.find((item) => item.id === entryContext.stallId);
   return [venue ? regionDisplayName(venue) : '未选择餐饮场所', area?.name, stall?.name].filter(Boolean).join(' / ');
 });
-const regionSearch = reactive(Object.fromEntries(fixedRegions.map((region) => [region.id, ''])));
+const regionSearch = reactive({});
 const openCanteens = ref(new Set());
 const openStalls = ref(new Set());
 
@@ -865,7 +872,7 @@ function buildCanteenNode(canteen, query, forceVisible = false) {
   return { canteen, stalls, primaryStallCount: topLevelStalls.length, dishCount: allDishCount };
 }
 
-const regionCards = computed(() => fixedRegions.map((definition) => {
+const regionCards = computed(() => fixedRegions.value.map((definition) => {
   const region = store.canteens.find((canteen) => canteen.id === definition.id) || null;
   if (!region) return { ...definition, region: null, canteens: [], canteenCount: 0, stallCount: 0, dishCount: 0 };
   const query = regionSearch[definition.id] || '';
@@ -902,7 +909,7 @@ function openEntry(query) {
 function regionIdForCanteen(canteenId) {
   const canteen = store.canteens.find((item) => item.id === canteenId);
   if (!canteen) return '';
-  return fixedRegions.some((region) => region.id === canteen.id) ? canteen.id : canteen.parentId || '';
+  return fixedRegions.value.some((region) => region.id === canteen.id) ? canteen.id : canteen.parentId || '';
 }
 
 function currentEntryEditId() {
@@ -930,7 +937,7 @@ function hydrateVenueForm() {
   if (venue) editCanteen(venue);
   else Object.assign(canteenForm, defaultCanteenForm(), {
     id: entryContext.venueId,
-    name: fixedRegions.find((item) => item.id === entryContext.venueId)?.name || '',
+    name: fixedRegions.value.find((item) => item.id === entryContext.venueId)?.name || '',
     canteenType: 'primary',
     parentId: ''
   });
@@ -1020,7 +1027,7 @@ function syncDishEntryContext({ updateRoute = true } = {}) {
   const stall = store.stalls.find((item) => item.id === dishForm.stallId);
   if (!stall) return;
   const area = store.canteens.find((item) => item.id === stall.canteenId);
-  entryContext.venueId = area?.parentId || (fixedRegions.some((item) => item.id === area?.id) ? area.id : '');
+  entryContext.venueId = area?.parentId || (fixedRegions.value.some((item) => item.id === area?.id) ? area.id : '');
   entryContext.areaId = area?.parentId ? area.id : '';
   entryContext.stallId = stall.id;
   if (updateRoute) void syncEntryRoute();
@@ -1049,13 +1056,13 @@ function initializeEntryWorkspace() {
   Object.assign(dishForm, defaultDishForm(), { stallId: '' });
   resetVisionImport();
 
-  if (requestedVenueId && fixedRegions.some((item) => item.id === requestedVenueId)) entryContext.venueId = requestedVenueId;
+  if (requestedVenueId && fixedRegions.value.some((item) => item.id === requestedVenueId)) entryContext.venueId = requestedVenueId;
   if (requestedAreaId) {
     const area = store.canteens.find((item) => item.id === requestedAreaId);
     if (area?.parentId) {
       entryContext.venueId = area.parentId;
       entryContext.areaId = area.id;
-    } else if (area && fixedRegions.some((item) => item.id === area.id)) {
+    } else if (area && fixedRegions.value.some((item) => item.id === area.id)) {
       entryContext.venueId = area.id;
     }
   }
@@ -1063,7 +1070,7 @@ function initializeEntryWorkspace() {
     const stall = store.stalls.find((item) => item.id === requestedStallId);
     if (stall) {
       const area = store.canteens.find((item) => item.id === stall.canteenId);
-      entryContext.venueId = area?.parentId || (fixedRegions.some((item) => item.id === area?.id) ? area.id : entryContext.venueId);
+      entryContext.venueId = area?.parentId || (fixedRegions.value.some((item) => item.id === area?.id) ? area.id : entryContext.venueId);
       entryContext.areaId = area?.parentId ? area.id : '';
       entryContext.stallId = stall.id;
       dishForm.stallId = stall.id;
@@ -1088,7 +1095,7 @@ function initializeEntryWorkspace() {
     const stall = store.stalls.find((item) => item.id === (editId || entryContext.stallId));
     if (stall) {
       const area = store.canteens.find((item) => item.id === stall.canteenId);
-      entryContext.venueId = area?.parentId || (fixedRegions.some((item) => item.id === area?.id) ? area.id : entryContext.venueId);
+      entryContext.venueId = area?.parentId || (fixedRegions.value.some((item) => item.id === area?.id) ? area.id : entryContext.venueId);
       entryContext.areaId = area?.parentId ? area.id : '';
       entryContext.stallId = stall.id;
       editStall(stall);
@@ -1330,7 +1337,7 @@ function resetCanteenForm() {
   if (entryMode.value === 'venue') {
     Object.assign(canteenForm, {
       id: entryContext.venueId,
-      name: fixedRegions.find((item) => item.id === entryContext.venueId)?.name || '',
+      name: fixedRegions.value.find((item) => item.id === entryContext.venueId)?.name || '',
       canteenType: 'primary',
       parentId: ''
     });
@@ -1672,7 +1679,7 @@ function normalizeJsonImportRow(rawDish, index) {
   if (!areaId) errors.push('缺少餐厅或楼层ID。');
   if (!stallId) errors.push('缺少档口ID。');
   else if (!stall) errors.push('所属档口不存在或不属于当前租户。');
-  else if (stall.parentId || !area?.parentId || !fixedRegions.some((item) => item.id === area.parentId)) errors.push('档口必须直属有效的餐厅或楼层餐区。');
+  else if (stall.parentId || !area?.parentId || !fixedRegions.value.some((item) => item.id === area.parentId)) errors.push('档口必须直属有效的下属场所。');
   else {
     if (areaId && area.id !== areaId) errors.push('档口与餐厅或楼层ID不匹配。');
     if (venueId && area.parentId !== venueId) errors.push('餐厅或楼层与食堂ID不匹配。');
@@ -2272,6 +2279,7 @@ async function initializeAdminPage() {
     return;
   }
   if (isEntryPage.value) {
+    if (!store.adminCatalogTree) await store.loadAdminCatalogTree({ include: 'summary' });
     initializeEntryWorkspace();
     return;
   }

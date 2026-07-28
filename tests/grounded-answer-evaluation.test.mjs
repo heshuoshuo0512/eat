@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  buildGroundedAnswerRequirements,
   groundingEvidenceClasses,
   validateGroundedAgentAnswer,
 } from '../server/aiProvider.js';
@@ -57,9 +58,15 @@ describe('grounded answer 3x30 evaluation plan', () => {
     assert.match(script, /argument === '--run-chat'/);
     assert.match(script, /argument === '--resume'/);
     assert.match(script, /argument === '--retry-blocked-chat'/);
+    assert.match(script, /argument === '--no-chat-repair'/);
+    assert.match(script, /argument\.startsWith\('--limit='\)/);
     assert.match(script, /generation\?\.status !== 'provider_failed'/);
     assert.match(script, /completed_with_safety_fallbacks/);
     assert.match(script, /chatProviderFailures/);
+    assert.match(script, /firstPassAcceptedRate/);
+    assert.match(script, /repairAcceptedRate/);
+    assert.match(script, /finalModelAcceptedRate/);
+    assert.match(script, /includeRejectedOutput: true/);
     assert.match(script, /checkpointEvery/);
     assert.match(script, /CHAT_EVALUATION_NOT_REQUESTED/);
     assert.doesNotMatch(script, /sk-[A-Za-z0-9_-]{20,}/);
@@ -93,7 +100,10 @@ describe('grounded answer evidence boundaries', () => {
     const estimated = [{
       id: 'dish:estimated',
       sourceType: 'dish',
-      metadata: { semanticEvidenceTypes: ['tenant_dish_fact', 'ai_estimated'] },
+      metadata: {
+        semanticEvidenceTypes: ['tenant_dish_fact', 'ai_estimated'],
+        aiEstimated: { tasteProfiles: ['清淡'] },
+      },
     }];
     assert.equal(validateGroundedAgentAnswer({
       answer: '这道菜口味清淡。', citationIds: ['dish:estimated'],
@@ -114,5 +124,55 @@ describe('grounded answer evidence boundaries', () => {
     assert.equal(validateGroundedAgentAnswer({
       answer: '参考食材每100克参考值为130千卡，不能代表校内菜品。', citationIds: ['food-reference:rice'],
     }, reference).valid, true);
+  });
+
+  it('applies AI estimation boundaries to estimated fields instead of verified catalog fields', () => {
+    const citations = [{
+      id: 'dish:mixed',
+      sourceType: 'dish',
+      metadata: {
+        priceDisplay: '12元/份',
+        semanticEvidenceTypes: ['tenant_dish_fact', 'ai_estimated'],
+        aiEstimated: { tasteProfiles: ['清淡'], cookingMethods: ['蒸'] },
+      },
+    }];
+    assert.equal(validateGroundedAgentAnswer({
+      answer: '该菜品目录价格为12元/份。', citationIds: ['dish:mixed'],
+    }, citations).valid, true);
+    assert.equal(validateGroundedAgentAnswer({
+      answer: '该菜品口味清淡。', citationIds: ['dish:mixed'],
+    }, citations).reason, 'MISSING_ESTIMATION_LABEL');
+  });
+
+  it('accepts explicit safety negation while rejecting unsupported positive safety claims', () => {
+    const citations = [{ id: 'dish:unknown', sourceType: 'dish', metadata: { safetyStatus: 'unknown' } }];
+    assert.equal(validateGroundedAgentAnswer({
+      answer: '过敏原信息尚未确认，目前不能放心吃，请现场核实交叉接触风险。',
+      citationIds: ['dish:unknown'],
+    }, citations).valid, true);
+    assert.equal(validateGroundedAgentAnswer({
+      answer: '过敏原信息尚未确认，但可以放心吃。', citationIds: ['dish:unknown'],
+    }, citations).reason, 'UNSUPPORTED_SAFETY_CLAIM');
+  });
+
+  it('builds citation-scoped requirements and exact safety statements', () => {
+    const requirements = buildGroundedAnswerRequirements([{
+      id: 'dish:unknown',
+      sourceType: 'dish',
+      evidenceClasses: ['tenant_fact', 'ai_estimated'],
+      metadata: {
+        safetyStatus: 'unknown',
+        supplyConfirmed: false,
+        nutritionFactStatus: 'unknown',
+        estimatedTerms: ['清淡'],
+      },
+    }]);
+    assert.equal(requirements.promptVersion, 'grounded-answer-v2');
+    assert.deepEqual(requirements.allowedCitationIds, ['dish:unknown']);
+    assert.equal(requirements.evidenceRules[0].requiresAllergenUnknownWarning, true);
+    assert.equal(requirements.evidenceRules[0].requiresSupplyUnconfirmedWarning, true);
+    assert.equal(requirements.evidenceRules[0].nutritionUnverified, true);
+    assert.deepEqual(requirements.evidenceRules[0].estimatedTerms, ['清淡']);
+    assert.match(requirements.exactStatements.allergenUnknown, /尚未确认.*现场核实/);
   });
 });

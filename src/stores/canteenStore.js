@@ -737,6 +737,32 @@ export const useCanteenStore = defineStore('canteen', () => {
     adminCatalogTree.value = result;
     return result;
   }
+  async function loadAdminCatalogArea(params = {}) {
+    const result = await apiClient.getAdminCatalogTree({ ...params, include: 'dishes' });
+    const current = adminCatalogTree.value;
+    const incomingRegion = result.regions?.[0];
+    if (!current || !incomingRegion) return result;
+    const regionIndex = current.regions.findIndex((region) => region.id === incomingRegion.id);
+    if (regionIndex < 0) return result;
+    const areaId = String(params.areaId || params.canteenId || '');
+    const mergedRegion = { ...current.regions[regionIndex] };
+    if (areaId) {
+      const incomingArea = incomingRegion.canteens?.find((node) => node.canteen?.id === areaId);
+      if (incomingArea) {
+        mergedRegion.canteens = mergedRegion.canteens.map((node) => node.canteen?.id === areaId
+          ? { ...incomingArea, detailsLoaded: true }
+          : node);
+      }
+    } else {
+      mergedRegion.canteens = (incomingRegion.canteens || []).map((node) => ({ ...node, detailsLoaded: true }));
+      mergedRegion.unassignedStalls = incomingRegion.unassignedStalls || [];
+    }
+    adminCatalogTree.value = {
+      ...current,
+      regions: current.regions.map((region, index) => index === regionIndex ? mergedRegion : region)
+    };
+    return result;
+  }
   const databaseEntities = ref([]);
   const databaseRows = ref([]);
   const databaseEntityMeta = ref(null);
@@ -1030,6 +1056,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadDatabaseOverview,
     adminCatalogTree,
     loadAdminCatalogTree,
+    loadAdminCatalogArea,
     loadReviewsAdmin,
     deleteReviewAdmin,
     updateReviewStatusAdmin,
