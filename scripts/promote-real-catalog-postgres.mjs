@@ -96,7 +96,6 @@ function walk(value) {
 }
 
 function venueKind(row) {
-  if (row.id === 'east-zone') return 'campus_zone';
   if (row.id === 'east-dongdahuo') return 'service_building';
   if (row.id === 'east-guangyuan') return 'supermarket';
   return 'dining_hall';
@@ -104,6 +103,9 @@ function venueKind(row) {
 
 function valueForColumn(table, column, row, checksum) {
   if (table === 'canteens' && column === 'venue_kind') return venueKind(row);
+  if (table === 'canteens' && column === 'name' && row.id === 'east-zone') return '东区燕鸣湖';
+  if (table === 'canteens' && column === 'name' && row.id === 'east-dongdahuo') return '东大活';
+  if (table === 'canteens' && column === 'parent_id' && ['east-dongdahuo', 'east-guangyuan'].includes(row.id)) return null;
   if ((table === 'stalls' || table === 'dishes') && column === 'reservation_enabled') return true;
   if (table === 'stalls' && column === 'open') return 1;
   if (table === 'dishes' && column === 'name') return cleanDishName(row.name);

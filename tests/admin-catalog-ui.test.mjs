@@ -46,10 +46,11 @@ describe('administrator catalog workspace UI contracts', () => {
   });
 
   it('uses unified venue, area, stall and dish terminology', () => {
-    for (const label of ['餐饮场所', '餐饮分区', '下属场所', '校园超市', '档口', '菜品', '待归类档口', '历史层级']) {
+    for (const label of ['餐饮场所', '餐饮分区', '下属场所', '校园超市', '档口', '菜品', '直属档口', '历史层级']) {
       assert.ok(view.includes(label) || drawer.includes(label), `missing ${label}`);
     }
     assert.doesNotMatch(view, /一级档口|子档口/);
+    assert.doesNotMatch(view, /待归类档口|直属场所待处理/);
     assert.match(view, /venue\.venueType/);
     assert.doesNotMatch(view, /固定展示四个餐饮场所/);
   });

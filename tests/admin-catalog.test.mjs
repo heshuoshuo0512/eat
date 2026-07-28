@@ -55,7 +55,7 @@ function treeHasDish(tree, dishId) {
     for (const canteen of region.canteens || []) {
       if ((canteen.stalls || []).some(visit)) return true;
     }
-    if ((region.unassignedStalls || []).some(visit)) return true;
+    if ((region.directStalls || []).some(visit)) return true;
   }
   return false;
 }
@@ -397,7 +397,7 @@ describe('admin catalog tree', () => {
 
       const catalog = await request('/api/admin/catalog/tree?include=dishes&venueId=campus-main', { token: adminToken });
       const venue = catalog.data.regions[0];
-      assert.ok(venue.unassignedStalls.some((node) => node.stall.id === directId));
+      assert.ok(venue.directStalls.some((node) => node.stall.id === directId));
       const parentNode = venue.canteens.flatMap((area) => area.stalls).find((node) => node.stall.id === parentId);
       const legacyChild = parentNode.children.find((node) => node.stall.id === childId);
       assert.equal(legacyChild.legacyHierarchy, true);
@@ -495,6 +495,42 @@ describe('admin catalog tree', () => {
       await db.prepare('DELETE FROM stalls WHERE tenant_id = ? AND id = ?').run('default', childId);
       await db.prepare('DELETE FROM stalls WHERE tenant_id = ? AND id = ?').run('default', directId);
       await db.prepare('DELETE FROM stalls WHERE tenant_id = ? AND id = ?').run('default', parentId);
+    }
+  });
+
+  it('allows stalls and dishes directly under a leaf venue', async () => {
+    const venueId = 'catalog-direct-leaf';
+    const stallId = 'catalog-direct-leaf-stall';
+    const dishId = 'catalog-direct-leaf-dish';
+    const timestamp = new Date().toISOString();
+    try {
+      await db.prepare('INSERT INTO canteens (id, tenant_id, name, location, hours, crowd_level, tags_json, description, parent_id, canteen_type, image, venue_kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(venueId, 'default', '直属服务场所', '测试位置', '07:00 - 21:00', 0, '[]', '混合深度目录测试', null, 'primary', '', 'service_building', timestamp, timestamp);
+
+      const createdStall = await request('/api/admin/stalls', {
+        method: 'POST', token: adminToken, body: {
+          id: stallId, canteenId: venueId, name: '直属档口', floor: '1F', category: '测试档口', avgPrice: 12, open: true
+        }
+      });
+      assert.equal(createdStall.status, 201);
+
+      const createdDish = await request('/api/admin/dishes', {
+        method: 'POST', token: adminToken, body: {
+          id: dishId, stallId, name: '直属菜品', price: 12, taste: '清淡', cuisine: '测试菜系', ingredients: ['测试食材'], tags: ['测试标签'], nutrition: { calories: 120, protein: 10, fat: 3, carbs: 15 }
+        }
+      });
+      assert.equal(createdDish.status, 201);
+
+      const tree = await request(`/api/admin/catalog/tree?include=dishes&venueId=${venueId}`, { token: adminToken });
+      assert.equal(tree.status, 200);
+      assert.equal(tree.data.regions[0].hierarchyMode, 'direct');
+      assert.equal(tree.data.regions[0].supportsDirectStalls, true);
+      assert.equal(tree.data.regions[0].directStalls[0].stall.id, stallId);
+      assert.equal(tree.data.regions[0].directStalls[0].directDishes[0].id, dishId);
+    } finally {
+      await db.prepare('DELETE FROM dishes WHERE tenant_id = ? AND id = ?').run('default', dishId);
+      await db.prepare('DELETE FROM stalls WHERE tenant_id = ? AND id = ?').run('default', stallId);
+      await db.prepare('DELETE FROM canteens WHERE tenant_id = ? AND id = ?').run('default', venueId);
     }
   });
 
@@ -614,7 +650,7 @@ describe('admin catalog tree', () => {
     assert.match(openapi, /name: venueId/);
     assert.match(openapi, /name: areaId/);
     assert.match(openapi, /venueType:/);
-    assert.match(openapi, /unassignedStalls:/);
+    assert.match(openapi, /directStalls:/);
     assert.match(openapi, /legacyHierarchy:/);
   });
 });

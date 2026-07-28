@@ -31,7 +31,7 @@
         <button v-if="canBulkImportDishes" class="tool-button" type="button" @click="openImport">
           <span aria-hidden="true">⇧</span><span>批量导入</span>
         </button>
-        <button v-if="canWriteCanteens && activeVenue" class="tool-button primary-action" type="button" @click="handlePrimaryVenueAction">
+        <button v-if="(canWriteCanteens || canWriteStalls) && activeVenue" class="tool-button primary-action" type="button" @click="handlePrimaryVenueAction">
           <span aria-hidden="true">{{ activeVenue.missing ? '⌂' : '＋' }}</span><span>{{ activeVenue.missing ? '配置餐饮场所' : `新增${activeVenue.areaLabel}` }}</span>
         </button>
       </div>
@@ -76,7 +76,7 @@
           </div>
 
           <div class="venue-summary" aria-label="场所数据统计">
-            <span><b>{{ venue.counts?.canteens || 0 }}</b>{{ venue.areaLabel }}（餐饮分区）</span>
+            <span v-if="!venue.supportsDirectStalls"><b>{{ venue.counts?.canteens || 0 }}</b>{{ venue.areaLabel }}</span>
             <span><b>{{ venue.counts?.stalls || 0 }}</b>档口</span>
             <span><b>{{ venue.counts?.dishes || 0 }}</b>菜品</span>
             <span><b>{{ venue.counts?.openStalls || 0 }}</b>营业档口</span>
@@ -103,10 +103,10 @@
               @click="setVenueMode(venue.id, 'stats')"
             >统计</button>
             <button
-              v-if="canWriteCanteens && !venue.missing"
+              v-if="(venue.supportsDirectStalls ? canWriteStalls : canWriteCanteens) && !venue.missing"
               class="add-area-button"
               type="button"
-              @click="openNewArea(venue)"
+              @click="venue.supportsDirectStalls ? openNewDirectStall(venue) : openNewArea(venue)"
             >＋ {{ venue.areaLabel }}</button>
           </div>
         </header>
@@ -167,7 +167,7 @@
             </section>
           </template>
 
-          <template v-else-if="visibleAreas(venue).length || visibleUnassigned(venue).length">
+          <template v-else-if="visibleAreas(venue).length || visibleDirectStalls(venue).length">
             <section
               v-for="areaNode in visibleAreas(venue)"
               :key="areaNode.canteen.id"
@@ -267,31 +267,30 @@
               </div>
             </section>
 
-            <section v-if="visibleUnassigned(venue).length" class="area-section unassigned-section">
-              <header class="area-header warning-header">
-                <span class="warning-symbol" aria-hidden="true">!</span>
-                <div class="area-title static"><strong>待归类档口</strong><small>{{ visibleUnassigned(venue).length }} 个档口直属餐饮场所</small></div>
-                <span class="operation-state warning">待处理</span>
+            <section v-if="visibleDirectStalls(venue).length" class="area-section direct-stalls-section">
+              <header class="area-header">
+                <div class="area-title static"><strong>档口</strong><small>{{ visibleDirectStalls(venue).length }} 个直属档口</small></div>
+                <button v-if="canWriteStalls && venue.supportsDirectStalls" class="area-add-stall" type="button" @click="openNewDirectStall(venue)">＋ 添加档口</button>
               </header>
               <div class="area-content">
-                <div class="stall-table unassigned-table" role="table" aria-label="待归类档口">
+                <div class="stall-table direct-stalls-table" role="table" aria-label="直属档口">
                   <div
-                    v-for="row in displayedUnassigned(venue)"
+                    v-for="row in displayedDirectStalls(venue)"
                     :key="row.node.stall.id"
                     class="stall-block"
                     :class="nodeClasses('stall', row.node.stall.id)"
                     :data-node-key="`stall:${row.node.stall.id}`"
                   >
                     <div class="stall-table-row" role="row">
-                      <button class="stall-name-cell" type="button" role="cell" @click="openUnassignedStall(venue, row.node, 'view')">
+                      <button class="stall-name-cell" type="button" role="cell" @click="openDirectStall(venue, row.node, 'view')">
                         <span><strong><HighlightText :text="row.node.stall.name" :query="searchTerm" /></strong><small>{{ row.node.stall.category || '未分类' }}</small></span>
                       </button>
                       <span role="cell">{{ row.node.stall.floor || '楼层未设置' }}</span>
                       <span role="cell"><i :class="['status-dot', row.node.stall.open ? 'open' : 'closed']"></i>{{ row.node.stall.open ? '营业中' : '暂停' }}</span>
                       <span role="cell">{{ row.node.dishCount || 0 }} 道菜品</span>
                       <span class="stall-actions" role="cell">
-                        <button type="button" @click="openUnassignedStall(venue, row.node, 'view')">查看</button>
-                        <button v-if="canWriteStalls" type="button" @click="openUnassignedStall(venue, row.node, 'edit')">归类</button>
+                        <button type="button" @click="openDirectStall(venue, row.node, 'view')">查看</button>
+                        <button v-if="canWriteStalls" type="button" @click="openDirectStall(venue, row.node, 'edit')">编辑</button>
                       </span>
                     </div>
                     <div v-if="visibleDishes(row).length" class="dish-rows">
@@ -302,7 +301,7 @@
                         :class="nodeClasses('dish', dish.id)"
                         :data-node-key="`dish:${dish.id}`"
                       >
-                        <button class="dish-name" type="button" @click="openUnassignedDish(venue, row.node, dish, 'view')">
+                        <button class="dish-name" type="button" @click="openDirectDish(venue, row.node, dish, 'view')">
                           <span class="dish-thumb" aria-hidden="true">
                             <span>{{ dish.image || '餐' }}</span>
                             <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="'dish thumbnail'" loading="lazy" @error="$event.currentTarget.hidden = true" />
@@ -316,8 +315,8 @@
                         <span class="dish-price">{{ dishPriceText(dish) }}</span>
                         <span :class="['dish-state', dish.status === 'hidden' ? 'hidden' : 'active']">{{ dish.status === 'hidden' ? '已隐藏' : '上架中' }}</span>
                         <span class="dish-actions">
-                          <button type="button" @click="openUnassignedDish(venue, row.node, dish, 'view')">查看</button>
-                          <button v-if="canWriteDishes" type="button" @click="openUnassignedDish(venue, row.node, dish, 'edit')">编辑</button>
+                          <button type="button" @click="openDirectDish(venue, row.node, dish, 'view')">查看</button>
+                          <button v-if="canWriteDishes" type="button" @click="openDirectDish(venue, row.node, dish, 'edit')">编辑</button>
                         </span>
                       </div>
                     </div>
@@ -331,7 +330,7 @@
             <strong>{{ searchTerm ? '没有匹配的目录内容' : `暂无${venue.areaLabel}` }}</strong>
             <span v-if="searchTerm">“{{ searchTerm }}”</span>
             <button v-if="searchTerm" type="button" @click="clearSearch">清除搜索</button>
-            <button v-else-if="canWriteCanteens" type="button" @click="openNewArea(venue)">新增{{ venue.areaLabel }}</button>
+            <button v-else-if="venue.supportsDirectStalls ? canWriteStalls : canWriteCanteens" type="button" @click="venue.supportsDirectStalls ? openNewDirectStall(venue) : openNewArea(venue)">新增{{ venue.areaLabel }}</button>
           </div>
         </div>
       </article>
@@ -424,7 +423,7 @@ const venues = computed(() => (store.adminCatalogTree?.regions || []).map((curre
   areaLabel: current.areaLabel || current.labels?.area || '下属场所',
   counts: current.counts || {},
   canteens: current.canteens || [],
-  unassignedStalls: current.unassignedStalls || []
+  directStalls: current.directStalls || []
 })));
 const venueIds = computed(() => venues.value.map((venue) => venue.id));
 const selectedVenueId = computed(() => String(route.query.venueId || venueIds.value[0] || ''));
@@ -438,7 +437,7 @@ const allStalls = computed(() => {
   };
   for (const venue of venues.value) {
     for (const area of venue.canteens || []) for (const node of area.stalls || []) visit(node);
-    for (const node of venue.unassignedStalls || []) visit(node);
+    for (const node of venue.directStalls || []) visit(node);
   }
   return result;
 });
@@ -588,9 +587,9 @@ function visibleAreas(venue) {
   if (!normalizedQuery() || textMatches(venue.name, venue.region?.location)) return venue.canteens || [];
   return (venue.canteens || []).filter(areaMatches);
 }
-function visibleUnassigned(venue) {
-  if (!normalizedQuery() || textMatches(venue.name, venue.region?.location)) return venue.unassignedStalls || [];
-  return (venue.unassignedStalls || []).filter(stallBranchMatches);
+function visibleDirectStalls(venue) {
+  if (!normalizedQuery() || textMatches(venue.name, venue.region?.location)) return venue.directStalls || [];
+  return (venue.directStalls || []).filter(stallBranchMatches);
 }
 
 function flattenStalls(nodes, { ancestorMatches = false, depth = 0 } = {}) {
@@ -609,9 +608,9 @@ function displayedStalls(areaNode) {
   const areaSelfMatches = textMatches(areaNode.canteen.name, areaNode.canteen.location);
   return flattenStalls(areaNode.stalls, { ancestorMatches: areaSelfMatches });
 }
-function displayedUnassigned(venue) {
+function displayedDirectStalls(venue) {
   const venueSelfMatches = textMatches(venue.name, venue.region?.location);
-  return flattenStalls(visibleUnassigned(venue), { ancestorMatches: venueSelfMatches });
+  return flattenStalls(visibleDirectStalls(venue), { ancestorMatches: venueSelfMatches });
 }
 function visibleDishes(row, areaNode) {
   const dishes = row.node.directDishes || [];
@@ -662,7 +661,7 @@ async function applySearch() {
   pendingSearchQuery = '';
   if (searchTerm.value.trim()) {
     for (const venue of venues.value) {
-      if (visibleAreas(venue).length || visibleUnassigned(venue).length) setVenueMode(venue.id, 'directory');
+      if (visibleAreas(venue).length || visibleDirectStalls(venue).length) setVenueMode(venue.id, 'directory');
     }
   }
   expandSearchPaths();
@@ -708,7 +707,7 @@ function findDeepLinkSelection() {
         if (found) return { venueId: venue.id, areaId: areaNode.canteen.id, ...found };
       }
     }
-    for (const stallNode of venue.unassignedStalls || []) {
+    for (const stallNode of venue.directStalls || []) {
       const found = visit(stallNode);
       if (found) return { venueId: venue.id, ...found };
     }
@@ -752,6 +751,7 @@ function venueDescriptor(venue, mode) {
 function handlePrimaryVenueAction() {
   if (!activeVenue.value) return;
   if (activeVenue.value.missing) openVenue(activeVenue.value, 'create');
+  else if (activeVenue.value.supportsDirectStalls) openNewDirectStall(activeVenue.value);
   else openNewArea(activeVenue.value);
 }
 function openVenue(venue, mode = 'view') {
@@ -761,6 +761,10 @@ function openVenue(venue, mode = 'view') {
 function openNewArea(venue) {
   if (!venue || venue.missing || !canWriteCanteens.value) return;
   showDrawer({ mode: 'create', type: 'area', venue, item: null, canEdit: true }, { venueId: venue.id });
+}
+function openNewDirectStall(venue) {
+  if (!venue?.supportsDirectStalls || !canWriteStalls.value) return;
+  showDrawer({ mode: 'create', type: 'stall', venue, area: venue.region, item: null, canEdit: true }, { venueId: venue.id, areaId: venue.id });
 }
 function openArea(venue, areaNode, mode = 'view') {
   if (mode !== 'view' && !canWriteCanteens.value) return;
@@ -777,13 +781,13 @@ function openStall(venue, areaNode, stallNode, mode = 'view') {
   setAreaExpanded(areaNode.canteen.id, true);
   showDrawer({ mode, type: 'stall', venue, area: areaNode.canteen, stall: stallNode.stall, item: stallNode.stall, legacyHierarchy: stallNode.legacyHierarchy, canEdit: canWriteStalls.value }, { venueId: venue.id, areaId: areaNode.canteen.id, stallId: stallNode.stall.id });
 }
-function openUnassignedStall(venue, stallNode, mode = 'view') {
+function openDirectStall(venue, stallNode, mode = 'view') {
   if (mode !== 'view' && !canWriteStalls.value) return;
-  showDrawer({ mode, type: 'stall', venue, area: null, stall: stallNode.stall, item: stallNode.stall, needsClassification: true, canEdit: canWriteStalls.value }, { venueId: venue.id, stallId: stallNode.stall.id });
+  showDrawer({ mode, type: 'stall', venue, area: venue.region, stall: stallNode.stall, item: stallNode.stall, canEdit: canWriteStalls.value }, { venueId: venue.id, areaId: venue.id, stallId: stallNode.stall.id });
 }
-function openUnassignedDish(venue, stallNode, dish, mode = 'view') {
+function openDirectDish(venue, stallNode, dish, mode = 'view') {
   if (mode !== 'view' && !canWriteDishes.value) return;
-  showDrawer({ mode, type: 'dish', venue, area: null, stall: stallNode.stall, item: dish, canEdit: canWriteDishes.value }, { venueId: venue.id, stallId: stallNode.stall.id, dishId: dish.id });
+  showDrawer({ mode, type: 'dish', venue, area: venue.region, stall: stallNode.stall, item: dish, canEdit: canWriteDishes.value }, { venueId: venue.id, areaId: venue.id, stallId: stallNode.stall.id, dishId: dish.id });
 }
 function openNewDish(venue, areaNode, stallNode) {
   if (!canWriteDishes.value) return;
@@ -894,7 +898,7 @@ watch(() => route.query.q, async (value) => {
   if (!internalSearchUpdate && next !== pendingSearchQuery && next !== loadedSearchQuery) await refreshTree();
   if (next) {
     for (const venue of venues.value) {
-      if (visibleAreas(venue).length || visibleUnassigned(venue).length) setVenueMode(venue.id, 'directory');
+      if (visibleAreas(venue).length || visibleDirectStalls(venue).length) setVenueMode(venue.id, 'directory');
     }
   }
   expandSearchPaths();
@@ -1065,10 +1069,10 @@ onBeforeUnmount(() => {
 .dish-price { color: #825d1a; font-weight: 760; font-variant-numeric: tabular-nums; }
 .inline-empty { min-height: 2.6rem; display: flex; align-items: center; justify-content: center; gap: .55rem; padding: .45rem .7rem; color: #7b887f; font-size: .66rem; }
 .inline-empty.roomy { min-height: 4rem; }
-.unassigned-section { border-left: 3px solid #d39a38; }
+.direct-stalls-section { border-left: 3px solid var(--primary); }
 .warning-header { grid-template-columns: 1.8rem minmax(0, 1fr) auto; background: #fffaf0; }
 .warning-symbol { width: 1.45rem; height: 1.45rem; display: grid; place-items: center; border-radius: 50%; background: #f4c76d; color: #62420a; font-weight: 850; }
-.unassigned-table .stall-table-row { background: #fffdf8; }
+.direct-stalls-table .stall-table-row { background: #fff; }
 .venue-stats-view { min-height: 100%; display: flex; flex-direction: column; padding: .75rem; }
 .stats-total-line { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .4rem; padding-bottom: .65rem; border-bottom: 1px solid #e1e9e1; }
 .stats-total-line div { text-align: center; }

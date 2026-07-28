@@ -196,7 +196,7 @@
             <h2>{{ regionCard.name }}</h2>
             <p>{{ regionCard.region?.location || '场所位置待补充' }}</p>
           </div>
-          <button v-if="canWriteCanteens" class="region-add-button" type="button" :title="`新增${regionCard.areaLabel}`" @click="openEntry({ task: 'area', venueId: regionCard.id })">+</button>
+          <button v-if="regionCard.supportsDirectStalls ? canWriteStalls : canWriteCanteens" class="region-add-button" type="button" :title="`新增${regionCard.areaLabel}`" @click="openEntry({ task: regionCard.supportsDirectStalls ? 'stall' : 'area', venueId: regionCard.id })">+</button>
         </div>
 
         <div class="region-stats" aria-label="区域数据统计">
@@ -324,7 +324,7 @@
             <option v-for="venue in fixedRegions" :key="venue.id" :value="venue.id">{{ regionDisplayName(venue) }}</option>
           </select>
         </label>
-        <label :class="{ disabled: entryMode === 'venue' }">{{ entryAreaLabel }}
+        <label v-if="!selectedEntryVenue?.supportsDirectStalls" :class="{ disabled: entryMode === 'venue' }">{{ entryAreaLabel }}
           <select v-model="entryContext.areaId" :disabled="entryMode === 'venue'" @change="handleEntryAreaChange">
             <option value="">{{ entryMode === 'area' ? `新增${entryAreaLabel}` : `请选择${entryAreaLabel}` }}</option>
             <option v-for="area in entryAreas" :key="area.id" :value="area.id">{{ area.name }}</option>
@@ -779,12 +779,16 @@ const fixedRegions = computed(() => {
     id: region.id,
     name: region.region?.name || region.name,
     positionLabel: `场所 ${String(index + 1).padStart(2, '0')}`,
-    areaLabel: region.areaLabel || region.labels?.area || '下属场所'
+    areaLabel: region.areaLabel || region.labels?.area || '下属场所',
+    supportsDirectStalls: Boolean(region.supportsDirectStalls)
   }));
   const ids = new Set(store.canteens.map((canteen) => canteen.id));
   return store.canteens
     .filter((canteen) => !canteen.parentId || !ids.has(canteen.parentId))
-    .map((canteen, index) => ({ id: canteen.id, name: canteen.name, positionLabel: `场所 ${String(index + 1).padStart(2, '0')}`, areaLabel: '下属场所' }));
+    .map((canteen, index) => {
+      const hasChildren = store.canteens.some((item) => item.parentId === canteen.id);
+      return { id: canteen.id, name: canteen.name, positionLabel: `场所 ${String(index + 1).padStart(2, '0')}`, areaLabel: hasChildren ? '下属场所' : '档口', supportsDirectStalls: !hasChildren };
+    });
 });
 function regionDisplayName(definition) {
   return store.canteens.find((canteen) => canteen.id === definition.id)?.name || definition.name;
@@ -810,6 +814,8 @@ const entryAreaLabel = computed(() => {
   if (!entryContext.venueId) return '餐厅 / 楼层餐区';
   return fixedRegions.value.find((item) => item.id === entryContext.venueId)?.areaLabel || '下属场所';
 });
+const selectedEntryVenue = computed(() => fixedRegions.value.find((item) => item.id === entryContext.venueId) || null);
+const directEntryVenue = computed(() => selectedEntryVenue.value?.supportsDirectStalls ? entryContext.venueId : '');
 const entryEntityLabel = computed(() => entryMode.value === 'venue' ? '餐饮场所' : entryAreaLabel.value);
 const entryContextPath = computed(() => {
   const venue = fixedRegions.value.find((item) => item.id === entryContext.venueId);
@@ -971,7 +977,7 @@ function setEntryMode(mode, { reset = true, updateRoute = true } = {}) {
     canteenForm.parentId = entryContext.venueId;
   } else if (nextMode === 'stall' && !stallForm.id) {
     stallForm.parentId = null;
-    stallForm.canteenId = entryContext.areaId;
+    stallForm.canteenId = entryContext.areaId || directEntryVenue.value;
   } else if (nextMode === 'dish' && !dishForm.id) {
     dishForm.stallId = entryContext.stallId || dishForm.stallId;
   }
@@ -985,7 +991,7 @@ function handleEntryVenueChange() {
   else if (entryMode.value === 'area') resetCanteenForm();
   canteenForm.canteenType = entryMode.value === 'venue' ? 'primary' : 'sub';
   canteenForm.parentId = entryMode.value === 'area' ? entryContext.venueId : '';
-  stallForm.canteenId = '';
+  stallForm.canteenId = directEntryVenue.value;
   stallForm.parentId = null;
   dishForm.stallId = '';
   void syncEntryRoute();
@@ -1115,10 +1121,12 @@ function initializeEntryWorkspace() {
 }
 
 const entryAreas = computed(() => store.canteens
-  .filter((canteen) => canteen.parentId === entryContext.venueId)
+  .filter((canteen) => selectedEntryVenue.value?.supportsDirectStalls
+    ? canteen.id === entryContext.venueId
+    : canteen.parentId === entryContext.venueId)
   .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')));
 const entryStalls = computed(() => store.stalls
-  .filter((stall) => stall.canteenId === entryContext.areaId && !stall.parentId)
+  .filter((stall) => stall.canteenId === (entryContext.areaId || directEntryVenue.value) && !stall.parentId)
   .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')));
 const entryDishStalls = computed(() => {
   const validStalls = [...entryStalls.value];
@@ -1459,6 +1467,7 @@ async function saveCanteen(action = 'stay') {
     const isVenue = entryMode.value === 'venue';
     if (isVenue && !entryContext.venueId) throw new Error('请选择要维护的食堂。');
     if (!isVenue && !entryContext.venueId) throw new Error(`新增${entryAreaLabel.value}前必须选择所属食堂。`);
+    if (!isVenue && selectedEntryVenue.value?.supportsDirectStalls) throw new Error(`${selectedEntryVenue.value.name}直接维护档口，不需要新增中间层级。`);
     const payload = {
       ...canteenForm,
       id: isVenue ? entryContext.venueId : canteenForm.id || undefined,
@@ -1504,9 +1513,9 @@ async function saveStall(action = 'stay') {
   if (entrySaving.value) return;
   entrySaving.value = true;
   try {
-    stallForm.canteenId = entryContext.areaId || stallForm.canteenId;
+    stallForm.canteenId = entryContext.areaId || directEntryVenue.value || stallForm.canteenId;
     const selectedArea = entryAreas.value.find((item) => item.id === stallForm.canteenId);
-    if (!selectedArea) throw new Error(`请选择所属${entryAreaLabel.value}，档口不能直接挂在食堂下。`);
+    if (!selectedArea) throw new Error(`请选择所属${entryAreaLabel.value}。`);
     const payload = {
       id: stallForm.id || undefined,
       canteenId: stallForm.canteenId,
@@ -1523,8 +1532,8 @@ async function saveStall(action = 'stay') {
     const saved = result || store.stalls.find((item) => item.id === payload.id)
       || [...store.stalls].reverse().find((item) => item.canteenId === payload.canteenId && item.name === payload.name && (item.parentId || null) === (payload.parentId || null));
     if (saved) {
-      entryContext.venueId = selectedArea.parentId;
-      entryContext.areaId = selectedArea.id;
+      entryContext.venueId = selectedArea.parentId || selectedArea.id;
+      entryContext.areaId = selectedArea.parentId ? selectedArea.id : '';
       entryContext.stallId = saved.id;
     }
     if (action === 'stay' && saved) {
@@ -1676,13 +1685,14 @@ function normalizeJsonImportRow(rawDish, index) {
   const stall = store.stalls.find((item) => item.id === stallId);
   const area = stall ? store.canteens.find((item) => item.id === stall.canteenId) : null;
   if (!venueId) errors.push('缺少食堂ID。');
-  if (!areaId) errors.push('缺少餐厅或楼层ID。');
+  const directVenue = fixedRegions.value.find((item) => item.id === venueId && item.supportsDirectStalls);
+  if (!areaId && !directVenue) errors.push('缺少餐厅或楼层ID。');
   if (!stallId) errors.push('缺少档口ID。');
   else if (!stall) errors.push('所属档口不存在或不属于当前租户。');
-  else if (stall.parentId || !area?.parentId || !fixedRegions.value.some((item) => item.id === area.parentId)) errors.push('档口必须直属有效的下属场所。');
+  else if (stall.parentId || !area || !fixedRegions.value.some((item) => item.id === (area.parentId || area.id)) || (!area.parentId && !directVenue)) errors.push('档口必须直属有效的餐厅、楼层或直属场所。');
   else {
-    if (areaId && area.id !== areaId) errors.push('档口与餐厅或楼层ID不匹配。');
-    if (venueId && area.parentId !== venueId) errors.push('餐厅或楼层与食堂ID不匹配。');
+    if (areaId && area.id !== areaId) errors.push('档口与餐厅、楼层或直属场所ID不匹配。');
+    if (venueId && (area.parentId || area.id) !== venueId) errors.push('目录层级与餐饮场所ID不匹配。');
   }
   const nutrition = rawDish.nutrition || {};
   const dish = {

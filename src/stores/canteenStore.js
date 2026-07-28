@@ -755,7 +755,7 @@ export const useCanteenStore = defineStore('canteen', () => {
       }
     } else {
       mergedRegion.canteens = (incomingRegion.canteens || []).map((node) => ({ ...node, detailsLoaded: true }));
-      mergedRegion.unassignedStalls = incomingRegion.unassignedStalls || [];
+      mergedRegion.directStalls = incomingRegion.directStalls || [];
     }
     adminCatalogTree.value = {
       ...current,

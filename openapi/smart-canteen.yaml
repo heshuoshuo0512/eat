@@ -48,7 +48,9 @@ components:
         position: { type: string, enum: [top-left, top-right, bottom-left, bottom-right] }
         venueType: { type: string, enum: [dining_complex, multi_floor_canteen] }
         areaType: { type: string, enum: [restaurant, floor_area] }
-        areaLabel: { type: string, enum: [餐厅, 楼层餐区] }
+        areaLabel: { type: string, enum: [餐厅, 楼层, 档口, 下属场所] }
+        hierarchyMode: { type: string, enum: [grouped, direct] }
+        supportsDirectStalls: { type: boolean, description: True when stalls attach directly to this leaf venue. }
         labels:
           type: object
           required: [venue, area, stall, dish]
@@ -70,9 +72,9 @@ components:
         canteens:
           type: array
           items: { $ref: '#/components/schemas/AdminCatalogCanteen' }
-        unassignedStalls:
+        directStalls:
           type: array
-          description: Legacy top-level stalls attached directly to the venue and awaiting assignment to an area.
+          description: Valid stalls attached directly to a leaf venue such as 东大活 or 广源超市.
           items: { $ref: '#/components/schemas/AdminCatalogStallNode' }
     AdminCatalogCanteen:
       type: object

@@ -17,6 +17,7 @@ function parseArguments(argv) {
     checkpointEvery: 5,
     resume: false,
     retryBlockedChat: false,
+    retryRejectedChat: false,
     chatRepair: true,
     limit: null,
   };
@@ -32,6 +33,7 @@ function parseArguments(argv) {
     else if (argument === '--run-chat') options.runChat = true;
     else if (argument === '--resume') options.resume = true;
     else if (argument === '--retry-blocked-chat') options.retryBlockedChat = true;
+    else if (argument === '--retry-rejected-chat') options.retryRejectedChat = true;
     else if (argument === '--no-chat-repair') options.chatRepair = false;
     else if (argument === '--help') options.help = true;
     else throw new Error(`Unknown argument: ${argument}`);
@@ -75,6 +77,16 @@ function scopeAllowed(item, tenantId) {
   return item.tenantId === '__global__';
 }
 
+function providerFailureType(error) {
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+  if (code === 'AI_PROVIDER_TIMEOUT' || code.includes('ECONN') || code.includes('ETIMEDOUT')
+    || message.includes('fetch failed') || message.includes('network') || message.includes('socket')) {
+    return 'network';
+  }
+  return 'provider';
+}
+
 const options = parseArguments(process.argv.slice(2));
 if (options.help) {
   console.log(`Usage: node scripts/evaluate-grounded-agent-answers.mjs [options]
@@ -90,6 +102,7 @@ if (options.help) {
   --limit=N                 Run only the first N frozen questions for local diagnostics
   --resume                  Continue a compatible partial report
   --retry-blocked-chat      With --resume, retry provider_failed and evidence-backed blocked rows
+  --retry-rejected-chat     With --resume, retry first-pass model validation failures
   --no-chat-repair          Measure first-pass prompt output without the one allowed repair`);
   process.exit(0);
 }
@@ -218,10 +231,12 @@ try {
         && Boolean(existing.chat?.repairEnabled ?? true) === options.chatRepair
         && (!options.runChat || existing.chat?.model === provider.chat.model);
       if (compatible && Array.isArray(existing.rows)) {
-        rows = options.retryBlockedChat
-          ? existing.rows.filter((item) => item.generation?.status !== 'provider_failed'
-            && !(item.generation?.status === 'blocked' && item.citations?.length))
-          : existing.rows;
+        rows = existing.rows.filter((item) => {
+          if (options.retryBlockedChat && (item.generation?.status === 'provider_failed'
+            || (item.generation?.status === 'blocked' && item.citations?.length))) return false;
+          if (options.retryRejectedChat && item.generation?.status === 'fallback') return false;
+          return true;
+        });
       }
     } catch {}
   }
@@ -318,12 +333,14 @@ try {
           latencyMs: Number((performance.now() - generationStartedAt).toFixed(2)),
         };
       } catch (error) {
-        chatOperational = false;
+        const failureType = providerFailureType(error);
+        if (failureType !== 'network') chatOperational = false;
         chatBlocker = error.code || error.message || 'CHAT_PROVIDER_FAILED';
         generation = {
           ...generation,
           status: 'provider_failed',
           reason: chatBlocker,
+          providerFailureType: failureType,
           latencyMs: Number((performance.now() - generationStartedAt).toFixed(2)),
         };
       }
@@ -373,6 +390,8 @@ try {
   const fallbacks = rows.filter((item) => item.generation.status === 'fallback');
   const providerFailures = rows.filter((item) => item.generation.status === 'provider_failed'
     || (item.generation.status === 'blocked' && item.citations.length));
+  const networkFailures = rows.filter((item) => item.generation.status === 'provider_failed'
+    && item.generation.providerFailureType === 'network');
   const chatResponses = rows.filter((item) => ['completed', 'fallback'].includes(item.generation.status));
   const firstPassAccepted = chatResponses.filter((item) => item.generation.firstPassAccepted);
   const repairAttempted = chatResponses.filter((item) => item.generation.repairAttempted);
@@ -391,6 +410,7 @@ try {
     chatCompleted: completed.length,
     chatFallbacks: fallbacks.length,
     chatProviderFailures: providerFailures.length,
+    chatNetworkFailures: networkFailures.length,
     chatAcceptedRate: mean(attempted.map((item) => item.generation.status === 'completed' ? 1 : 0)),
     firstPassEligible: chatResponses.length,
     firstPassAccepted: firstPassAccepted.length,

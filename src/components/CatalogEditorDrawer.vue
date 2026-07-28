@@ -164,7 +164,9 @@ const area = computed(() => props.descriptor?.area || null);
 const stall = computed(() => props.descriptor?.stall || null);
 const item = computed(() => props.descriptor?.item || null);
 const areaLabel = computed(() => venue.value?.areaLabel || venue.value?.labels?.area || '餐饮分区');
-const areaOptions = computed(() => props.areas.filter((entry) => entry.parentId === venue.value?.id));
+const areaOptions = computed(() => venue.value?.supportsDirectStalls
+  ? [venue.value.region].filter(Boolean)
+  : props.areas.filter((entry) => entry.parentId === venue.value?.id));
 const stallOptions = computed(() => {
   const areaIds = new Set(areaOptions.value.map((entry) => entry.id));
   const currentStallId = item.value?.stallId || stall.value?.id;

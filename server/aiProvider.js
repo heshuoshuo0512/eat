@@ -706,7 +706,7 @@ function selectGroundingCitations(citations = [], query = '', intent = '', limit
 
 function hasUnsupportedSafetyClaim(answer) {
   const withoutNegatedSafety = String(answer || '').replace(
-    /(?:不能|无法|不可|不应|不建议|不要|未能|不可以)\s*(?:确认\s*)?(?:安全食用|放心吃|放心食用|不含|绝对不含|没有过敏风险)/g,
+    /(?:不能|无法|不可|不应|不建议|不要|未能|不可以)\s*(?:(?:确认|判断|确定)\s*)?(?:(?:能否|是否)\s*)?(?:安全食用|放心吃|放心食用|不含|绝对不含|没有过敏风险)/g,
     '',
   );
   return /(?:安全食用|放心吃|放心食用|确认不含|绝对不含|没有过敏风险)/.test(withoutNegatedSafety);
@@ -717,9 +717,16 @@ function answerUsesEstimatedClaim(answer, item = {}) {
   const evidenceType = String(item.evidenceType || metadata.evidenceType || '');
   if (evidenceType === 'ai_estimated' || item.sourceType === 'dish_ai_annotation') return true;
   const normalizedAnswer = normalizedClaimText(answer);
-  const normalizedTitle = normalizedClaimText(item.title || item.name);
+  const stableFactText = normalizedClaimText([
+    item.title || item.name,
+    metadata.stallName,
+    metadata.canteenName,
+    metadata.parentCanteenName,
+    metadata.priceDisplay,
+    ...(metadata.aliases || []),
+  ].filter(Boolean).join(' '));
   const terms = (metadata.estimatedTerms || estimatedTermsFromMetadata(metadata))
-    .filter((term) => !normalizedTitle.includes(normalizedClaimText(term)));
+    .filter((term) => !stableFactText.includes(normalizedClaimText(term)));
   return terms.some((term) => normalizedAnswer.includes(normalizedClaimText(term)));
 }
 
@@ -778,6 +785,10 @@ function compactGroundingCitation(item, index) {
       orderable: metadata.orderable,
       price: metadata.price,
       priceDisplay: metadata.priceDisplay || null,
+      stallName: metadata.stallName || null,
+      canteenName: metadata.canteenName || null,
+      parentCanteenName: metadata.parentCanteenName || null,
+      aliases: metadata.aliases || [],
       status: metadata.status,
       availabilityStatus: metadata.availabilityStatus || null,
       supplyConfirmed: metadata.supplyConfirmed,

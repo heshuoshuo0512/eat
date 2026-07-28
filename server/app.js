@@ -198,8 +198,15 @@ async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '
   const regions = rootCanteens
     .filter((region) => !regionId || region.id === regionId)
     .map((region, index) => {
-      const areaLabel = region.venueKind === 'service_building' || region.venueKind === 'supermarket' ? '服务区域' : '下属场所';
       const children = canteens.filter((canteen) => canteen.parentId === region.id);
+      const directCatalog = children.length === 0;
+      const areaLabel = region.id === 'campus-main'
+        ? '餐厅'
+        : region.id === 'east-zone'
+          ? '楼层'
+          : directCatalog
+            ? '档口'
+            : '下属场所';
       const venueMatches = normalizedQuery && [region.name, region.location]
         .some((value) => catalogTextMatches(value, normalizedQuery));
       const canteenNodes = children.map((canteen) => buildCanteen(canteen, canteen.venueKind || 'dining_area', areaLabel)).filter((node) => {
@@ -207,10 +214,10 @@ async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '
         if (stallId && !node.stalls.some((stall) => stall.stall.id === stallId || stall.children.some((child) => child.stall.id === stallId))) return false;
         return venueMatches || matchesCanteen(node);
       });
-      const unassignedStalls = (stallsByCanteen.get(region.id) || []).filter((stall) => !stall.parentId).map(buildStall).filter((node) => venueMatches || matchesStall(node));
-      const unassignedMatchesFilter = !canteenId || canteenId === region.id;
-      const visibleUnassignedStalls = unassignedMatchesFilter
-        ? unassignedStalls.filter((node) => !stallId || node.stall.id === stallId || node.children.some((child) => child.stall.id === stallId))
+      const directStalls = (stallsByCanteen.get(region.id) || []).filter((stall) => !stall.parentId).map(buildStall).filter((node) => venueMatches || matchesStall(node));
+      const directMatchesFilter = !canteenId || canteenId === region.id;
+      const visibleDirectStalls = directMatchesFilter
+        ? directStalls.filter((node) => !stallId || node.stall.id === stallId || node.children.some((child) => child.stall.id === stallId))
         : [];
       const counts = canteenNodes.reduce((total, node) => ({
         canteens: total.canteens + 1,
@@ -219,9 +226,9 @@ async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '
         openStalls: total.openStalls + node.openStallCount
       }), {
         canteens: 0,
-        stalls: visibleUnassignedStalls.reduce((sum, node) => sum + 1 + node.childCount, 0),
-        dishes: visibleUnassignedStalls.reduce((sum, node) => sum + node.dishCount, 0),
-        openStalls: visibleUnassignedStalls.reduce((sum, node) => sum + Number(node.stall.open) + node.children.filter((child) => child.stall.open).length, 0)
+        stalls: visibleDirectStalls.reduce((sum, node) => sum + 1 + node.childCount, 0),
+        dishes: visibleDirectStalls.reduce((sum, node) => sum + node.dishCount, 0),
+        openStalls: visibleDirectStalls.reduce((sum, node) => sum + Number(node.stall.open) + node.children.filter((child) => child.stall.open).length, 0)
       });
       return {
         id: region.id,
@@ -230,6 +237,8 @@ async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '
         displayName: region.name,
         position: `venue-${index + 1}`,
         venueType: region.venueKind || 'dining_hall',
+        hierarchyMode: directCatalog ? 'direct' : 'grouped',
+        supportsDirectStalls: directCatalog,
         areaType: 'venue_area',
         areaLabel,
         missing: false,
@@ -237,7 +246,7 @@ async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '
         labels: { venue: '餐饮场所', area: areaLabel, stall: '档口', dish: '菜品' },
         counts,
         canteens: canteenNodes,
-        unassignedStalls: visibleUnassignedStalls
+        directStalls: visibleDirectStalls
       };
     });
   const safeOffset = Math.max(0, offset);
@@ -719,7 +728,7 @@ function normalizeStallParentId(value) {
 }
 
 async function requireCatalogDiningArea(db, { tenantId, canteenId }) {
-  const area = await db.prepare('SELECT id, parent_id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
+  const area = await db.prepare('SELECT id, parent_id, venue_kind FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, canteenId);
   if (!area) {
     throw Object.assign(new Error('所属食堂不存在，或餐饮分区不属于当前租户'), {
       status: 400,
@@ -727,7 +736,9 @@ async function requireCatalogDiningArea(db, { tenantId, canteenId }) {
     });
   }
   if (!area.parent_id) {
-    throw Object.assign(new Error('新建或迁移档口必须直属餐厅或楼层餐区，不能直属顶层餐饮场所'), {
+    const childCount = Number((await db.prepare('SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = ? AND parent_id = ?').get(tenantId, area.id))?.count || 0);
+    if (childCount === 0) return area;
+    throw Object.assign(new Error('该餐饮场所有下属餐厅或楼层，请先选择下一级再维护档口'), {
       status: 400,
       code: 'STALL_AREA_REQUIRED'
     });
@@ -760,7 +771,7 @@ async function requireDishStallInDiningArea(db, { tenantId, stallId }) {
     await requireCatalogDiningArea(db, { tenantId, canteenId: stall.canteen_id });
   } catch (error) {
     if (error.code === 'STALL_CANTEEN_NOT_FOUND' || error.code === 'STALL_AREA_REQUIRED') {
-      throw Object.assign(new Error('新建或迁移菜品必须选择餐厅或楼层餐区下的直属档口'), {
+      throw Object.assign(new Error('新建或迁移菜品必须选择有效餐厅、楼层或直属场所下的档口'), {
         status: 400,
         code: 'DISH_STALL_AREA_REQUIRED'
       });

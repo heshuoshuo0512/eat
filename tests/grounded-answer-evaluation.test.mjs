@@ -58,11 +58,13 @@ describe('grounded answer 3x30 evaluation plan', () => {
     assert.match(script, /argument === '--run-chat'/);
     assert.match(script, /argument === '--resume'/);
     assert.match(script, /argument === '--retry-blocked-chat'/);
+    assert.match(script, /argument === '--retry-rejected-chat'/);
     assert.match(script, /argument === '--no-chat-repair'/);
     assert.match(script, /argument\.startsWith\('--limit='\)/);
-    assert.match(script, /generation\?\.status !== 'provider_failed'/);
+    assert.match(script, /item\.generation\?\.status === 'provider_failed'/);
     assert.match(script, /completed_with_safety_fallbacks/);
     assert.match(script, /chatProviderFailures/);
+    assert.match(script, /chatNetworkFailures/);
     assert.match(script, /firstPassAcceptedRate/);
     assert.match(script, /repairAcceptedRate/);
     assert.match(script, /finalModelAcceptedRate/);
@@ -142,12 +144,30 @@ describe('grounded answer evidence boundaries', () => {
     assert.equal(validateGroundedAgentAnswer({
       answer: '该菜品口味清淡。', citationIds: ['dish:mixed'],
     }, citations).reason, 'MISSING_ESTIMATION_LABEL');
+
+    const locationOverlap = [{
+      id: 'dish:location-overlap',
+      sourceType: 'dish',
+      title: '黄金蝴蝶架',
+      metadata: {
+        stallName: '临榆炸鸡腿',
+        semanticEvidenceTypes: ['tenant_dish_fact', 'ai_estimated'],
+        aiEstimated: { cookingMethods: ['炸'], scenarioTags: ['炸鸡'] },
+      },
+    }];
+    assert.equal(validateGroundedAgentAnswer({
+      answer: '黄金蝴蝶架位于临榆炸鸡腿档口。', citationIds: ['dish:location-overlap'],
+    }, locationOverlap).valid, true);
   });
 
   it('accepts explicit safety negation while rejecting unsupported positive safety claims', () => {
     const citations = [{ id: 'dish:unknown', sourceType: 'dish', metadata: { safetyStatus: 'unknown' } }];
     assert.equal(validateGroundedAgentAnswer({
       answer: '过敏原信息尚未确认，目前不能放心吃，请现场核实交叉接触风险。',
+      citationIds: ['dish:unknown'],
+    }, citations).valid, true);
+    assert.equal(validateGroundedAgentAnswer({
+      answer: '过敏原信息尚未确认，无法确认能否放心食用，请现场核实交叉接触风险。',
       citationIds: ['dish:unknown'],
     }, citations).valid, true);
     assert.equal(validateGroundedAgentAnswer({

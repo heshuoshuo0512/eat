@@ -70,12 +70,14 @@ WEST_SOURCES = (
 EAST_SOURCES = (
     SourceSpec("东区燕鸣湖食堂.md", "east-yanminghu-1f", "燕鸣湖餐厅一楼", "1F", "txt", "east-zone", "yanminghu_floor1"),
     SourceSpec("东校区二楼.docx", "east-yanminghu-2f", "燕鸣湖餐厅二楼", "2F", "docx", "east-zone", "yanminghu_floor2"),
-    SourceSpec("东区东大活.md", "east-dongdahuo", "东区东大活", "未标注", "txt", "east-zone", "dongdahuo"),
-    SourceSpec("广源超市(1).docx", "east-guangyuan", "广源超市", "未标注", "docx", "east-zone", "guangyuan"),
+    SourceSpec("东区东大活.md", "east-dongdahuo", "东大活", "未标注", "txt", "east-dongdahuo", "dongdahuo"),
+    SourceSpec("广源超市(1).docx", "east-guangyuan", "广源超市", "未标注", "docx", "east-guangyuan", "guangyuan"),
 )
 
 WEST_VENUE = VenueSpec("campus-main", "西区大食堂", "西区", "西区大食堂真实目录，包含六个次级餐厅。")
-EAST_VENUE = VenueSpec("east-zone", "东区餐饮与服务区", "东区", "东区燕鸣湖餐厅与两座服务楼真实目录。")
+YANMINGHU_VENUE = VenueSpec("east-zone", "东区燕鸣湖", "东区", "东区燕鸣湖真实目录，包含一楼与二楼。")
+DONGDAHUO_VENUE = VenueSpec("east-dongdahuo", "东大活", "东区", "东大活真实档口目录。")
+GUANGYUAN_VENUE = VenueSpec("east-guangyuan", "广源超市", "东区", "广源超市真实档口与商品目录。")
 
 CATALOGS = {
     "west-main": CatalogSpec(
@@ -91,7 +93,7 @@ CATALOGS = {
         "校园联合真实目录清洗报告",
         "real-catalog-campus-2026-07-27-v2",
         "campus-catalog-2026-07-27-v2",
-        (WEST_VENUE, EAST_VENUE),
+        (WEST_VENUE, YANMINGHU_VENUE, DONGDAHUO_VENUE, GUANGYUAN_VENUE),
         WEST_SOURCES + EAST_SOURCES,
     ),
 }
@@ -582,7 +584,7 @@ def process_text_line(state: ParseState, text: str, locator: str, dishes: list[d
     text = normalize_text(text)
     if not text:
         return
-    structured_units = state.spec.parent_id == "east-zone"
+    structured_units = state.spec.parent_id == "east-zone" or state.spec.profile in {"dongdahuo", "guangyuan"}
     if state.spec.profile == "yanminghu_floor1" and process_yanminghu_floor1_special(state, text, locator, dishes, audits):
         return
     if state.spec.profile == "yanminghu_floor2":
@@ -813,6 +815,8 @@ def build_canteens(catalog: CatalogSpec) -> list[dict[str, Any]]:
             "parentId": None, "canteenType": "primary", "imageUrl": "",
         })
     for spec in catalog.sources:
+        if spec.area_id in venue_by_id:
+            continue
         venue = venue_by_id[spec.parent_id]
         location = f"{venue.name} · {spec.floor}" if spec.floor != "未标注" else f"{venue.name} · 楼层未标注"
         tags = ["真实目录", "供应待确认"]
@@ -884,7 +888,7 @@ def main() -> None:
         pricing_modes[dish["pricingMode"]] = pricing_modes.get(dish["pricingMode"], 0) + 1
     report = {
         "venueCount": len(catalog.venues), "areaCount": len(catalog.sources),
-        "canteenCount": len(catalog.venues) + len(catalog.sources),
+        "canteenCount": len(build_canteens(catalog)),
         "stallCount": len(stalls), "dishCount": len(dishes),
         "stallsByParent": {
             venue.id: sum(1 for stall in stalls if next((source.parent_id for source in catalog.sources if source.area_id == stall["canteenId"]), None) == venue.id)
