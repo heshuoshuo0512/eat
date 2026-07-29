@@ -90,6 +90,16 @@ describe('catalog introduction evidence and validation', () => {
       assert.equal(first.snapshotHash, second.snapshotHash);
       assert.ok(first.evidence.every((item) => item.inputHash && item.allowedEvidenceIds.includes(`${item.entityType}:${item.entity.id}`)));
 
+      const firstCanteen = first.evidence.find((item) => item.entityType === 'canteen');
+      db.prepare('UPDATE canteens SET updated_at = ? WHERE tenant_id = ? AND id = ?')
+        .run('2099-01-01T00:00:00.000Z', 'default', firstCanteen.entity.id);
+      const afterTimestampOnly = await loadCatalogIntroductionEvidence(db, { tenantId: 'default' });
+      assert.equal(afterTimestampOnly.snapshotHash, first.snapshotHash);
+      db.prepare('UPDATE canteens SET location = ? WHERE tenant_id = ? AND id = ?')
+        .run('变更后的真实位置', 'default', firstCanteen.entity.id);
+      const afterSemanticChange = await loadCatalogIntroductionEvidence(db, { tenantId: 'default' });
+      assert.notEqual(afterSemanticChange.snapshotHash, first.snapshotHash);
+
       const dishEvidence = first.evidence.find((item) => item.hierarchyLevel === 'dish');
       const valid = candidateFor(dishEvidence);
       const [record] = validateCatalogIntroductionBatch({ introductions: [valid] }, [dishEvidence]);
@@ -339,7 +349,7 @@ describe('catalog introduction approval and RAG boundaries', () => {
       assert.equal((await loadCatalogIntroductionMap(db, { tenantId, entityType: 'canteen' })).get(`canteen:${firstEvidence.entity.id}`).status, 'approved');
 
       const changedAt = new Date(Date.now() + 1_000).toISOString();
-      db.prepare('UPDATE canteens SET description = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
+      db.prepare('UPDATE canteens SET location = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
         .run('目录发生变化', changedAt, tenantId, firstEvidence.entity.id);
       const stalePreview = await previewCatalogIntroductionBatchApproval(db, { tenantId, batchId: firstBatch.id });
       assert.equal(stalePreview.approvable, false);

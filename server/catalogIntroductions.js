@@ -195,8 +195,16 @@ function entityEvidenceBase({ entityType, hierarchyLevel, entity, hierarchy, sem
     allowedEvidenceIds,
   };
   const confidence = confidenceForEvidence(hierarchyLevel, evidence);
-  const inputHash = stableCatalogIntroductionHash(evidence);
+  const inputHash = catalogIntroductionEvidenceHash(evidence);
   return { ...evidence, confidence, inputHash };
+}
+
+export function catalogIntroductionEvidenceHash(evidence) {
+  const { confidence, inputHash, ...base } = evidence || {};
+  const entity = base.entity && typeof base.entity === 'object'
+    ? Object.fromEntries(Object.entries(base.entity).filter(([key]) => key !== 'updatedAt'))
+    : base.entity;
+  return stableCatalogIntroductionHash({ ...base, entity });
 }
 
 export async function loadCatalogIntroductionEvidence(db, { tenantId = 'default' } = {}) {

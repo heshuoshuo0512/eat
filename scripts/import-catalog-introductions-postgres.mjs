@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
 import {
   auditCatalogIntroductionRecords,
+  catalogIntroductionEvidenceHash,
   loadCatalogIntroductionEvidence,
   mapCatalogIntroductionRow,
   stableCatalogIntroductionHash,
@@ -82,10 +83,7 @@ function immutableBatch(row) {
 
 function validateIntroductionRow(row) {
   const record = mapCatalogIntroductionRow(row);
-  const snapshotBase = { ...record.evidenceSnapshot };
-  delete snapshotBase.confidence;
-  delete snapshotBase.inputHash;
-  const snapshotHash = stableCatalogIntroductionHash(snapshotBase);
+  const snapshotHash = catalogIntroductionEvidenceHash(record.evidenceSnapshot);
   if (record.evidenceSnapshot.inputHash !== record.inputHash || snapshotHash !== record.inputHash) {
     throw new Error(`Source row ${row.id} evidence snapshot hash is invalid`);
   }
