@@ -13,6 +13,7 @@ import { useCanteenStore } from '../stores/canteenStore.js';
 import OrderAnalyticsView from '../views/OrderAnalyticsView.vue';
 
 const RecommendView = () => import('../views/RecommendView.vue');
+const DishDetailView = () => import('../views/DishDetailView.vue');
 const HealthProfileView = () => import('../views/HealthProfileView.vue');
 const SavedView = () => import('../views/SavedView.vue');
 const ReviewsView = () => import('../views/ReviewsView.vue');
@@ -25,6 +26,7 @@ export const router = createRouter({
     { path: '/', name: 'home', component: HomeView },
     { path: '/canteens', name: 'canteens', component: CanteensView, meta: { audience: 'student' } },
     { path: '/dishes', name: 'dishes', component: DishesView, meta: { audience: 'student' } },
+    { path: '/dishes/:id', name: 'dish-detail', component: DishDetailView, meta: { audience: 'student' } },
     { path: '/rankings', name: 'rankings', component: RankingsView, meta: { audience: 'student' } },
     { path: '/regions', name: 'regions', component: RegionRecommendationsView, meta: { audience: 'student' } },
     {

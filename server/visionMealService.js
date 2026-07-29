@@ -220,6 +220,14 @@ async function visualScores(db, tenantId, candidateIds, imageInput, referenceRow
 
   const scores = new Map();
   if (db.isPostgres) {
+    const prototypeRows = await db.query(`SELECT prototype.dish_id,
+        1 - (prototype.embedding <=> $1::vector) AS similarity
+      FROM dish_class_prototypes prototype
+      WHERE prototype.tenant_id = $2 AND prototype.status = 'deployed'
+        AND prototype.embedding IS NOT NULL AND prototype.dish_id = ANY($3::text[])
+      ORDER BY prototype.embedding <=> $1::vector
+      LIMIT 100`, [pgVectorLiteral(queryEmbedding.embedding), tenantId, candidateIds]);
+    for (const row of prototypeRows.rows) scores.set(row.dish_id, Number(row.similarity || 0));
     const rows = await db.query(`SELECT embedding.dish_id, embedding.reference_image_id,
         1 - (embedding.embedding <=> $1::vector) AS similarity
       FROM dish_image_embeddings embedding
@@ -233,6 +241,12 @@ async function visualScores(db, tenantId, candidateIds, imageInput, referenceRow
       LIMIT 100`, [pgVectorLiteral(queryEmbedding.embedding), tenantId, candidateIds]);
     for (const row of rows.rows) scores.set(row.dish_id, Math.max(scores.get(row.dish_id) || 0, Number(row.similarity || 0)));
     return scores;
+  }
+  const prototypeRows = (await db.prepare(`SELECT dish_id, embedding_json FROM dish_class_prototypes
+    WHERE tenant_id = ? AND status = 'deployed'`).all(tenantId)).filter((row) => candidateIds.includes(row.dish_id));
+  for (const row of prototypeRows) {
+    const similarity = cosineSimilarity(queryEmbedding.embedding, parseJson(row.embedding_json, null));
+    if (similarity !== null) scores.set(row.dish_id, similarity);
   }
   for (const row of referenceRows) {
     const embedding = parseJson(row.embedding_json, null);

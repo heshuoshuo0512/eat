@@ -37,6 +37,18 @@ npm run dev:full
 
 默认 API 端口：`8787`，前端端口：`5173`。
 
+### 独立菜品图片采集站
+
+采集站拥有独立的 Vue 页面、Node API、匿名积分、审核后台、数据集导出和 SigLIP 训练部署流程。本地默认使用 SQLite 与私有文件目录：
+
+```bash
+npm run dev:collector-api
+npm run dev:collector
+npm run collector:staff -- collector-admin <至少8位密码> collector_admin
+```
+
+默认地址：`http://127.0.0.1:5174`。完整的数据门槛、Docker 部署、审核和训练命令见 [独立采集站说明](docs/collector.md)。
+
 ## 默认账号
 
 | 身份 | 用户名 | 密码 |

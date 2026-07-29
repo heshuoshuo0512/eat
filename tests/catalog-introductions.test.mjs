@@ -97,6 +97,11 @@ describe('catalog introduction evidence and validation', () => {
       assert.ok(record.evidenceIds.some((id) => id.startsWith('stall:') || id.startsWith('canteen:')));
       assert.equal(auditCatalogIntroductionRecords([{ ...record, id: 'record-one' }]).ok, true);
 
+      const withoutGeneratedBoundaries = structuredClone(valid);
+      delete withoutGeneratedBoundaries.boundaryCodes;
+      const [serverBounded] = validateCatalogIntroductionBatch({ introductions: [withoutGeneratedBoundaries] }, [dishEvidence]);
+      assert.deepEqual(serverBounded.boundaryCodes, dishEvidence.boundaryCodes);
+
       const shallow = structuredClone(valid);
       shallow.factualClaims[1].evidenceIds = [`dish:${dishEvidence.entity.id}`];
       assert.throws(
@@ -117,6 +122,28 @@ describe('catalog introduction evidence and validation', () => {
         () => validateCatalogIntroductionBatch({ introductions: [unsafe] }, [dishEvidence]),
         (error) => error.code === 'FORBIDDEN_CATALOG_CLAIM',
       );
+
+      const unsupportedSupply = structuredClone(valid);
+      unsupportedSupply.recommendationClaims[0].text = `目录显示该菜由${dishEvidence.stall.name}档口供应，可优先了解`;
+      assert.throws(
+        () => validateCatalogIntroductionBatch({ introductions: [unsupportedSupply] }, [dishEvidence]),
+        (error) => error.code === 'UNSUPPORTED_CATALOG_SUPPLY_CLAIM',
+      );
+
+      const supplyUnconfirmed = structuredClone(valid);
+      supplyUnconfirmed.recommendationClaims[0].text = '目录只记录菜品归属，今日供应尚未确认，具体信息待核验';
+      assert.doesNotThrow(() => validateCatalogIntroductionBatch({ introductions: [supplyUnconfirmed] }, [dishEvidence]));
+
+      const labeledEvidence = structuredClone(dishEvidence);
+      labeledEvidence.semanticLabels = ['粉面主食'];
+      const unsupportedSoftLabel = candidateFor(labeledEvidence);
+      unsupportedSoftLabel.recommendationClaims[0].text = '目录显示该菜为粉面主食，可优先了解';
+      assert.throws(
+        () => validateCatalogIntroductionBatch({ introductions: [unsupportedSoftLabel] }, [labeledEvidence]),
+        (error) => error.code === 'SOFT_SEMANTIC_BOUNDARY_REQUIRED',
+      );
+      unsupportedSoftLabel.recommendationClaims[0].text = '从目录标签看可能可按粉面主食继续了解';
+      assert.doesNotThrow(() => validateCatalogIntroductionBatch({ introductions: [unsupportedSoftLabel] }, [labeledEvidence]));
 
       const namedAsSignature = structuredClone(dishEvidence);
       namedAsSignature.entity.name = `招牌${dishEvidence.entity.name}`;
@@ -150,6 +177,24 @@ describe('catalog introduction evidence and validation', () => {
     }
   });
 
+  it('marks serving tiers as low-confidence names requiring review', async () => {
+    const db = openDatabase(':memory:');
+    try {
+      const dish = db.prepare("SELECT id FROM dishes WHERE tenant_id = 'default' LIMIT 1").get();
+      db.prepare('UPDATE dishes SET name = ? WHERE id = ?').run('3‐4人份', dish.id);
+      const evidence = (await loadCatalogIntroductionEvidence(db)).evidence.find((item) => item.entity.id === dish.id);
+      assert.equal(evidence.entityNameReviewReason, 'serving_tier_without_product');
+      assert.ok(evidence.boundaryCodes.includes('ENTITY_NAME_REVIEW_REQUIRED'));
+      assert.deepEqual(evidence.semanticLabels, []);
+      assert.deepEqual(evidence.concepts, []);
+      assert.deepEqual(evidence.siblingDishes, []);
+      assert.equal(evidence.confidence.level, 'low');
+      assert.ok(evidence.confidence.score <= 0.39);
+    } finally {
+      db.close();
+    }
+  });
+
   it('calls a directed repair at most once', async () => {
     const db = openDatabase(':memory:');
     try {
@@ -162,6 +207,24 @@ describe('catalog introduction evidence and validation', () => {
         repair: async () => { repairs += 1; return { introductions: [valid] }; },
       });
       assert.equal(repaired.repaired, true);
+      assert.equal(repairs, 1);
+
+      repairs = 0;
+      const invalidJson = Object.assign(new Error('AI 未返回有效 JSON'), {
+        code: 'AI_PROVIDER_INVALID_JSON',
+        rawOutput: '{"introductions":',
+      });
+      const repairedInvalidJson = await generateValidatedCatalogIntroductionBatch({
+        evidenceBatch: [evidence],
+        generate: async () => { throw invalidJson; },
+        repair: async ({ previousOutput, validationError }) => {
+          repairs += 1;
+          assert.equal(previousOutput.invalidJson, '{"introductions":');
+          assert.equal(validationError.code, 'AI_PROVIDER_INVALID_JSON');
+          return { introductions: [valid] };
+        },
+      });
+      assert.equal(repairedInvalidJson.repaired, true);
       assert.equal(repairs, 1);
 
       repairs = 0;
@@ -438,7 +501,11 @@ describe('catalog introduction API permissions and compatibility', () => {
     assert.equal(detail.status, 200);
     assert.equal(detail.data.description, legacyBefore);
     assert.equal(detail.data.displayDescription, record.factualSummary);
+    assert.equal(detail.data.displayTagline, record.recommendationCopy);
     assert.equal(detail.data.introduction.provenanceLabel, '基于目录整理');
     assert.equal(detail.data.introduction.recommendationCopy, record.recommendationCopy);
+    assert.equal(detail.data.introduction.positioningStatement, record.recommendationCopy);
+    assert.equal(detail.data.introduction.hierarchyLevel, 'dish');
+    assert.deepEqual(detail.data.introduction.evidenceIds, record.evidenceIds);
   });
 });

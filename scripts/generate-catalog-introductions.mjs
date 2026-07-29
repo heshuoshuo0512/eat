@@ -19,9 +19,9 @@ function parseArguments(argv) {
   const options = {
     sourceDatabase: resolve(ROOT, 'data/real-catalog-campus-2026-07-27-v2.sqlite'),
     databasePath: resolve(ROOT, 'data/real-catalog-introductions-2026-07-28.sqlite'),
-    outputPath: resolve(ROOT, '.rag-evals/catalog-introductions/catalog-introduction-v1.json'),
+    outputPath: resolve(ROOT, '.rag-evals/catalog-introductions/catalog-introduction-v4.json'),
     tenantId: 'default',
-    batchId: 'catalog-introduction-v1-2026-07-28',
+    batchId: 'catalog-introduction-v4-2026-07-29',
     model: process.env.AI_CHAT_MODEL || 'deepseek-v4-flash',
     prepareOnly: false,
     probeOnly: false,
@@ -111,6 +111,34 @@ function errorDetails(error) {
 function parseObject(value) {
   if (value && typeof value === 'object') return value;
   try { return JSON.parse(String(value || '{}')); } catch { return {}; }
+}
+
+function chatApiKeyPool() {
+  const configured = [process.env.AI_CHAT_API_KEYS, process.env.AI_CHAT_API_KEY]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(/[;,\r\n]+/))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return [...new Set(configured)].map((apiKey, index) => ({ apiKey, slot: `key-${index + 1}` }));
+}
+
+function summarizeProviderKeyUsage(results) {
+  const usage = new Map();
+  const pending = [...results];
+  while (pending.length) {
+    const result = pending.shift();
+    if (Array.isArray(result?.splitResults)) {
+      pending.push(...result.splitResults);
+      continue;
+    }
+    if (!result?.providerKeySlot) continue;
+    const current = usage.get(result.providerKeySlot) || { batchCount: 0, savedCount: 0, totalTokens: 0 };
+    current.batchCount += 1;
+    current.savedCount += Number(result.savedCount || 0);
+    current.totalTokens += Number(result.usage?.totalTokens || 0);
+    usage.set(result.providerKeySlot, current);
+  }
+  return Object.fromEntries([...usage.entries()].sort(([left], [right]) => left.localeCompare(right)));
 }
 
 function isAuthError(error) {
@@ -238,6 +266,7 @@ const [{ openDatabase }, aiProvider] = await Promise.all([
   import('../server/aiProvider.js'),
 ]);
 const db = openDatabase(options.databasePath);
+const providerKeys = chatApiKeyPool();
 const report = {
   generatedAt: new Date().toISOString(),
   mode: options.prepareOnly ? 'prepare_only' : 'generate',
@@ -247,6 +276,7 @@ const report = {
   batchId: options.batchId,
   model: options.model,
   promptVersion: CATALOG_INTRODUCTION_PROMPT_VERSION,
+  provider: { keyCount: providerKeys.length, connections: [] },
   catalog: null,
   probe: [],
   stages: [],
@@ -302,14 +332,16 @@ try {
   }
 
   process.env.AI_CHAT_MODEL = options.model;
-  const provider = aiProvider.getAiProviderStatus().chat;
-  if (!provider.enabled || !provider.hasApiKey) throw Object.assign(new Error('AI_CHAT_API_KEY is required'), { code: 'CHAT_PROVIDER_NOT_CONFIGURED' });
-  await aiProvider.testAiProviderConnection({
-    apiKey: process.env.AI_CHAT_API_KEY,
-    baseUrl: process.env.AI_CHAT_BASE_URL,
-    chatModel: options.model,
-    timeoutMs: Math.max(30_000, Number(process.env.AI_CHAT_TIMEOUT_MS || 0)),
-  });
+  if (!providerKeys.length) throw Object.assign(new Error('AI_CHAT_API_KEY or AI_CHAT_API_KEYS is required'), { code: 'CHAT_PROVIDER_NOT_CONFIGURED' });
+  report.provider.connections = await Promise.all(providerKeys.map(async (credential) => {
+    const connection = await aiProvider.testAiProviderConnection({
+      apiKey: credential.apiKey,
+      baseUrl: process.env.AI_CHAT_BASE_URL,
+      chatModel: options.model,
+      timeoutMs: Math.max(30_000, Number(process.env.AI_CHAT_TIMEOUT_MS || 0)),
+    });
+    return { slot: credential.slot, ok: connection.ok, model: connection.model, durationMs: connection.durationMs };
+  }));
 
   const existing = await listCatalogIntroductionCandidates(db, { tenantId: options.tenantId, batchId: options.batchId, limit: 200, offset: 0 });
   const existingKeys = new Set();
@@ -323,19 +355,34 @@ try {
   const pendingEvidence = catalog.evidence.filter((item) => !existingKeys.has(`${item.entityType}:${item.entity.id}:${item.inputHash}`));
   const versions = await nextCatalogIntroductionVersions(db, options.tenantId);
   const requestGate = createRequestGate(options.startDelayMs);
+  let providerKeyCursor = 0;
 
-  async function callProvider(items, repair = null) {
-    await requestGate();
-    return repair
-      ? aiProvider.repairCatalogIntroductionCandidates({ items, previousOutput: repair.output, validationError: repair.error, promptVersion: CATALOG_INTRODUCTION_PROMPT_VERSION })
-      : aiProvider.generateCatalogIntroductionCandidates({ items, promptVersion: CATALOG_INTRODUCTION_PROMPT_VERSION });
+  function nextProviderKey() {
+    const credential = providerKeys[providerKeyCursor % providerKeys.length];
+    providerKeyCursor += 1;
+    return credential;
   }
 
-  async function generateAndValidate(items) {
+  async function callProvider(items, credential, repair = null) {
+    await requestGate();
+    return aiProvider.withAiRuntimeConfig({
+      chatApiKey: credential.apiKey,
+      chatBaseUrl: process.env.AI_CHAT_BASE_URL,
+      chatModel: options.model,
+      chatTimeoutMs: Math.max(90_000, Number(process.env.AI_CHAT_TIMEOUT_MS || 0)),
+    }, async () => {
+      const generated = repair
+        ? await aiProvider.repairCatalogIntroductionCandidates({ items, previousOutput: repair.output, validationError: repair.error, promptVersion: CATALOG_INTRODUCTION_PROMPT_VERSION })
+        : await aiProvider.generateCatalogIntroductionCandidates({ items, promptVersion: CATALOG_INTRODUCTION_PROMPT_VERSION });
+      return { ...generated, providerKeySlot: credential.slot };
+    });
+  }
+
+  async function generateAndValidate(items, credential) {
     const result = await generateValidatedCatalogIntroductionBatch({
       evidenceBatch: items,
-      generate: () => callProvider(items),
-      repair: ({ previousOutput, validationError }) => callProvider(items, { output: previousOutput, error: validationError }),
+      generate: () => callProvider(items, credential),
+      repair: ({ previousOutput, validationError }) => callProvider(items, credential, { output: previousOutput, error: validationError }),
     });
     return {
       ...result,
@@ -367,13 +414,15 @@ try {
     let providerRetries = 0;
     let lastError;
     for (let attempt = 0; attempt <= 4; attempt += 1) {
+      const credential = nextProviderKey();
       try {
-        const result = await generateAndValidate(job.items);
+        const result = await generateAndValidate(job.items, credential);
         const records = await saveCandidates(job.items, result);
         return {
           id: job.id, stage: job.stage, status: 'completed', savedCount: records.length,
           latencyMs: Number((performance.now() - startedAt).toFixed(2)), repaired: result.repaired,
           rateLimitedCount, providerRetries, usage: result.generated.usage,
+          providerKeySlot: result.generated.providerKeySlot || credential.slot,
         };
       } catch (error) {
         lastError = error;
@@ -451,13 +500,16 @@ try {
         failed: completedResults.length - completed,
         successRate: Number((completed / Math.max(1, completedResults.length)).toFixed(4)),
         savedCount: completedResults.reduce((sum, item) => sum + item.savedCount, 0),
+        repairedCount: completedResults.reduce((sum, item) => sum + Number(Boolean(item.repaired)), 0),
         rateLimitedCount: completedResults.reduce((sum, item) => sum + item.rateLimitedCount, 0),
+        providerRetryCount: completedResults.reduce((sum, item) => sum + item.providerRetries, 0),
         durationMs: Number(durationMs.toFixed(2)),
         requestsPerSecond: Number((completedResults.length / Math.max(durationMs / 1000, 0.001)).toFixed(3)),
         tokensPerSecond: Number((sumUsage(completedResults).totalTokens / Math.max(durationMs / 1000, 0.001)).toFixed(2)),
         p50Ms: percentile(completedResults.map((item) => item.latencyMs), 0.5),
         p95Ms: percentile(completedResults.map((item) => item.latencyMs), 0.95),
         usage: sumUsage(completedResults),
+        providerKeyUsage: summarizeProviderKeyUsage(completedResults),
         failureReasons: summarizeFailures(completedResults),
       },
     };
@@ -536,6 +588,18 @@ try {
       }
       await updateCatalogIntroductionBatch(db, options.batchId, options.tenantId, { completedCount, failedCount: attemptFailureCount });
       persistReport();
+      console.log(JSON.stringify({
+        event: 'catalog_introduction_wave_completed',
+        stage: stage.stage,
+        concurrency,
+        completedCount,
+        expectedCount: catalog.counts.total,
+        savedCount: wave.metrics.savedCount,
+        failedCount: wave.metrics.failed,
+        repairedCount: wave.metrics.repairedCount,
+        rateLimitedCount: wave.metrics.rateLimitedCount,
+        durationMs: wave.metrics.durationMs,
+      }));
     }
     stageReport.finalConcurrency = concurrency;
     stageReport.savedCount = stageReport.waves.reduce((sum, item) => sum + item.savedCount, 0);

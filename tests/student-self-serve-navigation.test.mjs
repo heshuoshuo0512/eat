@@ -11,8 +11,11 @@ const routerJs = readFileSync(resolve('src/router/index.js'), 'utf-8');
 const appVue = readFileSync(resolve('src/App.vue'), 'utf-8');
 const homeVue = readFileSync(resolve('src/views/HomeView.vue'), 'utf-8');
 const dishesVue = readFileSync(resolve('src/views/DishesView.vue'), 'utf-8');
+const dishDetailVue = readFileSync(resolve('src/views/DishDetailView.vue'), 'utf-8');
+const canteensVue = readFileSync(resolve('src/views/CanteensView.vue'), 'utf-8');
 const recommendVue = readFileSync(resolve('src/views/RecommendView.vue'), 'utf-8');
 const ordersVue = readFileSync(resolve('src/views/OrdersView.vue'), 'utf-8');
+const dishDetailTemplate = extractTemplate(dishDetailVue);
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -116,17 +119,22 @@ describe('HomeView has /orders entry for students', () => {
 });
 
 /* ================================================================== */
-/*  4. DishesView: detail panel links to /orders with dish query      */
+/*  4. Dish list opens a dedicated detail route with order actions    */
 /* ================================================================== */
-describe('DishesView links to /orders with dish query parameter', () => {
-  it('detail panel RouterLink carries dish query to /orders', () => {
+describe('Dedicated dish detail navigation', () => {
+  it('registers the detail route and makes list cards navigate to it', () => {
+    assert.match(routerJs, /path:\s*'\/dishes\/:id'[^}]*name:\s*'dish-detail'/);
+    assert.match(dishesVue, /name:\s*'dish-detail'[\s\S]*params:\s*\{\s*id:\s*dish\.id/);
+  });
+
+  it('detail page carries the selected dish to the reservation flow', () => {
     assert.ok(
-      dishesTemplate.includes("path: '/orders'") || dishesTemplate.includes("path:'/orders'"),
-      'DishesView must link to /orders'
+      dishDetailTemplate.includes("path: '/orders'") || dishDetailTemplate.includes("path:'/orders'"),
+      'DishDetailView must link to /orders'
     );
     assert.ok(
-      /query:\s*\{\s*dish:/.test(dishesTemplate),
-      'DishesView /orders link must carry a dish query parameter'
+      /query:\s*\{\s*dish:/.test(dishDetailTemplate),
+      'DishDetailView /orders link must carry a dish query parameter'
     );
   });
 
@@ -135,6 +143,11 @@ describe('DishesView links to /orders with dish query parameter', () => {
       /route\.query\.dish/.test(dishesScript),
       'DishesView script must access route.query.dish'
     );
+  });
+
+  it('canteen stall preview only shows the empty state when no catalog dishes exist', () => {
+    assert.match(canteensVue, /v-if="!stallDishesLoading && !stallDishes\.length"[^>]*>该档口暂无菜品/);
+    assert.doesNotMatch(canteensVue, /v-else[^>]*>该档口暂无菜品/);
   });
 });
 

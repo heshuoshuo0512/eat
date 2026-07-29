@@ -367,6 +367,22 @@ function migrate(db) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS dish_class_prototypes (
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      dish_id TEXT NOT NULL REFERENCES dishes(id) ON DELETE CASCADE,
+      model_version TEXT NOT NULL,
+      canonical_name TEXT NOT NULL,
+      venue_name TEXT NOT NULL,
+      stall_name TEXT NOT NULL,
+      dimension INTEGER NOT NULL DEFAULT 768 CHECK(dimension = 768),
+      embedding_json TEXT NOT NULL,
+      image_count INTEGER NOT NULL CHECK(image_count > 0),
+      status TEXT NOT NULL DEFAULT 'ready' CHECK(status IN ('ready','deployed','retired')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(tenant_id, dish_id, model_version)
+    );
+
     CREATE TABLE IF NOT EXISTS dish_recipe_versions (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -809,6 +825,7 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_outbox_tenant_created ON outbox_events(tenant_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_dish_reference_images_dish ON dish_reference_images(tenant_id, dish_id, purpose, quality_status);
     CREATE INDEX IF NOT EXISTS idx_dish_image_embeddings_dish ON dish_image_embeddings(tenant_id, dish_id, status);
+    CREATE INDEX IF NOT EXISTS idx_dish_class_prototypes_dish ON dish_class_prototypes(tenant_id, dish_id, status);
     CREATE INDEX IF NOT EXISTS idx_dish_recipe_versions_dish ON dish_recipe_versions(tenant_id, dish_id, status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_dish_nutrition_versions_dish ON dish_nutrition_versions(tenant_id, dish_id, status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_meal_vision_analyses_user ON meal_vision_analyses(tenant_id, user_id, created_at);

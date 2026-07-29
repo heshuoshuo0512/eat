@@ -14,7 +14,7 @@ import {
 } from '../server/catalogIntroductions.js';
 
 const { Pool } = pg;
-const DEFAULT_SOURCE = 'data/real-catalog-introductions-2026-07-28.sqlite';
+const DEFAULT_SOURCE = 'data/real-catalog-introductions-deepseek-v4-dual-key-2026-07-29.sqlite';
 const DEFAULT_EXPECTED_COUNT = 2715;
 const JSON_COLUMNS = Object.freeze([
   ['claim_evidence_json', 'array'],

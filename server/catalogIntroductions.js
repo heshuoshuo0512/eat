@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { loadCampusDiningCorpus } from './campusDiningKnowledgeBase.js';
 import { parseJson, rowToCanteen, rowToDish, rowToStall, serializeJson } from './database.js';
 
-export const CATALOG_INTRODUCTION_PROMPT_VERSION = 'catalog-introduction-v1';
+export const CATALOG_INTRODUCTION_PROMPT_VERSION = 'catalog-introduction-v4';
 export const CATALOG_INTRODUCTION_ENTITY_TYPES = Object.freeze(['dish', 'stall', 'canteen']);
 export const CATALOG_INTRODUCTION_LEVELS = Object.freeze(['dish', 'stall', 'area', 'venue']);
 export const CATALOG_INTRODUCTION_STATUSES = Object.freeze(['generated', 'schema_validated', 'approved', 'rejected', 'retired']);
@@ -19,7 +19,7 @@ export const catalogIntroductionCandidateSchema = z.object({
   factualClaims: z.array(claimSchema).min(1).max(4),
   recommendationClaims: z.array(claimSchema).min(1).max(3),
   semanticLabels: z.array(z.string().trim().min(1).max(40)).max(10).default([]),
-  boundaryCodes: z.array(z.string().trim().min(1).max(80)).min(1).max(12),
+  boundaryCodes: z.array(z.string().trim().min(1).max(80)).max(12).default([]),
 }).strict();
 
 export const catalogIntroductionBatchSchema = z.object({
@@ -38,7 +38,7 @@ export const CATALOG_INTRODUCTION_BATCH_JSON_SCHEMA = Object.freeze({
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['entityType', 'entityId', 'factualClaims', 'recommendationClaims', 'semanticLabels', 'boundaryCodes'],
+        required: ['entityType', 'entityId', 'factualClaims', 'recommendationClaims', 'semanticLabels'],
         properties: {
           entityType: { type: 'string', enum: CATALOG_INTRODUCTION_ENTITY_TYPES },
           entityId: { type: 'string' },
@@ -51,7 +51,7 @@ export const CATALOG_INTRODUCTION_BATCH_JSON_SCHEMA = Object.freeze({
             items: { type: 'object', additionalProperties: false, required: ['text', 'evidenceIds'], properties: { text: { type: 'string' }, evidenceIds: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'string' } } } },
           },
           semanticLabels: { type: 'array', maxItems: 10, items: { type: 'string' } },
-          boundaryCodes: { type: 'array', minItems: 1, maxItems: 12, items: { type: 'string' } },
+          boundaryCodes: { type: 'array', maxItems: 12, items: { type: 'string' } },
         },
       },
     },
@@ -71,8 +71,10 @@ const UNCERTAINTY_MARKER = /可能|可供|可优先|可留意|从.{0,12}(?:目�
 const BOUNDARY_CODES = new Set([
   'CATALOG_DERIVED', 'SUPPLY_UNCONFIRMED', 'RECIPE_UNKNOWN', 'ALLERGEN_UNKNOWN',
   'NUTRITION_UNKNOWN', 'HALAL_UNKNOWN', 'DIETARY_UNKNOWN', 'MENU_MISSING',
-  'OPERATING_STATUS_ONLY', 'AI_ESTIMATED_SOFT_SEMANTICS',
+  'OPERATING_STATUS_ONLY', 'AI_ESTIMATED_SOFT_SEMANTICS', 'ENTITY_NAME_REVIEW_REQUIRED',
 ]);
+const SUPPLY_LANGUAGE = /(?:有售|供应|售卖|可购买|可下单|可点单)/;
+const SUPPLY_UNCERTAINTY = /(?:有售|供应|售卖|购买|下单|点单).{0,12}(?:待核验|未确认|尚未确认|未知|不明|不代表)|(?:待核验|未确认|尚未确认|未知|不明|不代表|无法确认|不能确认|未提供).{0,12}(?:有售|供应|售卖|购买|下单|点单)/;
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -90,6 +92,13 @@ function uniqueText(values, limit = Number.MAX_SAFE_INTEGER) {
 
 function normalizeSearchText(value) {
   return String(value || '').normalize('NFKC').toLocaleLowerCase().replace(/[\s·•,，。、“”‘’（）()\-_/]+/g, '');
+}
+
+function catalogEntityNameReviewReason(value) {
+  const name = String(value || '').normalize('NFKC').trim();
+  if (/^\d+(?:\s*[-~至‐‑–—]\s*\d+)?\s*人份$/u.test(name)) return 'serving_tier_without_product';
+  if (/^(?:单价|售价|计价|价格|基础套餐|第[一二三四五六七八九十]+组小锅)$/u.test(name)) return 'pricing_rule_without_product';
+  return null;
 }
 
 function evidenceId(type, id) {
@@ -161,7 +170,9 @@ function confidenceForEvidence(level, evidence) {
   const semantics = (evidence.semanticLabels?.length || evidence.concepts?.length) ? 0.25 : 0;
   const relations = (evidence.siblingDishes?.length || evidence.menu?.representativeDishes?.length || evidence.children?.length) ? 0.15 : 0;
   let score = rounded(hierarchy + menuPrice + semantics + relations);
-  if (evidence.boundaryCodes?.includes('MENU_MISSING')) score = Math.min(score, 0.39);
+  if (evidence.boundaryCodes?.some((code) => ['MENU_MISSING', 'ENTITY_NAME_REVIEW_REQUIRED'].includes(code))) {
+    score = Math.min(score, 0.39);
+  }
   return { score, level: score >= 0.8 ? 'high' : score >= 0.6 ? 'medium' : 'low', factors: { hierarchy, menuPrice, semantics, relations } };
 }
 
@@ -212,16 +223,29 @@ export async function loadCatalogIntroductionEvidence(db, { tenantId = 'default'
     const area = canteenById.get(stall?.canteenId);
     const venue = area?.parentId ? canteenById.get(area.parentId) : area;
     const hierarchy = uniqueHierarchy([venue, area]).map((item) => ({ id: item.id, name: item.name, location: item.location, operatingStatus: item.operatingStatus }));
-    const siblings = representativeDishes((dishesByStall.get(dish.stallId) || []).filter((item) => item.id !== dish.id), 12);
-    const concepts = conceptsByDish.get(dish.id) || [];
+    const entityNameReviewReason = catalogEntityNameReviewReason(dish.name);
+    const siblings = entityNameReviewReason
+      ? []
+      : representativeDishes((dishesByStall.get(dish.stallId) || []).filter((item) => item.id !== dish.id), 12);
+    const normalizedDishName = normalizeSearchText(dish.name);
+    const concepts = entityNameReviewReason
+      ? []
+      : (conceptsByDish.get(dish.id) || []).filter((item) => normalizeSearchText(item.name) !== normalizedDishName);
+    const semanticLabels = entityNameReviewReason
+      ? []
+      : (dish.semanticLabels || []).filter((label) => normalizeSearchText(label) !== normalizedDishName);
     evidence.push(entityEvidenceBase({
       entityType: 'dish', hierarchyLevel: 'dish',
       entity: { id: dish.id, name: dish.name, aliases: dish.aliases, priceDisplay: dish.priceDisplay, pricingMode: dish.pricingMode, updatedAt: dish.updatedAt },
       hierarchy,
-      semanticLabels: dish.semanticLabels,
+      semanticLabels,
       concepts,
-      boundaryCodes: ['RECIPE_UNKNOWN', 'ALLERGEN_UNKNOWN', 'NUTRITION_UNKNOWN', 'HALAL_UNKNOWN', 'DIETARY_UNKNOWN'],
+      boundaryCodes: [
+        'RECIPE_UNKNOWN', 'ALLERGEN_UNKNOWN', 'NUTRITION_UNKNOWN', 'HALAL_UNKNOWN', 'DIETARY_UNKNOWN',
+        entityNameReviewReason ? 'ENTITY_NAME_REVIEW_REQUIRED' : null,
+      ].filter(Boolean),
       extra: {
+        entityNameReviewReason,
         stall: stall ? { id: stall.id, name: stall.name, floor: stall.floor, category: stall.category } : null,
         siblingDishes: siblings.map((item) => ({ id: item.id, name: item.name, priceDisplay: item.priceDisplay, semanticLabels: item.semanticLabels?.slice(0, 3) || [] })),
         allowedEvidenceIds: [stall && evidenceId('stall', stall.id), ...siblings.map((item) => evidenceId('dish', item.id))].filter(Boolean),
@@ -341,6 +365,16 @@ function assertClaimText(text, { recommendation, evidence }) {
   if (recommendation && !UNCERTAINTY_MARKER.test(text)) {
     throw Object.assign(new Error(`推荐文案缺少推测边界：${text}`), { code: 'INTRODUCTION_BOUNDARY_REQUIRED' });
   }
+  if (evidence.boundaryCodes?.includes('SUPPLY_UNCONFIRMED')) {
+    const unsupportedSupply = policyText
+      .split(/[。！？!?；;\n]+/)
+      .some((segment) => SUPPLY_LANGUAGE.test(segment) && !SUPPLY_UNCERTAINTY.test(segment));
+    if (unsupportedSupply) {
+      throw Object.assign(new Error(`介绍把目录归属写成了未经核验的供应事实：${text}`), {
+        code: 'UNSUPPORTED_CATALOG_SUPPLY_CLAIM',
+      });
+    }
+  }
   const allowedNumbers = collectAllowedNumbers(evidence);
   for (const match of text.matchAll(/\d+(?:\.\d+)?/g)) {
     if (!allowedNumbers.has(match[0])) throw Object.assign(new Error(`介绍数字没有目录证据：${match[0]}`), { code: 'UNSUPPORTED_CATALOG_NUMBER' });
@@ -405,6 +439,46 @@ export function validateCatalogIntroductionCandidate(candidate, evidence) {
   });
   const factualClaims = validateClaims(parsed.factualClaims, false);
   const recommendationClaims = validateClaims(parsed.recommendationClaims, true);
+  const factualText = factualClaims.map((claim) => claim.text).join('');
+  const recommendationText = recommendationClaims.map((claim) => claim.text).join('');
+  const catalogNames = uniqueText([
+    evidence.entity?.name,
+    evidence.stall?.name,
+    ...(evidence.hierarchy || []).map((item) => item.name),
+    ...(evidence.siblingDishes || []).map((item) => item.name),
+  ]).map(normalizeSearchText).filter(Boolean);
+  const softSignals = uniqueText([
+    ...(evidence.semanticLabels || []),
+    ...(evidence.concepts || []).map((item) => item.name),
+  ]).filter((label) => {
+    const normalized = normalizeSearchText(label);
+    return normalized && !catalogNames.some((name) => name.includes(normalized) || normalized.includes(name));
+  });
+  if (softSignals.some((label) => includesEvidenceText(factualText, label))) {
+    throw Object.assign(new Error('派生语义标签只能用于推测性推荐文案，不能写入事实摘要'), {
+      code: 'SOFT_SEMANTIC_FACT_CLAIM',
+    });
+  }
+  if (softSignals.some((label) => includesEvidenceText(recommendationText, label))
+    && !/(?:可能|可按|可作为|从.{0,12}(?:标签|名称|菜单结构)看)/.test(recommendationText)) {
+    throw Object.assign(new Error('使用派生语义标签时必须明确标注为推测'), {
+      code: 'SOFT_SEMANTIC_BOUNDARY_REQUIRED',
+    });
+  }
+  if (evidence.boundaryCodes.includes('ENTITY_NAME_REVIEW_REQUIRED')) {
+    const combinedText = `${factualText}${recommendationText}`;
+    if (!/(?:目录条目)?名称待核验|具体菜品名称.{0,6}待核验/.test(combinedText)) {
+      throw Object.assign(new Error('规格型目录名称必须明确标记为名称待核验'), {
+        code: 'CATALOG_ENTITY_NAME_REVIEW_WARNING_REQUIRED',
+      });
+    }
+    const policyText = maskEvidenceBackedCatalogNames(combinedText, evidence);
+    if (/套餐|(?:属于|归为|划分为|是|为).{0,12}(?:主食|小吃|热菜|饮品|菜品|蛋白质|蔬菜|汤)/.test(policyText)) {
+      throw Object.assign(new Error('规格型目录名称不得被推断为具体套餐或菜品类别'), {
+        code: 'CATALOG_ENTITY_NAME_CLASSIFICATION_FORBIDDEN',
+      });
+    }
+  }
   if (!evidence.boundaryCodes.includes('MENU_MISSING') && factualClaims.length < 2) {
     throw Object.assign(new Error('有目录内容的实体至少需要两条事实声明'), { code: 'CATALOG_INTRODUCTION_TOO_SHALLOW' });
   }
@@ -425,11 +499,13 @@ export function validateCatalogIntroductionCandidate(candidate, evidence) {
     ...(evidence.concepts || []).map((item) => item.name),
     ...(evidence.menu?.semanticGroups || []).map((item) => item.label),
   ]));
-  const semanticLabels = uniqueText(parsed.semanticLabels).filter((label) => allowedLabels.has(label));
+  const semanticLabels = evidence.boundaryCodes.includes('ENTITY_NAME_REVIEW_REQUIRED')
+    ? []
+    : uniqueText(parsed.semanticLabels).filter((label) => allowedLabels.has(label));
   const boundaryCodes = uniqueText([...evidence.boundaryCodes, ...parsed.boundaryCodes.filter((code) => BOUNDARY_CODES.has(code))]);
   const claims = [...factualClaims, ...recommendationClaims];
-  const factualSummary = factualClaims.map((claim) => claim.text).join('');
-  const recommendationCopy = recommendationClaims.map((claim) => claim.text).join('');
+  const factualSummary = factualText;
+  const recommendationCopy = recommendationText;
   assertMeaningfulCatalogEvidence(evidence, factualSummary);
   return {
     entityType: evidence.entityType,
@@ -461,7 +537,23 @@ export function validateCatalogIntroductionBatch(value, evidenceBatch) {
 
 export async function generateValidatedCatalogIntroductionBatch({ evidenceBatch, generate, repair }) {
   if (typeof generate !== 'function' || typeof repair !== 'function') throw new TypeError('generate and repair functions are required');
-  const first = await generate(evidenceBatch);
+  let first;
+  try {
+    first = await generate(evidenceBatch);
+  } catch (initialGenerationError) {
+    if (initialGenerationError?.code !== 'AI_PROVIDER_INVALID_JSON') throw initialGenerationError;
+    const repairedOutput = await repair({
+      evidenceBatch,
+      previousOutput: { invalidJson: String(initialGenerationError.rawOutput || '').slice(0, 4_000) },
+      validationError: initialGenerationError,
+    });
+    return {
+      generated: repairedOutput,
+      candidates: validateCatalogIntroductionBatch({ introductions: repairedOutput?.introductions }, evidenceBatch),
+      repaired: true,
+      initialValidationError: initialGenerationError,
+    };
+  }
   try {
     return {
       generated: first,
@@ -520,6 +612,10 @@ export function publicCatalogIntroduction(record) {
   return {
     factualSummary: record.factualSummary,
     recommendationCopy: record.recommendationCopy,
+    positioningStatement: record.recommendationCopy,
+    hierarchyLevel: record.hierarchyLevel,
+    semanticLabels: record.semanticLabels,
+    evidenceIds: record.evidenceIds,
     provenance: 'catalog_derived',
     provenanceLabel: '基于目录整理',
     confidence: record.confidence,
@@ -531,7 +627,12 @@ export function publicCatalogIntroduction(record) {
 
 export function applyCatalogIntroduction(entity, record) {
   const introduction = publicCatalogIntroduction(record);
-  return { ...entity, displayDescription: introduction?.factualSummary || entity.description || '', introduction };
+  return {
+    ...entity,
+    displayDescription: introduction?.factualSummary || entity.description || '',
+    displayTagline: introduction?.positioningStatement || '',
+    introduction,
+  };
 }
 
 export async function loadCatalogIntroductionMap(db, {

@@ -1,0 +1,25 @@
+FROM node:25-alpine AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+
+FROM deps AS web-build
+COPY collector-web ./collector-web
+RUN npm run build:collector
+
+FROM node:25-alpine AS collector-api
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY collector-server ./collector-server
+COPY server ./server
+COPY scripts/bootstrap-collector-staff.mjs ./scripts/bootstrap-collector-staff.mjs
+COPY data/imports/real/campus-2026-07-27/catalog.json ./data/catalog.json
+EXPOSE 8790
+CMD ["node", "collector-server/index.js"]
+
+FROM nginx:1.27-alpine AS collector-web
+COPY collector-web/nginx.conf /etc/nginx/nginx.conf
+COPY --from=web-build /app/dist-collector /usr/share/nginx/html
+EXPOSE 80

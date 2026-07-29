@@ -273,6 +273,14 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
     const aiSummary = dishAiAnnotationSummary(aiAnnotation);
     const aiAnnotationMeta = rowValue(dish, 'aiAnnotationMeta', 'ai_annotation_meta') || {};
     const introduction = catalogIntroductionSummary(dish);
+    const areaIntroduction = catalogIntroductionSummary(joinedCanteen);
+    const venueIntroduction = parentCanteenId && parentCanteenId !== canteenId
+      ? catalogIntroductionSummary(parentCanteen)
+      : { content: [], searchTerms: [], metadata: null };
+    const locationIntroductionTerms = [
+      ...areaIntroduction.searchTerms,
+      ...venueIntroduction.searchTerms,
+    ];
     const name = requiredText(rowValue(dish, 'name'), 'dish.name');
     const stallName = rowValue(dish, 'stallName', 'stall_name') || rowValue(joinedStall, 'name') || '';
     const canteenName = rowValue(dish, 'canteenName', 'canteen_name') || rowValue(joinedCanteen, 'name') || '';
@@ -305,6 +313,8 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
       `预约：${asBoolean(rowValue(dish, 'reservationEnabled', 'reservation_enabled')) ? '菜品支持预约，仍需以档口预约开关为准' : '暂停预约'}`,
       `描述：${rowValue(dish, 'description') || ''}`,
       ...introduction.content,
+      ...areaIntroduction.content.map((item) => `所属餐厅语义：${item}`),
+      ...venueIntroduction.content.map((item) => `所属场所语义：${item}`),
       aiSummary.content,
     ].filter(Boolean);
     return {
@@ -314,7 +324,7 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
       chunkIndex: 0,
       title: name,
       content: details.join('。'),
-      searchText: [name, ...aliases, rowValue(dish, 'cuisine'), rowValue(dish, 'taste'), ...ingredients, ...allergens, ...tags, ...semanticLabels, ...aiSummary.searchTerms, ...introduction.searchTerms, stallName, canteenName, parentCanteenName, rowValue(dish, 'description')].filter(Boolean).join(' '),
+      searchText: [name, ...aliases, rowValue(dish, 'cuisine'), rowValue(dish, 'taste'), ...ingredients, ...allergens, ...tags, ...semanticLabels, ...aiSummary.searchTerms, ...introduction.searchTerms, ...locationIntroductionTerms, stallName, canteenName, parentCanteenName, rowValue(dish, 'description')].filter(Boolean).join(' '),
       metadata: {
         tenantId: dishTenantId,
         dishId: rowValue(dish, 'id'),
@@ -342,6 +352,10 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
         supplyConfirmed: false,
         semanticLabelVersion: 'campus-dining-2026.07.1',
         evidenceType: 'tenant_dish_fact',
+        locationSemanticEvidence: [
+          areaIntroduction.metadata && { entityType: 'canteen', entityId: canteenId, ...areaIntroduction.metadata },
+          venueIntroduction.metadata && { entityType: 'canteen', entityId: parentCanteenId, ...venueIntroduction.metadata },
+        ].filter(Boolean),
         ...(introduction.metadata ? { catalogIntroduction: introduction.metadata } : {}),
         ...(aiSummary.metadata ? {
           aiEstimated: {
@@ -427,6 +441,9 @@ export function buildCanteenIndexDocuments(canteens = [], tenantId = 'default') 
     const parentName = rowValue(canteen, 'parentCanteenName', 'parent_canteen_name') || rowValue(parent, 'name') || '';
     const hierarchyLevel = parentId ? 'area' : 'venue';
     const introduction = catalogIntroductionSummary(canteen);
+    const hierarchyTerms = hierarchyLevel === 'venue'
+      ? ['餐饮场所', '食堂', '校园餐饮区域']
+      : ['餐厅', '楼层', '餐区', '食堂分区'];
     const details = [
       `${hierarchyLevel === 'venue' ? '餐饮场所' : '餐厅或楼层'}：${name}`,
       parentName ? `上级场所：${parentName}` : '',
@@ -442,7 +459,7 @@ export function buildCanteenIndexDocuments(canteens = [], tenantId = 'default') 
       chunkIndex: 0,
       title: name,
       content: details.join('。'),
-      searchText: [name, parentName, rowValue(canteen, 'displayName', 'display_name'), rowValue(canteen, 'location'), rowValue(canteen, 'description'), ...introduction.searchTerms].filter(Boolean).join(' '),
+      searchText: [name, parentName, ...hierarchyTerms, rowValue(canteen, 'displayName', 'display_name'), rowValue(canteen, 'location'), rowValue(canteen, 'description'), ...introduction.searchTerms].filter(Boolean).join(' '),
       metadata: {
         tenantId: canteenTenantId,
         canteenId: id,
@@ -450,6 +467,7 @@ export function buildCanteenIndexDocuments(canteens = [], tenantId = 'default') 
         parentCanteenId: parentId,
         parentCanteenName: parentName || null,
         hierarchyLevel,
+        hierarchyTerms,
         orderable: false,
         supplyConfirmed: false,
         evidenceType: 'tenant_canteen_fact',

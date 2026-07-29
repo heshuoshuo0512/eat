@@ -51,7 +51,7 @@
         <span v-else-if="canteen.operatingStatus === 'closed'" class="venue-availability closed">已关闭</span>
         <span v-else class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
       </div>
-      <CatalogIntroduction :entity="canteen" compact />
+      <CatalogIntroduction :entity="canteen" compact positioning />
       <div class="meta-row">
         <span>营业 {{ canteen.hours }}</span>
         <span v-for="tag in canteen.tags" :key="tag" class="pill">{{ tag }}</span>
@@ -92,7 +92,7 @@
           <div><p class="eyebrow">{{ canteen.location }}</p><h2>{{ canteen.displayName || canteen.name }}</h2></div>
           <span class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
         </div>
-        <CatalogIntroduction :entity="canteen" compact />
+        <CatalogIntroduction :entity="canteen" compact positioning />
         <div class="meta-row"><span class="pill">{{ store.stalls.filter((stall) => stall.canteenId === canteen.id).length }} 个档口</span><span class="pill">营业 {{ canteen.hours }}</span></div>
         <p class="muted enter-hint">进入子食堂 →</p>
       </article>
@@ -112,7 +112,7 @@
         </div>
         <span class="crowd" :class="crowdClass(selectedSubCanteen?.crowdLevel || 0)">{{ selectedSubCanteen?.crowdLevel || 0 }}%</span>
       </div>
-      <CatalogIntroduction :entity="selectedSubCanteen" />
+      <CatalogIntroduction :entity="selectedSubCanteen" positioning />
       <div class="meta-row">
         <span>营业 {{ selectedSubCanteen?.hours }}</span>
         <span v-for="tag in (selectedSubCanteen?.tags || [])" :key="tag" class="pill">{{ tag }}</span>
@@ -140,7 +140,7 @@
             <span class="rating">{{ Number(stall.rating) > 0 ? Number(stall.rating).toFixed(1) : '暂无评分' }}</span>
           </div>
           <small class="muted">{{ stall.category }} · 人均 ¥{{ stall.avgPrice }}</small>
-          <CatalogIntroduction :entity="stall" compact />
+          <CatalogIntroduction :entity="stall" compact positioning />
           <div class="meta-row">
             <span class="pill" :class="stall.open ? 'open-tag' : 'closed-tag'">{{ stall.open ? '营业中' : '已关闭' }}</span>
             <span class="pill">{{ dishCountForStall(stall.id) }} 个菜品</span>
@@ -186,7 +186,7 @@
     <header class="card stall-detail-header">
       <h2>{{ selectedStall?.name }}</h2>
       <p class="muted">{{ selectedStall?.category }} · 人均 ¥{{ selectedStall?.avgPrice }}</p>
-      <CatalogIntroduction :entity="selectedStall" />
+      <CatalogIntroduction :entity="selectedStall" positioning />
       <div class="meta-row">
         <span class="pill" :class="selectedStall?.open ? 'open-tag' : 'closed-tag'">{{ selectedStall?.open ? '营业中' : '已关闭' }}</span>
         <span class="pill">{{ Number(selectedStall?.rating) > 0 ? `⭐ ${Number(selectedStall.rating).toFixed(1)}` : '暂无评分' }}</span>
@@ -198,7 +198,7 @@
     </header>
 
     <div v-if="stallDishes.length" class="dish-preview-grid">
-      <article v-for="dish in stallDishes" :key="dish.id" class="card dish-preview-card">
+      <RouterLink v-for="dish in stallDishes" :key="dish.id" class="card dish-preview-card dish-preview-link" :to="{ name: 'dish-detail', params: { id: dish.id } }">
         <div class="dish-preview-visual">
           <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-preview-img" />
           <span v-else class="emoji large">{{ dish.image }}</span>
@@ -213,10 +213,10 @@
             <span v-for="tag in (dish.tags || []).slice(0, 2)" :key="tag" class="pill">{{ tag }}</span>
           </div>
         </div>
-      </article>
+      </RouterLink>
     </div>
     <button v-if="stallDishPage.hasMore" class="secondary stall-load-more" type="button" :disabled="stallDishesLoading" @click="loadStallDishes(Number(stallDishPage.page||1)+1)">{{ stallDishesLoading?'加载中…':'加载更多菜品' }}</button>
-    <p v-else class="muted empty-state">该档口暂无菜品。</p>
+    <p v-if="!stallDishesLoading && !stallDishes.length" class="muted empty-state">该档口暂无菜品。</p>
   </section>
 </template>
 
@@ -471,6 +471,7 @@ function crowdClass(value) {
 
 .dish-preview-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .dish-preview-card { display: flex; gap: 14px; align-items: flex-start; }
+.dish-preview-link { color: inherit; text-decoration: none; }
 .dish-preview-visual { flex-shrink: 0; }
 .dish-preview-img { width: 72px; height: 72px; border-radius: 16px; object-fit: cover; border: 1px solid rgba(255,255,255,.6); }
 .dish-preview-info { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }

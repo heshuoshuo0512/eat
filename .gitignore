@@ -7,9 +7,13 @@ node_modules/
 .rag-evals/
 .rag-simulations/
 dist/
+dist-collector/
+collector-datasets/
+collector-models/
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
+collector-data/
 data/imports/real/
 uploads/*
 !uploads/.gitkeep
@@ -24,6 +28,7 @@ miniapp/dist/
 miniapp/node_modules/
 miniapp/unpackage/
 artifacts/miniapp-ui/
+artifacts/collector-ui/
 artifacts/admin-*.png
 scripts/.tmp-smart-canteen-*
 __pycache__/

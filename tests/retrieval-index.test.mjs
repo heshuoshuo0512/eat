@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { openDatabase } from '../server/database.js';
 import {
   RETRIEVAL_EMBEDDING_DIM,
+  buildCanteenIndexDocuments,
   buildDishIndexDocuments,
   buildStallIndexDocuments,
   deleteRetrievalSource,
@@ -66,6 +67,37 @@ describe('retrieval index contracts', () => {
     assert.deepEqual(documents[0].metadata.allergens, ['蛋类']);
     assert.match(documents[0].content, /420 kcal/);
     assert.match(documents[0].searchText, /番茄 鸡蛋/);
+  });
+
+  it('uses approved area and venue introductions as location semantics without changing dish facts', () => {
+    const approvedIntroduction = (factualSummary, recommendationCopy, id) => ({
+      id, batchId: 'intro-batch', version: 1, status: 'approved', factualSummary, recommendationCopy,
+      semanticLabels: ['赶课友好'], boundaryCodes: ['CATALOG_DERIVED'], evidenceIds: [`canteen:${id}`], confidence: { level: 'high', score: 0.9 },
+    });
+    const [document] = buildDishIndexDocuments([
+      { id: 'dish-location', tenantId: 'tenant-a', stallId: 'stall-location', name: '鸡肉饭', price: 12, ingredients: [], allergens: [] },
+    ], [
+      { id: 'stall-location', canteenId: 'area-location', name: '米饭档' },
+    ], [
+      { id: 'venue-location', name: '燕鸣湖', introduction: approvedIntroduction('燕鸣湖是东区餐饮场所。', '从目录结构看可能适合多样化选餐。', 'venue-location') },
+      { id: 'area-location', parentId: 'venue-location', name: '燕鸣湖二楼', introduction: approvedIntroduction('燕鸣湖二楼收录多个档口。', '从目录标签看可能适合赶课选餐。', 'area-location') },
+    ], 'tenant-a');
+
+    assert.match(document.searchText, /燕鸣湖二楼收录多个档口/);
+    assert.match(document.searchText, /赶课选餐/);
+    assert.match(document.content, /所属餐厅语义：目录事实摘要/);
+    assert.match(document.content, /所属场所语义：目录推测建议/);
+    assert.equal(document.metadata.evidenceType, 'tenant_dish_fact');
+    assert.deepEqual(document.metadata.locationSemanticEvidence.map((item) => item.entityId), ['area-location', 'venue-location']);
+  });
+
+  it('adds explicit hierarchy terms to venue and dining-area retrieval documents', () => {
+    const documents = buildCanteenIndexDocuments([
+      { id: 'venue', tenantId: 'tenant-a', name: '西区大食堂' },
+      { id: 'area', tenantId: 'tenant-a', name: '大榕树餐厅', parentId: 'venue' },
+    ], 'tenant-a');
+    assert.match(documents.find((item) => item.sourceId === 'venue').searchText, /餐饮场所.*食堂/);
+    assert.match(documents.find((item) => item.sourceId === 'area').searchText, /餐厅.*楼层.*餐区/);
   });
 
   it('uses AI annotations only as explicitly estimated search evidence', () => {

@@ -9,12 +9,13 @@ export const STUDENT_ENTRIES = Object.freeze([
   { id: 'saved', label: '收藏与吃过', shortLabel: '收藏', description: '把喜欢与吃过的菜统一收好', eyebrow: '个人记录', route: '/pages/saved/saved', navigationType: 'navigateTo', iconName: 'heart', group: 'records', tone: 'records' },
   { id: 'orders', label: '到店预约', shortLabel: '预约', description: '同档口预约，到店确认并支付', eyebrow: '个人记录', route: '/pages/orders/orders', navigationType: 'navigateTo', iconName: 'store', group: 'records', tone: 'records' },
   { id: 'health', label: '健康档案', shortLabel: '档案', description: '长期影响每一次智能推荐', eyebrow: '健康管理', route: '/pages/health-profile/health-profile', navigationType: 'navigateTo', iconName: 'safe', group: 'profile', tone: 'health' },
-  { id: 'vision', label: '拍照识餐', shortLabel: '识餐', description: '拍照分析菜品与营养信息', eyebrow: '智能吃饭', route: '/pages/vision/vision', navigationType: 'navigateTo', iconName: 'camera', group: 'core', tone: 'discover' }
+  { id: 'vision', label: '拍照识餐', shortLabel: '识餐', description: '拍照分析菜品与营养信息', eyebrow: '智能吃饭', route: '/pages/vision/vision', navigationType: 'navigateTo', iconName: 'camera', group: 'core', tone: 'discover' },
+  { id: 'collector', label: '助力菜品识别', shortLabel: '采集', description: '提交真实菜品照片并确认档口', eyebrow: '数据共建', route: '/pages/contribute/contribute', navigationType: 'navigateTo', iconName: 'camera', group: 'core', tone: 'community' }
 ]);
 
 const ENTRY_BY_ID = new Map(STUDENT_ENTRIES.map((entry) => [entry.id, entry]));
 
-export const CORE_ENTRY_IDS = Object.freeze(['dishes', 'recommend']);
+export const CORE_ENTRY_IDS = Object.freeze(['dishes', 'recommend', 'collector']);
 export const EXPLORE_ENTRY_IDS = Object.freeze(['canteens', 'rankings', 'regions']);
 export const COMMUNITY_ENTRY_IDS = Object.freeze(['reviews', 'community']);
 

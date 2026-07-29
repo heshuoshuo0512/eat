@@ -113,7 +113,7 @@ describe('miniapp student navigation visibility', () => {
   const profile = readFileSync(join(MINIAPP, 'pages/profile/profile.vue'), 'utf8');
 
   it('centralizes every student entry with valid Wot icon metadata', () => {
-    assert.deepEqual(CORE_ENTRY_IDS, ['dishes', 'recommend']);
+    assert.deepEqual(CORE_ENTRY_IDS, ['dishes', 'recommend', 'collector']);
     assert.deepEqual(EXPLORE_ENTRY_IDS, ['canteens', 'rankings', 'regions']);
     assert.deepEqual(COMMUNITY_ENTRY_IDS, ['reviews', 'community']);
     assert.equal(new Set(STUDENT_ENTRIES.map((entry) => entry.id)).size, STUDENT_ENTRIES.length);

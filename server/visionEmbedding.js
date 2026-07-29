@@ -13,6 +13,7 @@ function config(overrides = {}) {
     baseUrl,
     apiKey: String(overrides.apiKey || process.env.VISION_EMBEDDING_API_KEY || '').trim(),
     model: String(overrides.model || process.env.VISION_EMBEDDING_MODEL || DEFAULT_MODEL).trim(),
+    modelVersion: String(overrides.modelVersion || process.env.VISION_EMBEDDING_MODEL_VERSION || '').trim(),
     dimension: Number(overrides.dimension || process.env.VISION_EMBEDDING_DIMENSION || DEFAULT_DIMENSION),
     timeoutMs: Number(overrides.timeoutMs || process.env.VISION_EMBEDDING_TIMEOUT_MS || DEFAULT_TIMEOUT_MS),
   };
@@ -47,6 +48,7 @@ export function getVisionEmbeddingStatus(overrides) {
     enabled: active.enabled,
     baseUrl: active.baseUrl,
     model: active.model,
+    modelVersion: active.modelVersion || active.model,
     dimension: active.dimension,
     timeoutMs: active.timeoutMs,
   };
@@ -70,7 +72,8 @@ export async function createVisionImageEmbedding(imageInput, overrides) {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error?.message || payload.error || `Vision embedding provider error: ${response.status}`);
     return {
-      model: String(payload.model || active.model),
+      model: String(payload.modelVersion || payload.model || active.modelVersion || active.model),
+      modelVersion: String(payload.modelVersion || payload.model || active.modelVersion || active.model),
       embedding: normalizedEmbedding(payload.embedding || payload.data?.[0]?.embedding, active.dimension),
       dimension: active.dimension,
     };

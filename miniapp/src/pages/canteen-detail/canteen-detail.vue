@@ -10,7 +10,7 @@
             <text class="crowd" :class="crowdState.className">{{ crowdState.label }}</text>
             <view class="hero-copy"><text>{{ canteen.location||'校内食堂' }}</text><text class="ui-strong">{{ canteen.name }}</text><text class="ui-small">{{ canteen.hours||'营业时间待更新' }}</text></view>
           </view>
-          <sc-catalog-introduction :entity="canteen" />
+          <sc-catalog-introduction :entity="canteen" positioning />
           <view v-if="canteen.tags?.length" class="tag-row"><text v-for="tag in canteen.tags" :key="tag">{{ tag }}</text></view>
         </view>
 
@@ -22,7 +22,7 @@
 
           <view v-if="directStalls.length" class="section-block">
             <view class="section-head"><view><text class="ui-strong">档口目录</text><text>{{ directStalls.length }} 个档口</text></view><button @tap="openReviews">查看评价</button></view>
-            <view v-for="group in floorGroups" :key="group.floor" class="floor-group"><text class="floor-label">{{ group.floor }}</text><view class="floor-list"><view v-for="stall in group.stalls" :key="stall.id" class="catalog-entry"><sc-list-row icon-name="store" :title="stall.name" :description="`${stall.category||'综合档口'} · ${stall.avgPrice?`${stall.avgPrice}元人均`:'人均待核验'} · ${dishCount(stall.id)} 道菜`" :meta="Number(stall.rating)>0?Number(stall.rating).toFixed(1):'暂无评分'" :badge="stall.open===false?'暂停营业':'营业中'" :badge-tone="stall.open===false?'warning':'default'" @tap="openStall(stall.id)" /><sc-catalog-introduction :entity="stall" compact /></view></view></view>
+            <view v-for="group in floorGroups" :key="group.floor" class="floor-group"><text class="floor-label">{{ group.floor }}</text><view class="floor-list"><view v-for="stall in group.stalls" :key="stall.id" class="catalog-entry"><sc-list-row icon-name="store" :title="stall.name" :description="`${stall.category||'综合档口'} · ${stall.avgPrice?`${stall.avgPrice}元人均`:'人均待核验'} · ${dishCount(stall.id)} 道菜`" :meta="Number(stall.rating)>0?Number(stall.rating).toFixed(1):'暂无评分'" :badge="stall.open===false?'暂停营业':'营业中'" :badge-tone="stall.open===false?'warning':'default'" @tap="openStall(stall.id)" /><sc-catalog-introduction :entity="stall" compact positioning /></view></view></view>
           </view>
           <sc-state-card v-if="!children.length&&!directStalls.length" type="empty" title="暂无档口" desc="等待档口目录同步。" />
         </view>

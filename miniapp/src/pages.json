@@ -8,6 +8,7 @@
 
     { "path": "pages/recommend/recommend", "style": { "navigationBarTitleText": "智能推荐", "navigationStyle": "custom" } },
     { "path": "pages/vision/vision", "style": { "navigationBarTitleText": "拍照识餐", "navigationStyle": "custom" } },
+    { "path": "pages/contribute/contribute", "style": { "navigationBarTitleText": "助力菜品识别" } },
     { "path": "pages/canteens/canteens", "style": { "navigationBarTitleText": "食堂导航", "navigationStyle": "custom", "enablePullDownRefresh": true } },
     { "path": "pages/canteen-detail/canteen-detail", "style": { "navigationBarTitleText": "食堂详情", "navigationStyle": "custom" } },
     { "path": "pages/stall-detail/stall-detail", "style": { "navigationBarTitleText": "档口详情", "navigationStyle": "custom" } },

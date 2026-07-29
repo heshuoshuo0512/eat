@@ -53,7 +53,7 @@
 
   <section class="dish-layout">
     <div class="dish-list">
-      <button v-for="dish in sortedDishes" :key="dish.id" :class="['dish-card', { selected: dish.id === selectedId }]" type="button" @click="selectDish(dish.id)">
+      <RouterLink v-for="dish in sortedDishes" :key="dish.id" class="dish-card" :to="{ name: 'dish-detail', params: { id: dish.id } }">
         <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb" />
         <span v-else class="emoji large">{{ dish.image }}</span>
         <span class="dish-card-info">
@@ -65,118 +65,31 @@
           <RagTrustState :item="dish" compact />
         </span>
         <span class="rating">{{ dishRatingText(dish) }}</span>
-      </button>
+        <ChevronRight :size="18" class="dish-open-icon" aria-hidden="true" />
+      </RouterLink>
       <p v-if="!sortedDishes.length" class="muted empty-dishes">暂无有效菜品。</p>
       <button v-if="!searchResultActive && store.catalogPage.hasMore" class="secondary load-more" type="button" :disabled="catalogLoadingMore" @click="loadMoreCatalog">{{ catalogLoadingMore ? '加载中…' : `加载更多（已加载 ${store.dishes.length} / ${store.catalogPage.total}）` }}</button>
     </div>
 
-    <aside v-if="detail" class="card detail-panel">
-      <div class="section-title">
-        <p class="eyebrow">菜品详情</p>
-        <h2>{{ detail.name }}</h2>
-      </div>
-      <div v-if="detail.imageUrl" class="vision-preview" style="max-width:100%;margin-bottom:0.75rem;">
-        <img :src="detail.imageUrl" :alt="detail.name" />
-      </div>
-      <span v-else class="emoji large" style="display:block;margin-bottom:0.75rem;">{{ detail.image }}</span>
-      <CatalogIntroduction :entity="detail" />
-
-      <!-- Precise location: primary → sub → stall -->
-      <div class="detail-location">
-        <span class="pill location-pill">📍 {{ detailLocationFull(detail) }}</span>
-      </div>
-
-      <div class="meta-row">
-        <span class="pill">{{ dishPriceText(detail) }}</span>
-        <span class="pill">{{ detail.cuisine }}</span>
-        <span class="pill">{{ detail.taste }}</span>
-        <span v-if="detail.halal" class="pill halal-badge">清真</span>
-      </div>
-        <span :class="['pill', 'supply-badge', supplyState(detail).className]">{{ supplyState(detail).label }}</span>
-      <RagTrustState :item="detail" />
-
-      <!-- Expanded nutrition -->
-      <div v-if="dishNutritionPresentation(detail).known" class="nutrition-grid">
-        <span><strong>{{ detail.nutrition?.calories || 0 }}</strong><small>kcal</small></span>
-        <span><strong>{{ detail.nutrition?.protein || 0 }}g</strong><small>蛋白</small></span>
-        <span><strong>{{ detail.nutrition?.fat || 0 }}g</strong><small>脂肪</small></span>
-        <span><strong>{{ detail.nutrition?.carbs || 0 }}g</strong><small>碳水</small></span>
-        <span v-if="detail.nutrition?.fiber != null"><strong>{{ detail.nutrition.fiber }}g</strong><small>膳食纤维</small></span>
-        <span v-if="detail.nutrition?.sodium != null"><strong>{{ detail.nutrition.sodium }}mg</strong><small>钠</small></span>
-        <span v-if="detail.nutrition?.sugar != null"><strong>{{ detail.nutrition.sugar }}g</strong><small>糖</small></span>
-        <span v-if="detail.nutrition?.calcium != null"><strong>{{ detail.nutrition.calcium }}mg</strong><small>钙</small></span>
-        <span v-if="detail.nutrition?.iron != null"><strong>{{ detail.nutrition.iron }}mg</strong><small>铁</small></span>
-      </div>
-      <p v-else class="muted nutrition-unverified">营养待核验，当前不会把数据库占位零值作为真实营养结论。</p>
-
-      <div class="tag-row">
-        <span v-for="tag in detail.tags" :key="tag" class="pill">{{ tag }}</span>
-      </div>
-      <div class="detail-actions">
-        <button class="secondary" type="button" @click="toggleFavorite(detail.id)">{{ isFavorite(detail.id) ? '★ 已收藏' : '☆ 收藏菜品' }}</button>
-        <button class="secondary" type="button" @click="markEaten(detail.id)">✓ 标记吃过</button>
-      </div>
-      <p v-if="preferenceMessage" class="form-message">{{ preferenceMessage }}</p>
-
-      <RouterLink v-if="supplyState(detail).canOrder" class="primary button-link order-dish-btn" :to="{ path: '/orders', query: { dish: detail.id } }">
-        🛒 去点这道菜
-      </RouterLink>
-      <p v-else class="muted">该菜当前不可下单，可收藏后等待下次供应。</p>
-
-      <form class="review-form" @submit.prevent="submitReview">
-        <h3>发布评价</h3>
-        <select v-model.number="review.rating" aria-label="评分">
-          <option :value="5">5 分</option>
-          <option :value="4">4 分</option>
-          <option :value="3">3 分</option>
-          <option :value="2">2 分</option>
-          <option :value="1">1 分</option>
-        </select>
-        <textarea v-model="review.content" placeholder="写下真实体验" />
-        <button class="primary" type="submit">提交评价</button>
-        <p v-if="message" class="form-message">{{ message }}</p>
-      </form>
-
-      <button class="pill sort-btn" type="button" @click="jumpToReviews" style="margin-top:0.5rem;">查看评价列表 ↓</button>
-
-      <div ref="reviewSection" class="reviews">
-        <h3>评价列表</h3>
-        <article v-for="item in detail.reviews" :key="item.id" class="review-row">
-          <div v-if="item.imageUrl" class="review-photo">
-            <img :src="item.imageUrl" :alt="item.user + '的评价图片'" />
-          </div>
-          <div>
-            <strong>{{ item.user }} · {{ item.rating }} 分</strong>
-            <p>{{ item.content }}</p>
-            <small>{{ item.createdAt }}</small>
-          </div>
-        </article>
-        <p v-if="!detail.reviews?.length" class="muted">暂无评价，快来抢先点评吧。</p>
-      </div>
-    </aside>
   </section>
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch, watchEffect } from 'vue';
-import { RouterLink, useRoute } from 'vue-router';
+import { computed, onMounted, ref, watch } from 'vue';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
+import { ChevronRight } from '@lucide/vue';
 import RagTrustState from '../components/RagTrustState.vue';
 import SmartMealComposer from '../components/SmartMealComposer.vue';
 import { dishNutritionPresentation, dishPriceText, dishRatingText, dishSupplyPresentation } from '../domain/dishPresentation.js';
 import { buildProfilePrompts, compactCitationSnippet, createRatingMap, sortDishesByRating, visibleCitations } from '../domain/studentDiscovery.js';
-import { validateReviewForm } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
 const route = useRoute();
+const router = useRouter();
 
 const stallFilter = ref(route.query.stall || '');
-const selectedId = ref(route.query.dish || '');
 const sortDir = ref('desc');
-const review = reactive({ rating: 5, content: '' });
-const message = ref('');
-const reviewSection = ref(null);
-const preferenceMessage = ref('');
 const catalogLoadingMore = ref(false);
 
 const stallFilterName = computed(() => store.stalls.find((s) => s.id === stallFilter.value)?.name || '');
@@ -188,24 +101,6 @@ function supplyState(dish) {
   return dishSupplyPresentation(dish, menuDish || null);
 }
 
-function isFavorite(dishId) {
-  return store.dishPreferences.some((pref) => pref.dishId === dishId && pref.favorite);
-}
-
-async function toggleFavorite(dishId) {
-  preferenceMessage.value = '';
-  try {
-    await store.toggleFavorite(dishId);
-    preferenceMessage.value = isFavorite(dishId) ? '已加入收藏。' : '已取消收藏。';
-  } catch (error) { preferenceMessage.value = error.message; }
-}
-
-async function markEaten(dishId) {
-  preferenceMessage.value = '';
-  try { await store.markDishEaten(dishId); preferenceMessage.value = '已记录为吃过。'; }
-  catch (error) { preferenceMessage.value = error.message; }
-}
-
 const filteredDishes = computed(() => {
   const source = searchResultActive.value ? store.dishSearchResult.items : store.dishes;
   let list = source.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive');
@@ -215,45 +110,15 @@ const filteredDishes = computed(() => {
 
 const sortedDishes = computed(() => sortDishesByRating(filteredDishes.value, ratingById.value, sortDir.value));
 
-const detail = computed(() => {
-  store.state;
-  const localDetail = store.getDishDetail(selectedId.value);
-  const searchDish = store.dishSearchResult.items.find((dish) => dish.id === selectedId.value);
-  if (!searchDish) return localDetail;
-  return {
-    ...localDetail,
-    ...searchDish,
-    stall: localDetail?.stall,
-    canteen: localDetail?.canteen,
-    reviews: localDetail?.reviews || []
-  };
-});
-
 const searchResultActive = computed(() => Boolean(store.dishSearchResult.query));
-
-// Set default selected on first load
-if (!selectedId.value && sortedDishes.value.length) {
-  selectedId.value = sortedDishes.value[0]?.id;
-}
-
-watchEffect(() => {
-  if (!filteredDishes.value.some((dish) => dish.id === selectedId.value)) {
-    selectedId.value = filteredDishes.value[0]?.id;
-  }
-});
 
 watch(() => route.query.stall, (val) => {
   stallFilter.value = val || '';
 });
 
 watch(() => route.query.dish, (val) => {
-  if (val) selectedId.value = val;
+  if (val) router.replace({ name: 'dish-detail', params: { id: String(val) } });
 });
-
-async function selectDish(id) {
-  selectedId.value = id;
-  try { await store.fetchDishDetail(id); } catch {}
-}
 
 async function loadMoreCatalog() {
   if (catalogLoadingMore.value || !store.catalogPage.hasMore) return;
@@ -263,24 +128,6 @@ async function loadMoreCatalog() {
 
 function clearStallFilter() {
   stallFilter.value = '';
-}
-
-function jumpToReviews() {
-  nextTick(() => {
-    reviewSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-}
-
-async function submitReview() {
-  message.value = validateReviewForm({ targetId: selectedId.value, rating: review.rating, content: review.content });
-  if (message.value) return;
-  try {
-    await store.addReview({ targetId: selectedId.value, rating: review.rating, content: review.content });
-    review.content = '';
-    message.value = '评价已提交审核，通过后会同步到评价总览和排行榜。';
-  } catch (error) {
-    message.value = error.message;
-  }
 }
 
 /* ── RAG search ── */
@@ -330,7 +177,6 @@ async function submitRagQuery() {
       limit: 50,
       offset: 0
     });
-    selectedId.value = ragResult.value.items[0]?.id || '';
   } catch (err) {
     store.clearDishSearch();
     ragError.value = err.message || 'AI 检索失败，请重试。';
@@ -390,10 +236,7 @@ async function clearMemory() {
 
 function jumpToDish(dishId) {
   if (!dishId) return;
-  stallFilter.value = '';
-  nextTick(() => {
-    selectedId.value = dishId;
-  });
+  router.push({ name: 'dish-detail', params: { id: dishId } });
 }
 
 /* ── Location helpers ── */
@@ -409,19 +252,9 @@ function dishLocation(dish) {
   return `${canteen.name} → ${stall.name}`;
 }
 
-function detailLocationFull(detail) {
-  if (!detail?.stall) return '未知位置';
-  const stall = detail.stall;
-  const canteen = detail.canteen;
-  if (!canteen) return stall.name;
-  const parent = store.canteens.find((c) => c.id === canteen.parentId);
-  if (parent) return `${parent.name} · ${canteen.name} · ${stall.name}`;
-  return `${canteen.name} · ${stall.name}`;
-}
-
 onMounted(async () => {
   await loadMemory();
-  if (selectedId.value) await selectDish(selectedId.value);
+  if (route.query.dish) await router.replace({ name: 'dish-detail', params: { id: String(route.query.dish) } });
 });
 </script>
 
@@ -509,8 +342,11 @@ onMounted(async () => {
 .sort-btn { cursor: pointer; border: 1px solid rgba(255,255,255,.62); background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(255,255,255,.56)); transition: border-color .18s, box-shadow .18s; }
 .sort-btn.active { border-color: rgba(31,122,77,.32); box-shadow: 0 0 0 2px rgba(31,122,77,.12); }
 .dish-thumb { width: 56px; height: 56px; border-radius: 16px; object-fit: cover; flex-shrink: 0; border: 1px solid rgba(255,255,255,.62); }
+.dish-layout { display: block; }
+.dish-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .dish-card-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.dish-card { transition: transform .2s ease, border-color .2s ease, background .2s ease; }.dish-card:hover { transform: translateX(3px); }.dish-card.selected { border-color: rgba(31,122,77,.3); background: #f1f8ee; }
+.dish-card { color: inherit; text-decoration: none; transition: transform .2s ease, border-color .2s ease, background .2s ease; }.dish-card:hover { transform: translateX(3px); }
+.dish-open-icon { flex: 0 0 auto; color: var(--muted); }
 .dish-location { color: var(--accent, #1f7a4d); font-size: 12px; font-weight: 500; }
 .empty-dishes { padding: 28px; text-align: center; }
 
@@ -529,8 +365,7 @@ onMounted(async () => {
   .rag-form { flex-direction: column; }
   .dish-assistant-workspace { grid-template-columns: 1fr; }
   .citation-list { grid-template-columns: 1fr; }
-  .dish-layout { flex-direction: column; }
-  .detail-panel { width: 100%; }
+  .dish-list { grid-template-columns: 1fr; }
 .result-toolbar { align-items: stretch; flex-direction: column; }.sort-bar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }.compact-citations { grid-template-columns: 1fr; }
 .filter-controls { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
 .supply-badge { width: max-content; border-radius: 999px; padding: 3px 8px; font-weight: 720; }
@@ -544,4 +379,3 @@ onMounted(async () => {
   .assistant-prompt, .citation-chip, .pick-chip, .chip, .sort-btn, .dish-card { transition: none; }
 }
 </style>
-import CatalogIntroduction from '../components/CatalogIntroduction.vue';

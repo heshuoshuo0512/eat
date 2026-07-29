@@ -285,8 +285,13 @@ function parseJsonObject(text) {
   try { return JSON.parse(raw); } catch {}
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) throw new Error('AI 未返回有效 JSON');
-  return JSON.parse(raw.slice(start, end + 1));
+  if (start !== -1 && end > start) {
+    try { return JSON.parse(raw.slice(start, end + 1)); } catch {}
+  }
+  throw Object.assign(new Error('AI 未返回有效 JSON'), {
+    code: 'AI_PROVIDER_INVALID_JSON',
+    rawOutput: raw.slice(0, 12_000),
+  });
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -1209,6 +1214,14 @@ function catalogIntroductionSystemPrompt(promptVersion, { repair = false } = {})
     'factualClaims 只陈述名称、层级位置、目录数量、结构化价格形式、菜单中实际出现的名称和数据库经营状态。',
     'factualClaims 必须明确写出当前实体名称；菜品还必须在正文中实际写出价格、位置、同档口菜品这三类证据中的至少两类。',
     '有菜单的档口、餐厅或食堂必须在正文中写出输入提供的菜品数、档口数、代表菜、代表档口或下级场所之一，不能只写通用名称模板。',
+    '保持简洁：有菜单实体恰好输出2条 factualClaims，MENU_MISSING 实体恰好输出1条 factualClaims；所有实体恰好输出1条 recommendationClaims。',
+    '菜品第1条事实只写规范名称和价格，第2条事实写完整位置；如需提及同档口菜单，最多举1个菜名，不得枚举列表。',
+    '描述档口与菜品的目录关系时只能使用“目录收录”“归属档口”“位于”，不得使用“供应”“售卖”“有售”“可购买”“可下单”。',
+    '使用 semanticLabels 或 concepts 时只能放在 recommendationClaims，并必须写成“从目录标签看可能……”；不得写成确定类别，规范名与标签相同时不要重复解释。',
+    'ENTITY_NAME_REVIEW_REQUIRED 表示名称疑似人数规格或价格档：必须原样保留名称，并明确写“目录条目名称待核验”；不得使用语义标签、同档口菜名，也不得擅自称为某种套餐或菜品。',
+    'siblingDishes 只是最多12条样例，不代表档口菜品总数；菜品介绍不得声称同档口共有多少道菜，也不得自行计算样例数量。',
+    '每条声明尽量控制在20至90个汉字，只引用该句话实际使用的最少证据ID。',
+    '正文使用简洁自然的中文和全角标点，避免“某某为某某类型”这类同义反复。',
     'recommendationClaims 必须使用“目录显示”“从菜单结构看可能”“可优先了解”“待核验”之类的不确定措辞。',
     '每条声明必须引用该实体 allowedEvidenceIds 中至少一个 ID，不得编造、改写或跨实体使用 ID。',
     '不得声称真实配方、确定配料、过敏安全、确认不含、清真认证、精确营养、销量、人气、招牌、正宗、新鲜、现做、品质、营业时间、库存或今日供应。',
@@ -1216,7 +1229,7 @@ function catalogIntroductionSystemPrompt(promptVersion, { repair = false } = {})
     'MENU_MISSING 表示没有菜单：只说明位置、名称、尚未收录菜单和信息待核验，不得依据品牌名猜测。',
     '数字必须逐字来自对应 evidence，不得自行计算或四舍五入。',
     'semanticLabels 只能选择 evidence.semanticLabels、concepts.name 或 menu.semanticGroups.label 中已有的值。',
-    'boundaryCodes 至少保留 evidence.boundaryCodes 中的边界。',
+    'boundaryCodes 可省略，服务端会从 evidence 自动保留全部确定性边界；不得自行删除或改写边界含义。',
     repair ? '这是一次定向修复：只能修复给出的校验错误，不得新增事实或证据。' : '',
     `提示词版本：${String(promptVersion || 'unknown')}`,
   ].filter(Boolean).join('\n');
@@ -1245,7 +1258,7 @@ export async function generateCatalogIntroductionCandidates({ items = [], prompt
   const data = await postJson(`${config.baseUrl}/chat/completions`, {
     model: config.chatModel,
     temperature: 0,
-    max_tokens: Math.min(10_000, 1_200 + items.length * 850),
+    max_tokens: Math.min(7_000, 1_000 + items.length * 600),
     reasoning_effort: 'low',
     response_format: { type: 'json_object' },
     messages: [
@@ -1274,7 +1287,7 @@ export async function repairCatalogIntroductionCandidates({ items = [], previous
   const data = await postJson(`${config.baseUrl}/chat/completions`, {
     model: config.chatModel,
     temperature: 0,
-    max_tokens: Math.min(10_000, 1_200 + items.length * 850),
+    max_tokens: Math.min(7_000, 1_000 + items.length * 600),
     reasoning_effort: 'low',
     response_format: { type: 'json_object' },
     messages: [
