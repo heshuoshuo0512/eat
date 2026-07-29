@@ -22,6 +22,9 @@ coverage
 **/*.sqlite-*
 data/imports/real
 data/imports/real/**
+!data/imports/real/
+!data/imports/real/campus-2026-07-27/
+!data/imports/real/campus-2026-07-27/catalog.json
 uploads
 *.log
 *.bundle
