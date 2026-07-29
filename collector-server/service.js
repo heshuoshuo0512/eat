@@ -111,7 +111,7 @@ export async function listCollectorGroups(db) {
       JOIN collector_catalog_dishes dish ON dish.id = target.dish_id
       LEFT JOIN collector_submissions submission ON submission.selected_dish_id = target.dish_id
       WHERE target.group_id = ? AND target.active = 1
-      GROUP BY target.dish_id, target.goal_images, dish.name
+      GROUP BY target.dish_id, target.goal_images, target.priority, dish.name
       ORDER BY approved_count, target.priority DESC, dish.name`, [group.id]);
     const goal = targetRows.reduce((sum, item) => sum + Number(item.goal_images || 0), 0);
     const approved = targetRows.reduce((sum, item) => sum + Number(item.approved_count || 0), 0);
