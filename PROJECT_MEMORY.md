@@ -1,5 +1,7 @@
 # 智慧食堂项目记忆
 
+> 2026-07-29 当前归档基线见 `docs/任务归档交接-2026-07-29.md`。本文后续部分包含较早开发阶段记录；当服务器地址、数据数量、模型结论或部署状态冲突时，以归档基线、README、当前迁移和最新专项文档为准。
+
 ## 当前状态
 - 项目路径：`D:/Projects/智慧食堂`。
 - 用户偏好：中文、直接执行、少废话；常用“做/做吧”表示继续。
@@ -85,8 +87,7 @@
 - 前端构建：`node node_modules/vite/bin/vite.js build`
 
 ## 重要种子数据
-- Admin：username `admin`，password `admin123`
-- Student：username `演示学生`，password `student123`
+- 早期 Admin/Student 演示账号及其固定密码已经废弃，不得用于生产或写入交接文档。
 - Canteens：`north`、`central`、`south`
 - Dishes：`d-chicken-bowl`、`d-beef-noodle`、`d-egg-tomato`
 - 避免旧错 ID：`d-beef-noodles`、`d-veggie-set`
