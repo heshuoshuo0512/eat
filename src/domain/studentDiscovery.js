@@ -45,11 +45,17 @@ export function buildProfilePrompts(profile = {}, mode = 'search') {
     },
     {
       id: 'safety',
-      label: profile.avoid?.length ? '避开忌口' : '轻松少排队',
-      hint: profile.avoid?.length ? `排除${avoid}` : '结合当前供应状态',
+      label: '避开忌口',
+      hint: profile.avoid?.length ? `排除${avoid}` : '保留安全约束',
       query: profile.avoid?.length
-        ? `${prefix}推荐${meal}，严格排除${avoid}${crowd}。`
-        : `${prefix}推荐现在容易买到、等待时间较短的${meal}。`
+        ? `${prefix}推荐${meal}，严格排除${avoid}。`
+        : `${prefix}推荐${meal}，保留健康档案中的过敏与忌口约束。`
+    },
+    {
+      id: 'low-crowd',
+      label: '轻松少排队',
+      hint: '只看可预约，优先低拥挤',
+      query: `${prefix}只看当前可预约的${meal}，并优先当前拥挤度较低的档口；没有排队数据时明确说明。`
     }
   ];
 }

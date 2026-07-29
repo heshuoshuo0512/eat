@@ -693,6 +693,7 @@ components:
       type: object
       properties:
         query: { type: string, maxLength: 500, description: Natural-language dish query. Rule extraction runs before optional semantic retrieval. }
+        itemType: { type: string, enum: [meal, beverage, addon, fee, all], description: Empty browse defaults to meal; keyword search includes meal and beverage. }
         filters: { $ref: '#/components/schemas/DishSearchFilters' }
         sort: { type: string, enum: [relevance, price_asc, price_desc, rating, sales], default: relevance }
         limit: { type: integer, minimum: 1, maximum: 50, default: 20 }
@@ -809,6 +810,8 @@ components:
       properties:
         id: { type: string }
         name: { type: string }
+        catalogItemType: { type: string, enum: [meal, beverage, addon, fee, variant] }
+        parentDishId: { type: string, nullable: true, description: Canonical parent for an internal variant row. Variant rows are not returned by catalog search. }
         price: { type: number }
         pricingMode: { type: string, enum: [fixed, per_weight, per_person, variants, tiered] }
         priceDisplay: { type: string }
@@ -1115,6 +1118,7 @@ components:
         id: { type: string }
         stallId: { type: string }
         name: { type: string }
+        catalogItemType: { type: string, enum: [meal, beverage, addon, fee], default: meal }
         price: { type: number, minimum: 0 }
         pricingMode: { type: string, enum: [fixed, per_weight, per_person, variants, tiered], default: fixed }
         priceDisplay: { type: string, description: Human-readable normalized price, for example 1.68元/50克. }
@@ -1482,6 +1486,7 @@ paths:
         - { name: stallId, in: query, schema: { type: string } }
         - { name: dishId, in: query, schema: { type: string } }
         - { name: q, in: query, description: Keyword matched against review text and author/dish/stall/canteen names, schema: { type: string, maxLength: 80 } }
+        - { name: includeMine, in: query, description: Include the current user's pending and rejected reviews, schema: { type: boolean, default: false } }
         - { name: sort, in: query, schema: { type: string, enum: [rating_desc, rating_asc, latest], default: rating_desc } }
         - { name: limit, in: query, schema: { type: integer, maximum: 100, default: 30 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
@@ -1506,6 +1511,7 @@ paths:
         - { name: targetType, in: query, schema: { type: string, enum: [dish, canteen] } }
         - { name: canteenId, in: query, schema: { type: string } }
         - { name: dishId, in: query, schema: { type: string } }
+        - { name: mine, in: query, description: Return only posts owned by the current user, schema: { type: boolean, default: false } }
         - { name: q, in: query, description: Keyword matched against post text and author/dish/stall/canteen names, schema: { type: string, maxLength: 80 } }
         - { name: limit, in: query, schema: { type: integer, maximum: 100, default: 30 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
@@ -1518,6 +1524,57 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/CampusPostInput' }
       responses: { '201': { description: Pending campus post }, '400': { description: Invalid target, content, rating or image }, '401': { description: Login required } }
+  /posts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    patch:
+      description: Edit the current user's post and reset it to pending moderation.
+      responses: { '200': { description: Updated pending post }, '403': { description: Not the post owner }, '404': { description: Post not found } }
+    delete:
+      description: Delete the current user's post and its linked review.
+      responses: { '200': { description: Post deleted }, '403': { description: Not the post owner }, '404': { description: Post not found } }
+  /reviews/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    patch:
+      description: Edit the current user's direct review and reset it to pending moderation.
+      responses: { '200': { description: Updated pending review }, '403': { description: Not the review owner }, '409': { description: Review must be edited through its linked post } }
+    delete:
+      description: Delete the current user's review.
+      responses: { '200': { description: Review deleted }, '403': { description: Not the review owner } }
+  /posts/{id}/reaction:
+    put:
+      description: Set, replace or clear the current user's like/dislike reaction on an approved post.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: Updated reaction counts }, '409': { description: Post is not public } }
+  /reviews/{id}/reaction:
+    put:
+      description: Set, replace or clear the current user's like/dislike reaction on an approved review.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: Updated reaction counts }, '409': { description: Review is not public } }
+  /posts/{id}/comments:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      description: List comments on an approved post.
+      responses: { '200': { description: Post comments }, '409': { description: Post is not public } }
+    post:
+      description: Add a comment to an approved post.
+      responses: { '201': { description: Comment created }, '400': { description: Invalid comment }, '409': { description: Post is not public } }
+  /posts/{id}/report:
+    post:
+      description: Idempotently report an approved post.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: Report accepted }, '400': { description: Cannot report own content } }
+  /reviews/{id}/report:
+    post:
+      description: Idempotently report an approved review.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: Report accepted }, '400': { description: Cannot report own content } }
   /health/profile:
     put:
       description: Requires profile:write.

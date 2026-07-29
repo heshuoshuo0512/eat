@@ -14,6 +14,7 @@
     :loading="ragLoading"
     :memory-open="memoryOpen"
     :memory-saving="memorySaving"
+    variant="search"
     action-text="找一找"
     loading-text="检索中…"
     @submit="submitRagQuery"
@@ -43,8 +44,20 @@
     <button class="text-link" type="button" @click="clearStallFilter">查看全部</button>
   </p>
 
+  <div v-if="!searchResultActive" class="catalog-type-bar" role="group" aria-label="目录商品分类">
+    <button
+      v-for="option in catalogItemTypes"
+      :key="option.value"
+      class="pill"
+      :class="{ active: catalogItemType === option.value }"
+      type="button"
+      :disabled="catalogLoadingMore"
+      @click="selectCatalogItemType(option.value)"
+    >{{ option.label }}</button>
+  </div>
+
   <div class="result-toolbar">
-    <div><p class="eyebrow">{{ searchResultActive ? 'Semantic Results' : 'All Active Dishes' }}</p><h2>{{ sortedDishes.length }} 道有效菜品</h2></div>
+    <div><p class="eyebrow">{{ searchResultActive ? 'Semantic Results' : 'All Active Dishes' }}</p><h2>{{ resultCountLabel }}</h2></div>
     <div class="sort-bar" role="group" aria-label="菜品评分排序">
       <button class="pill sort-btn" :class="{ active: sortDir === 'desc' }" type="button" @click="sortDir = 'desc'">评分高→低</button>
       <button class="pill sort-btn" :class="{ active: sortDir === 'asc' }" type="button" @click="sortDir = 'asc'">评分低→高</button>
@@ -58,6 +71,7 @@
         <span v-else class="emoji large">{{ dish.image }}</span>
         <span class="dish-card-info">
           <strong>{{ dish.name }}</strong>
+          <small class="catalog-item-type">{{ catalogItemTypeLabel(dish) }}</small>
           <small class="muted">{{ dish.cuisine }} · {{ dish.taste || '口味待核验' }} · {{ dishPriceText(dish) }}</small>
           <small class="muted">{{ dishNutritionPresentation(dish).label }}</small>
           <small v-if="dishLocation(dish)" class="dish-location">{{ dishLocation(dish) }}</small>
@@ -68,6 +82,7 @@
         <ChevronRight :size="18" class="dish-open-icon" aria-hidden="true" />
       </RouterLink>
       <p v-if="!sortedDishes.length" class="muted empty-dishes">暂无有效菜品。</p>
+      <button v-if="searchResultActive && ragResult?.page?.hasMore" class="secondary load-more" type="button" :disabled="ragLoading" @click="loadMoreSearch">{{ ragLoading ? '加载中…' : `继续加载（已显示 ${sortedDishes.length} / ${ragResult.page.total}）` }}</button>
       <button v-if="!searchResultActive && store.catalogPage.hasMore" class="secondary load-more" type="button" :disabled="catalogLoadingMore" @click="loadMoreCatalog">{{ catalogLoadingMore ? '加载中…' : `加载更多（已加载 ${store.dishes.length} / ${store.catalogPage.total}）` }}</button>
     </div>
 
@@ -91,6 +106,13 @@ const router = useRouter();
 const stallFilter = ref(route.query.stall || '');
 const sortDir = ref('desc');
 const catalogLoadingMore = ref(false);
+const catalogItemType = ref('meal');
+const catalogItemTypes = [
+  { value: 'meal', label: '餐食' },
+  { value: 'beverage', label: '饮品' },
+  { value: 'addon', label: '加购' },
+  { value: 'all', label: '全部目录' },
+];
 
 const stallFilterName = computed(() => store.stalls.find((s) => s.id === stallFilter.value)?.name || '');
 const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) => [dish.id, dish])));
@@ -111,6 +133,11 @@ const filteredDishes = computed(() => {
 const sortedDishes = computed(() => sortDishesByRating(filteredDishes.value, ratingById.value, sortDir.value));
 
 const searchResultActive = computed(() => Boolean(store.dishSearchResult.query));
+const resultCountLabel = computed(() => {
+  if (!searchResultActive.value) return `已显示 ${sortedDishes.value.length} / ${store.catalogPage.total} 项${catalogItemTypes.find((item) => item.value === catalogItemType.value)?.label || '目录'}`;
+  const total = Number(ragResult.value?.page?.total ?? ragResult.value?.availability?.totalCount ?? sortedDishes.value.length);
+  return `已显示 ${sortedDishes.value.length} / ${total} 道匹配菜品`;
+});
 
 watch(() => route.query.stall, (val) => {
   stallFilter.value = val || '';
@@ -123,7 +150,19 @@ watch(() => route.query.dish, (val) => {
 async function loadMoreCatalog() {
   if (catalogLoadingMore.value || !store.catalogPage.hasMore) return;
   catalogLoadingMore.value = true;
-  try { await store.loadMoreCatalog({ sort: 'rating_desc' }); } finally { catalogLoadingMore.value = false; }
+  try { await store.loadMoreCatalog({ sort: 'rating_desc', itemType: catalogItemType.value }); } finally { catalogLoadingMore.value = false; }
+}
+
+async function selectCatalogItemType(itemType) {
+  if (catalogLoadingMore.value || catalogItemType.value === itemType) return;
+  catalogLoadingMore.value = true;
+  catalogItemType.value = itemType;
+  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, sort: 'rating_desc', itemType }); }
+  finally { catalogLoadingMore.value = false; }
+}
+
+function catalogItemTypeLabel(dish) {
+  return ({ meal: '餐食', beverage: '饮品', addon: '加购项', fee: '费用项' })[dish.catalogItemType] || dish.catalogCategory || '目录商品';
 }
 
 function clearStallFilter() {
@@ -148,7 +187,8 @@ const ragAnswer = computed(() => {
   const orderable = Number(ragResult.value.availability?.orderableCount ?? ragResult.value.items?.filter((dish) => dish.availability?.orderable).length ?? 0);
   if (!total) return '没有找到满足全部条件的真实菜品，请参考下方建议放宽条件。';
   const interpreted = ragResult.value.interpreted?.summary || ragResult.value.interpreted?.query || ragQuery.value;
-  return `按“${interpreted}”找到 ${total} 道菜，其中 ${orderable} 道当前可预约。结果可按综合评分切换排序。`;
+  const shown = Number(ragResult.value.items?.length || 0);
+  return `按“${interpreted}”共匹配 ${total} 道菜，当前显示 ${shown} 道，其中本页 ${orderable} 道可预约。20 元以内属于宽范围，可继续加载或增加口味、位置、餐次条件。`;
 });
 
 function askPrompt(query) {
@@ -163,24 +203,33 @@ async function submitRagQuery() {
   ragResult.value = null;
   citationsExpanded.value = false;
   try {
-    ragResult.value = await store.searchDishes({
-      query: q,
-      filters: {
-        budgetMax: store.profile.budgetMax,
-        taste: store.profile.taste !== '不限' ? store.profile.taste : undefined,
-        halalOnly: store.profile.halalOnly,
-        mealType: store.profile.mealType,
-        stallId: stallFilter.value || undefined,
-        avoidIngredients: store.profile.avoid || []
-      },
-      sort: 'relevance',
-      limit: 50,
-      offset: 0
-    });
+    ragResult.value = await store.searchDishes(buildSearchPayload(q, 0));
   } catch (err) {
     store.clearDishSearch();
     ragError.value = err.message || 'AI 检索失败，请重试。';
   }
+}
+
+function buildSearchPayload(query, offset) {
+  return {
+      query,
+      filters: {
+        halalOnly: store.profile.halalOnly,
+        stallId: stallFilter.value || undefined,
+        avoidIngredients: [...(store.profile.allergies || []), ...(store.profile.avoid || [])]
+      },
+      sort: 'relevance',
+      limit: 50,
+      offset
+  };
+}
+
+async function loadMoreSearch() {
+  if (!ragResult.value?.page?.hasMore || ragLoading.value) return;
+  ragResult.value = await store.searchDishes(
+    buildSearchPayload(ragQuery.value.trim(), ragResult.value.items?.length || 0),
+    { append: true }
+  );
 }
 
 function dishMatchSnippet(dish) {
@@ -336,6 +385,8 @@ onMounted(async () => {
 .compact-citations strong, .compact-citations small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.compact-citations small { color: var(--muted); font-size: 11px; }
 .relaxation-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
 .result-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 28px 0 14px; }.result-toolbar h2 { margin: 0; font-size: 20px; }
+.catalog-type-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0; }
+.catalog-type-bar .pill.active { color: #fff; background: #176b45; border-color: #176b45; }
 
 .stall-banner { display: flex; align-items: center; gap: 10px; padding: 12px 18px; margin-bottom: 14px; border-radius: 18px; background: linear-gradient(135deg, rgba(31,122,77,.1), rgba(255,255,255,.68)); border: 1px solid rgba(31,122,77,.14); font-size: 14px; }
 .sort-bar { display: flex; gap: 8px; margin: 0; }
@@ -345,6 +396,7 @@ onMounted(async () => {
 .dish-layout { display: block; }
 .dish-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .dish-card-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.catalog-item-type { width: fit-content; padding: 2px 7px; color: #176b45; background: #edf8f1; border: 1px solid #cce5d6; font-weight: 700; }
 .dish-card { color: inherit; text-decoration: none; transition: transform .2s ease, border-color .2s ease, background .2s ease; }.dish-card:hover { transform: translateX(3px); }
 .dish-open-icon { flex: 0 0 auto; color: var(--muted); }
 .dish-location { color: var(--accent, #1f7a4d); font-size: 12px; font-weight: 500; }

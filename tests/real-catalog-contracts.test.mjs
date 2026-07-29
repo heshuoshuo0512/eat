@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { openDatabase } from '../server/database.js';
+import { cleanDishCatalogName, inferDishCatalogCategory, isServingTierCatalogName, openDatabase } from '../server/database.js';
 import { budgetPriceForDish, normalizeDishPricing } from '../server/dishPricing.js';
 import { importRealCatalog, rollbackRealCatalogBatch } from '../server/realCatalogImport.js';
 import * as webPresentation from '../src/domain/dishPresentation.js';
@@ -72,6 +72,15 @@ function catalogBundle() {
 }
 
 describe('real catalog price semantics', () => {
+  it('cleans numbered menu rows, rejects serving-tier labels and infers student-facing categories', () => {
+    assert.equal(cleanDishCatalogName('3. 红烧大排面'), '红烧大排面');
+    assert.equal(cleanDishCatalogName('12、香辣大排面'), '香辣大排面');
+    assert.equal(isServingTierCatalogName('3-4人份'), true);
+    assert.equal(isServingTierCatalogName('3. 红烧大排面'), false);
+    assert.equal(inferDishCatalogCategory({ name: '牛肉拉面' }), '面食粉类');
+    assert.equal(inferDishCatalogCategory({ name: '鲜榨果汁' }), '饮品');
+  });
+
   it('normalizes all supported pricing modes without treating weight unit price as a serving total', () => {
     const fixed = normalizeDishPricing({ pricingMode: 'fixed', pricing: { baseAmount: 12 } }, 12);
     const weight = normalizeDishPricing({ pricingMode: 'per_weight', pricing: { baseAmount: 1.68, baseQuantity: 50, unit: '克' } }, 1.68);

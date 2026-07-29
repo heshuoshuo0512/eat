@@ -153,7 +153,7 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
       token: studentToken,
       body: { items: [{ dishId: fixtureIds.safe, quantity: 1 }], note: 'retrieval agent routing fixture' }
     });
-    assert.equal(order.status, 201, 'failed to create order routing fixture');
+    assert.equal(order.status, 201, `failed to create order routing fixture: ${JSON.stringify(order.data)}`);
   });
 
   after(async () => {
@@ -186,6 +186,19 @@ describe('dual retrieval APIs and intent-specific agent tools', () => {
     assert.equal(paused.availability.orderable, false);
     assert.equal(paused.availability.status, 'reservation_paused');
     assert.equal(paused.availability.price, 15, 'stable catalog price is authoritative');
+  });
+
+  it('treats a compact budget phrase as a filter instead of a dish name', async () => {
+    const { status, data } = await req('/api/dishes/search', {
+      method: 'POST',
+      token: studentToken,
+      body: { query: '20元以内', filters: {}, limit: 20, offset: 0 }
+    });
+
+    assertStatus(status, 200, data);
+    assert.equal(data.interpreted.filters.budgetMax, 20);
+    assert.ok(data.items.length > 0);
+    assert.ok(data.items.every((item) => item.pricing.budgetComparable === false || item.price <= 20));
   });
 
   it('POST /api/recommend enforces hard constraints and builds mealPlan from the same ranking', async () => {

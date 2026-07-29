@@ -17,6 +17,7 @@
     :loading="loading"
     :memory-open="memoryOpen"
     :memory-saving="memorySaving"
+    variant="recommend"
     action-text="生成推荐"
     loading-text="分析中…"
     @submit="runPrompt(question)"
@@ -62,7 +63,7 @@
             <span v-else class="emoji large">{{ dish.image || '🍽️' }}</span>
           </RouterLink>
           <div><strong>{{ dish.name }}</strong><small>{{ dishRatingText(dish) }} · {{ dishPriceText(dish) }} · {{ dishNutritionPresentation(dish).label }} · {{ dishSupplyPresentation(dish).label }}</small><RagTrustState :item="dish" compact /></div>
-          <RouterLink class="primary button-link compact order-link" :to="{ path: '/dishes', query: { dish: dish.id } }">查看详情</RouterLink>
+          <div class="recommend-actions"><RouterLink class="secondary button-link compact" :to="{ name: 'dish-detail', params: { id: dish.id } }">详情</RouterLink><RouterLink v-if="dishSupplyPresentation(dish).canOrder" class="primary button-link compact order-link" :to="{ path: '/orders', query: { dish: dish.id } }">预约</RouterLink></div>
         </article>
       </div>
       <p v-if="message" class="form-message" :class="{ danger: isError }">{{ message }}</p>
@@ -356,6 +357,7 @@ onMounted(async () => {
 .recommend-dish-media { width: 58px; aspect-ratio: 1; overflow: hidden; border-radius: 6px; background: #edf6e9; display: grid; place-items: center; }
 .recommend-dish-media img { width: 100%; height: 100%; object-fit: cover; }
 .recommend-dish > div { display: grid; gap: 3px; min-width: 0; }
+.recommend-dish > .recommend-actions { display: flex; gap: 7px; }
 .button-link.compact { min-height: 36px; padding: 7px 12px; }
 .recommend-input { display: grid; grid-template-columns: minmax(0, 1fr) 46px; gap: 9px; margin-top: auto; }
 .recommend-input textarea { min-height: 76px; resize: none; }
@@ -397,7 +399,8 @@ onMounted(async () => {
 @media (max-width: 480px) {
   .quick-prompts { grid-template-columns: 1fr; }
   .recommend-dish { grid-template-columns: 52px minmax(0, 1fr); }
-  .recommend-dish .button-link { grid-column: 1 / 3; width: 100%; justify-content: center; }
+  .recommend-dish > .recommend-actions { grid-column: 1 / 3; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .recommend-dish .recommend-actions .button-link { width: 100%; justify-content: center; }
   .recommend-sort { align-items: stretch; flex-direction: column; }
   .recommend-sort > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trust-status-bar { grid-template-columns: 1fr; }

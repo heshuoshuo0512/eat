@@ -155,4 +155,58 @@ describe('student review overview and campus post moderation', () => {
     const anonymousReviews = await req('/api/reviews');
     assert.equal(anonymousReviews.status, 401);
   });
+
+  it('supports reactions, comments, reports and owner management without bypassing moderation', async () => {
+    const created = await req('/api/posts', { method: 'POST', token: studentToken, body: { targetType: 'dish', targetId: dishId, content: '社区互动完整流程测试', rating: 4 } });
+    const postId = created.data.post.id;
+    const approved = await req(`/api/admin/posts/${postId}/status`, { method: 'PATCH', token: adminToken, body: { status: 'approved' } });
+    assert.equal(approved.status, 200);
+
+    const like = await req(`/api/posts/${postId}/reaction`, { method: 'PUT', token: studentToken, body: { reaction: 'like' } });
+    assert.equal(like.data.engagement.likes, 1);
+    const switchReaction = await req(`/api/posts/${postId}/reaction`, { method: 'PUT', token: studentToken, body: { reaction: 'dislike' } });
+    assert.deepEqual(switchReaction.data.engagement, { likes: 0, dislikes: 1, comments: 0 });
+    const clearReaction = await req(`/api/posts/${postId}/reaction`, { method: 'PUT', token: studentToken, body: { reaction: null } });
+    assert.equal(clearReaction.data.viewerReaction, null);
+
+    const comment = await req(`/api/posts/${postId}/comments`, { method: 'POST', token: otherToken, body: { content: '这条评论可以正常发布' } });
+    assert.equal(comment.status, 201);
+    const comments = await req(`/api/posts/${postId}/comments`, { token: studentToken });
+    assert.ok(comments.data.comments.some((item) => item.id === comment.data.comment.id));
+
+    const report = await req(`/api/posts/${postId}/report`, { method: 'POST', token: otherToken, body: { reason: 'inappropriate' } });
+    const repeatedReport = await req(`/api/posts/${postId}/report`, { method: 'POST', token: otherToken, body: { reason: 'inappropriate' } });
+    assert.equal(report.status, 200);
+    assert.equal(repeatedReport.status, 200);
+
+    const forbiddenEdit = await req(`/api/posts/${postId}`, { method: 'PATCH', token: otherToken, body: { content: '不能修改别人的帖子' } });
+    assert.equal(forbiddenEdit.status, 403);
+    const edit = await req(`/api/posts/${postId}`, { method: 'PATCH', token: studentToken, body: { content: '帖子修改后重新进入审核', rating: 5 } });
+    assert.equal(edit.status, 200);
+    assert.equal(edit.data.post.status, 'pending');
+    const commentsWhilePending = await req(`/api/posts/${postId}/comments`, { token: otherToken });
+    assert.equal(commentsWhilePending.status, 409);
+
+    const deletion = await req(`/api/posts/${postId}`, { method: 'DELETE', token: studentToken });
+    assert.equal(deletion.status, 200);
+    const afterDelete = await req('/api/posts', { token: studentToken });
+    assert.ok(!afterDelete.data.posts.some((item) => item.id === postId));
+  });
+
+  it('allows owners to edit and delete direct reviews while other users are blocked', async () => {
+    const content = '独立评价作者管理测试';
+    const created = await req('/api/reviews', { method: 'POST', token: studentToken, body: { targetType: 'dish', targetId: dishId, rating: 4, content } });
+    assert.equal(created.status, 201);
+    await approveReviewByContent(content);
+    const mine = await req('/api/reviews?includeMine=true', { token: studentToken });
+    const review = mine.data.reviews.find((item) => item.content === content);
+    assert.ok(review?.canEdit && review?.canDelete);
+    const forbidden = await req(`/api/reviews/${review.id}`, { method: 'PATCH', token: otherToken, body: { content: '越权修改', rating: 1 } });
+    assert.equal(forbidden.status, 403);
+    const edited = await req(`/api/reviews/${review.id}`, { method: 'PATCH', token: studentToken, body: { content: '评价修改后待审核', rating: 3 } });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.data.review.status, 'pending');
+    const deleted = await req(`/api/reviews/${review.id}`, { method: 'DELETE', token: studentToken });
+    assert.equal(deleted.status, 200);
+  });
 });

@@ -226,16 +226,19 @@ export const useCanteenStore = defineStore('canteen', () => {
     }
   }
 
-  async function searchDishes(payload) {
+  async function searchDishes(payload, { append = false } = {}) {
     dishSearchLoading.value = true;
-    dishSearchResult.value = { ...emptyDishSearchResult(), query: String(payload?.query || '').trim() };
+    const previous = append ? dishSearchResult.value : emptyDishSearchResult();
+    if (!append) dishSearchResult.value = { ...previous, query: String(payload?.query || '').trim() };
     try {
       const result = await apiClient.dishesSearch(payload);
+      const entities = new Map((append ? previous.items : []).map((item) => [String(item.id), item]));
+      for (const item of result.items || []) entities.set(String(item.id), item);
       dishSearchResult.value = {
         ...emptyDishSearchResult(),
         ...result,
         query: String(payload?.query || '').trim(),
-        items: Array.isArray(result.items) ? result.items : [],
+        items: [...entities.values()],
         suggestedRelaxations: Array.isArray(result.suggestedRelaxations) ? result.suggestedRelaxations : [],
         error: null
       };
@@ -824,6 +827,40 @@ export const useCanteenStore = defineStore('canteen', () => {
     return result.post;
   }
 
+  async function reactToCommunityContent(type, id, reaction) {
+    const result = await apiClient.reactToContent(type, id, reaction);
+    const list = type === 'post' ? communityPosts : studentReviews;
+    list.value = list.value.map((item) => item.id === id ? { ...item, engagement: result.engagement, viewerReaction: result.viewerReaction } : item);
+    return result;
+  }
+
+  async function reportCommunityContent(type, id, payload = {}) {
+    const result = await apiClient.reportContent(type, id, payload);
+    const list = type === 'post' ? communityPosts : studentReviews;
+    list.value = list.value.map((item) => item.id === id ? { ...item, viewerReported: true } : item);
+    return result;
+  }
+
+  async function updateCommunityContent(type, id, payload) {
+    const result = await apiClient.updateCommunityContent(type, id, payload);
+    const updated = result[type];
+    const list = type === 'post' ? communityPosts : studentReviews;
+    list.value = list.value.map((item) => item.id === id ? { ...item, ...updated } : item);
+    return updated;
+  }
+
+  async function deleteCommunityContent(type, id) {
+    const result = await apiClient.deleteCommunityContent(type, id);
+    if (type === 'post') {
+      communityPosts.value = communityPosts.value.filter((item) => item.id !== id);
+      communityPostTotal.value = Math.max(0, communityPostTotal.value - 1);
+    } else {
+      studentReviews.value = studentReviews.value.filter((item) => item.id !== id);
+      studentReviewTotal.value = Math.max(0, studentReviewTotal.value - 1);
+    }
+    return result;
+  }
+
   async function loadPostsAdmin(limit = 50, offset = 0, status = '', filters = {}) {
     const result = await apiClient.listAdminPosts(limit, offset, status, filters);
     adminPosts.value = result.posts || [];
@@ -1069,7 +1106,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadReviewAnalytics,
     loadStudentReviews,
     loadCommunityPosts,
-    createCommunityPost,
+    createCommunityPost, reactToCommunityContent, reportCommunityContent, updateCommunityContent, deleteCommunityContent,
+    listPostComments: apiClient.listPostComments, createPostComment: apiClient.createPostComment,
     loadPostsAdmin,
     updatePostStatusAdmin
   };

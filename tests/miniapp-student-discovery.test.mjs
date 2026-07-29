@@ -29,10 +29,10 @@ const dishes = [
 describe('miniapp student discovery domain', () => {
   it('builds profile-aware quick prompts', () => {
     const prompts = buildProfilePrompts({ goal:'fatLoss', mealType:'lunch', budgetMax:35, taste:'麻辣', avoid:['花生'], preferLowCrowd:true }, 'search');
-    assert.equal(prompts.length, 4);
+    assert.equal(prompts.length, 5);
     assert.ok(prompts.some((item) => item.query.includes('35')));
     assert.ok(prompts.some((item) => item.query.includes('花生')));
-    assert.ok(prompts.some((item) => item.query.includes('低人流')));
+    assert.ok(prompts.some((item) => item.label === '轻松少排队'));
   });
 
   it('sorts by computed rating in both directions', () => {

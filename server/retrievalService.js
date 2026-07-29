@@ -59,7 +59,8 @@ const filtersSchema = z.object({
   maxSugar: optionalNumber(0, 1000),
   minSpiceLevel: optionalNumber(0, 5),
   maxSpiceLevel: optionalNumber(0, 5),
-  orderableOnly: z.coerce.boolean().optional()
+  orderableOnly: z.coerce.boolean().optional(),
+  preferLowCrowd: z.coerce.boolean().optional()
 }).default({});
 
 const searchRequestSchema = z.object({
@@ -118,7 +119,16 @@ function includesTerm(value, term) {
 }
 
 function isActiveDish(candidate) {
-  return candidate?.status === 'active';
+  const name = String(candidate?.name || '').replace(/^\s*\d+\s*[.、]\s*/u, '').trim();
+  const itemType = String(candidate?.catalogItemType || candidate?.catalog_item_type || 'meal');
+  return candidate?.status === 'active'
+    && !['addon', 'fee', 'variant'].includes(itemType)
+    && !/^(?:\d+\s*[-~至]\s*\d+|\d+|单|双|多)\s*人份$/u.test(name);
+}
+
+function isMealCandidate(candidate) {
+  return isActiveDish(candidate)
+    && String(candidate?.catalogItemType || candidate?.catalog_item_type || 'meal') === 'meal';
 }
 
 function extractListAfter(text, pattern) {
@@ -164,7 +174,8 @@ function inferQueryFilters(query) {
   else if (/午餐|午饭|中饭/.test(text)) { inferred.mealType = 'lunch'; detected.push('mealType'); }
 
   if (/清真/.test(text)) { inferred.halalOnly = true; detected.push('halalOnly'); }
-  if (/(?:当前|现在|今天).{0,4}(?:能点|可点|有供应|可供应|有货|可下单)|(?:只看|只要|仅看|仅要).{0,6}(?:有供应|可供应|有货|可下单)|不要售罄|别要售罄/.test(text)) { inferred.orderableOnly = true; detected.push('orderableOnly'); }
+  if (/(?:当前|现在|今天).{0,4}(?:能点|可点|有供应|可供应|有货|可下单)|(?:只看|只要|仅看|仅要).{0,6}(?:有供应|可供应|有货|可下单)|不要售罄|别要售罄|少排队|排队少|等待时间.{0,2}短|容易买到/.test(text)) { inferred.orderableOnly = true; detected.push('orderableOnly'); }
+  if (/少排队|排队少|低拥挤|人少|等待时间.{0,2}短/.test(text)) { inferred.preferLowCrowd = true; detected.push('preferLowCrowd'); }
   if (/纯素|全素|vegan/i.test(text)) { inferred.dietaryPattern = 'vegan'; detected.push('dietaryPattern'); }
   else if (/素食|vegetarian/i.test(text)) { inferred.dietaryPattern = 'vegetarian'; detected.push('dietaryPattern'); }
 
@@ -322,6 +333,8 @@ function mapCandidate(raw, tenantId) {
     stallOpen: raw.stallOpen == null && raw.stall_open == null ? true : Boolean(raw.stallOpen ?? raw.stall_open),
     reservationEnabled: Boolean(raw.reservationEnabled ?? raw.reservation_enabled),
     stallReservationEnabled: Boolean(raw.stallReservationEnabled ?? raw.stall_reservation_enabled),
+    catalogItemType: String(raw.catalogItemType || raw.catalog_item_type || 'meal'),
+    parentDishId: raw.parentDishId || raw.parent_dish_id || null,
     name: String(raw.name || raw.dishName || raw.dish_name || ''),
     price: Number(raw.price ?? pricing.minAmount ?? 0),
     pricingMode: pricing.mode,
@@ -636,11 +649,17 @@ async function runSemanticSearch(semanticSearch, { query, tenantId, candidateIds
   }
 }
 
-function sortSearchItems(items, sort) {
+function sortSearchItems(items, sort, filters = {}) {
   if (sort === 'price_asc') return items.sort((a, b) => a.availability.price - b.availability.price || b.retrievalScore - a.retrievalScore);
   if (sort === 'price_desc') return items.sort((a, b) => b.availability.price - a.availability.price || b.retrievalScore - a.retrievalScore);
   if (sort === 'rating') return items.sort((a, b) => b.rating - a.rating || b.reviewCount - a.reviewCount);
   if (sort === 'sales') return items.sort((a, b) => b.sales - a.sales || b.rating - a.rating);
+  if (filters.preferLowCrowd) {
+    return items.sort((a, b) => Number(b.availability.orderable) - Number(a.availability.orderable)
+      || Number(a.crowdLevel ?? 100) - Number(b.crowdLevel ?? 100)
+      || b.retrievalScore - a.retrievalScore
+      || b.rating - a.rating);
+  }
   return items.sort((a, b) => b.retrievalScore - a.retrievalScore || Number(b.availability.orderable) - Number(a.availability.orderable) || b.rating - a.rating);
 }
 
@@ -771,7 +790,7 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
       },
     };
   }).filter(Boolean);
-  sortSearchItems(ranked, request.sort);
+  sortSearchItems(ranked, request.sort, request.filters);
   const pageItems = ranked.slice(request.offset, request.offset + request.limit);
   const safetyWarnings = pageItems
     .filter((item) => item.safety?.status === 'unknown')
@@ -1293,7 +1312,7 @@ export async function runMealRecommendationWorkflow(input = {}, dependencies = {
     ? request.candidates.map((item) => mapCandidate(item, request.tenantId))
     : await loadCandidatesFromDatabase(dependencies.db, request.tenantId, exec);
   const candidates = sourceCandidates
-    .filter((candidate) => candidate.id && candidate.tenantId === request.tenantId && isActiveDish(candidate))
+    .filter((candidate) => candidate.id && candidate.tenantId === request.tenantId && isMealCandidate(candidate))
     .map((candidate) => ({ ...candidate, availability: deriveAvailability(candidate, exec) }));
   const catalogCanteens = request.candidates ? [] : await loadCatalogCanteens(dependencies.db, request.tenantId);
   const locationInterpretation = {

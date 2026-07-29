@@ -37,10 +37,6 @@
           <Heart :size="17" :fill="isFavorite ? 'currentColor' : 'none'" aria-hidden="true" />
           {{ isFavorite ? '已收藏' : '收藏' }}
         </button>
-        <button class="secondary" type="button" @click="markEaten">
-          <CheckCircle2 :size="17" aria-hidden="true" />
-          记录吃过
-        </button>
         <RouterLink v-if="supply.canOrder" class="primary button-link" :to="{ path: '/orders', query: { dish: dish.id } }">
           <ShoppingBag :size="17" aria-hidden="true" />
           到店预约
@@ -109,7 +105,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
-import { ArrowLeft, CheckCircle2, CircleAlert, Heart, MapPin, ShieldAlert, ShoppingBag, Utensils } from '@lucide/vue';
+import { ArrowLeft, CircleAlert, Heart, MapPin, ShieldAlert, ShoppingBag, Utensils } from '@lucide/vue';
 import CatalogIntroduction from '../components/CatalogIntroduction.vue';
 import RagTrustState from '../components/RagTrustState.vue';
 import { dishNutritionPresentation, dishPriceText, dishRatingText, dishSupplyPresentation } from '../domain/dishPresentation.js';

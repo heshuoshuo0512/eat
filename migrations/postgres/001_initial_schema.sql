@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS dishes (
   aliases_json TEXT NOT NULL DEFAULT '[]',
   semantic_labels_json TEXT NOT NULL DEFAULT '[]',
   source_ref_json TEXT NOT NULL DEFAULT '{}',
+  catalog_item_type TEXT NOT NULL DEFAULT 'meal' CHECK(catalog_item_type IN ('meal','beverage','addon','fee','variant')),
+  parent_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL,
   halal INTEGER NOT NULL DEFAULT 0,
   meal_types_json TEXT NOT NULL DEFAULT '["lunch","dinner"]',
   calories REAL NOT NULL DEFAULT 0,
@@ -118,7 +120,7 @@ CREATE TABLE IF NOT EXISTS dishes (
   image TEXT NOT NULL DEFAULT '🍽️',
   image_url TEXT,
   description TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden','inactive','archived')),
   regional_taste TEXT NOT NULL DEFAULT '',
   allergens_json TEXT NOT NULL DEFAULT '[]',
   safety_declarations_json TEXT NOT NULL DEFAULT '[]',
@@ -642,6 +644,42 @@ CREATE TABLE IF NOT EXISTS campus_posts (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS content_reactions (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  target_type TEXT NOT NULL CHECK(target_type IN ('post','review')),
+  target_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reaction TEXT NOT NULL CHECK(reaction IN ('like','dislike')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(tenant_id, target_type, target_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS post_comments (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  post_id TEXT NOT NULL REFERENCES campus_posts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('approved','hidden')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS content_reports (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  reporter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK(target_type IN ('post','review','comment')),
+  target_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','resolved','dismissed')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS retrieval_index_runs (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -713,6 +751,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_import_rows_source
   ON catalog_import_rows(batch_id, source_hash, source_locator, entity_type, COALESCE(entity_id, ''));
 CREATE INDEX IF NOT EXISTS idx_campus_posts_tenant_status ON campus_posts(tenant_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_campus_posts_user ON campus_posts(tenant_id, user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_content_reactions_target ON content_reactions(tenant_id, target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_post_comments_post ON post_comments(tenant_id, post_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_content_reports_target ON content_reports(tenant_id, target_type, target_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_content_reports_pending_unique ON content_reports(tenant_id, reporter_id, target_type, target_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_retrieval_index_runs_tenant_started ON retrieval_index_runs(tenant_id, started_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_documents_tenant_source_chunk ON rag_documents(tenant_id, source_type, source_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_rag_documents_tenant_type ON rag_documents(tenant_id, source_type, indexed_at DESC);

@@ -1,28 +1,31 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createSignedUploadUrl } from './security.js';
 
-let S3ClientCtor, PutObjectCommandCtor, GetObjectCommandCtor;
+let S3ClientCtor, PutObjectCommandCtor, GetObjectCommandCtor, DeleteObjectCommandCtor;
 try {
   const s3 = await import('@aws-sdk/client-s3');
   S3ClientCtor = s3.S3Client;
   PutObjectCommandCtor = s3.PutObjectCommand;
   GetObjectCommandCtor = s3.GetObjectCommand;
+  DeleteObjectCommandCtor = s3.DeleteObjectCommand;
 } catch {
   S3ClientCtor = null;
 }
 
-export function setS3ClientForTests(clientCtor, putObjectCommandCtor, getObjectCommandCtor = null) {
+export function setS3ClientForTests(clientCtor, putObjectCommandCtor, getObjectCommandCtor = null, deleteObjectCommandCtor = null) {
   S3ClientCtor = clientCtor;
   PutObjectCommandCtor = putObjectCommandCtor;
   GetObjectCommandCtor = getObjectCommandCtor;
+  DeleteObjectCommandCtor = deleteObjectCommandCtor;
 }
 
 export function resetS3ClientForTests() {
   S3ClientCtor = null;
   PutObjectCommandCtor = null;
   GetObjectCommandCtor = null;
+  DeleteObjectCommandCtor = null;
 }
 
 const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -161,4 +164,18 @@ export async function readStoredUpload(upload) {
     body: readFileSync(safeLocalPath(upload.storage_key || upload.storageKey)),
     contentType: upload.content_type || upload.contentType || 'application/octet-stream'
   };
+}
+
+export async function deleteStoredUpload(upload) {
+  const provider = upload.storage_provider || upload.storageProvider || upload.provider || 'local';
+  const storageKey = upload.storage_key || upload.storageKey;
+  if (provider === 's3') {
+    if (!S3ClientCtor || !DeleteObjectCommandCtor || !process.env.S3_BUCKET) {
+      throw Object.assign(new Error('对象存储删除未配置'), { status: 503, code: 'STORAGE_NOT_CONFIGURED' });
+    }
+    await s3Client().send(new DeleteObjectCommandCtor({ Bucket: process.env.S3_BUCKET, Key: storageKey }));
+    return;
+  }
+  const target = safeLocalPath(storageKey);
+  if (existsSync(target)) unlinkSync(target);
 }

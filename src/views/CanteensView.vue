@@ -5,6 +5,25 @@
     <p>先解决"在哪吃、有什么、开没开、拥不拥挤"。</p>
   </section>
 
+  <section v-if="level === 'primary'" class="campus-zone-map" aria-label="校园餐饮区域导航">
+    <div class="zone-map-heading">
+      <div><p class="eyebrow">校园方位</p><h2>按东西区找食堂</h2></div>
+      <button class="ghost" type="button" :class="{ active: zoneFilter === 'all' }" @click="zoneFilter = 'all'">查看全部</button>
+    </div>
+    <div class="zone-map-track">
+      <button type="button" class="zone-map-stop west" :class="{ active: zoneFilter === 'west' }" @click="zoneFilter = zoneFilter === 'west' ? 'all' : 'west'">
+        <MapPinned :size="24" aria-hidden="true" />
+        <span><strong>西区</strong><small>{{ zoneVenueCount('west') }} 个餐饮场所</small></span>
+      </button>
+      <span class="zone-map-route" aria-hidden="true"></span>
+      <button type="button" class="zone-map-stop east" :class="{ active: zoneFilter === 'east' }" @click="zoneFilter = zoneFilter === 'east' ? 'all' : 'east'">
+        <MapPinned :size="24" aria-hidden="true" />
+        <span><strong>东区</strong><small>{{ zoneVenueCount('east') }} 个餐饮场所</small></span>
+      </button>
+    </div>
+    <p class="zone-map-note">方位示意用于筛选场所；正式校园平面图与步行路线将在校方提供地图底图后接入。</p>
+  </section>
+
   <nav v-if="level !== 'primary'" class="breadcrumb">
     <button class="text-link crumb" type="button" @click="goToPrimary">校园场所</button>
     <template v-if="selectedPrimary">
@@ -44,7 +63,7 @@
       </div>
       <div class="section-title horizontal">
         <div>
-          <p class="eyebrow">{{ canteen.location }}</p>
+          <p class="eyebrow">{{ canteenLocationLabel(canteen) }}</p>
           <h2>{{ canteen.displayName || canteen.name }}</h2>
         </div>
         <span v-if="canteen.operatingStatus === 'renovating'" class="venue-availability renovating">装修中</span>
@@ -89,7 +108,7 @@
           <div v-else class="canteen-fallback-hero"><span class="emoji hero-emoji">🏫</span></div>
         </div>
         <div class="section-title horizontal">
-          <div><p class="eyebrow">{{ canteen.location }}</p><h2>{{ canteen.displayName || canteen.name }}</h2></div>
+          <div><p class="eyebrow">{{ canteenLocationLabel(canteen) }}</p><h2>{{ canteen.displayName || canteen.name }}</h2></div>
           <span class="crowd" :class="crowdClass(canteen.crowdLevel)">{{ canteen.crowdLevel }}%</span>
         </div>
         <CatalogIntroduction :entity="canteen" compact positioning />
@@ -107,7 +126,7 @@
       </div>
       <div class="section-title horizontal">
         <div>
-          <p class="eyebrow">{{ selectedSubCanteen?.location }}</p>
+          <p class="eyebrow">{{ canteenLocationLabel(selectedSubCanteen) }}</p>
           <h2>{{ selectedSubCanteen?.name }}</h2>
         </div>
         <span class="crowd" :class="crowdClass(selectedSubCanteen?.crowdLevel || 0)">{{ selectedSubCanteen?.crowdLevel || 0 }}%</span>
@@ -221,14 +240,16 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { computed, reactive, ref, watch } from 'vue';
+import { RouterLink, useRoute } from 'vue-router';
+import { MapPinned } from '@lucide/vue';
 import CatalogIntroduction from '../components/CatalogIntroduction.vue';
 import { dishNutritionPresentation, dishPriceText, dishRatingText } from '../domain/dishPresentation.js';
 import { validateReviewForm } from '../domain/validation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
+const route = useRoute();
 
 /* ── Navigation state ── */
 const level = ref('primary'); // primary | sub-canteens | stalls | stall-dishes
@@ -238,6 +259,7 @@ const selectedStallId = ref('');
 const stallCatalog = ref([]);
 const stallDishPage = ref({ page: 1, pageSize: 50, total: 0, hasMore: false });
 const stallDishesLoading = ref(false);
+const zoneFilter = ref('all');
 
 /* ── Review form (only for selected sub-canteen) ── */
 const reviewFormObj = reactive({ rating: 5, content: '' });
@@ -245,7 +267,7 @@ const reviewMessage = ref('');
 
 /* ── Derived data ── */
 
-const primaryCanteens = computed(() => {
+const allPrimaryCanteens = computed(() => {
   // If canteens have canteenType, filter by it; otherwise group by parentId
   const all = store.canteens;
   const hasType = all.some((c) => c.canteenType);
@@ -256,6 +278,30 @@ const primaryCanteens = computed(() => {
   // Flat list: all are primary
   return [...all].sort(canteenOrder);
 });
+
+const primaryCanteens = computed(() => zoneFilter.value === 'all'
+  ? allPrimaryCanteens.value
+  : allPrimaryCanteens.value.filter((canteen) => venueZone(canteen) === zoneFilter.value));
+
+function venueZone(canteen) {
+  const text = `${canteen?.id || ''} ${canteen?.location || ''} ${canteen?.name || ''}`;
+  if (/东区|^east-/u.test(text)) return 'east';
+  if (/西区|^west-|campus-main/u.test(text)) return 'west';
+  return 'other';
+}
+
+function zoneVenueCount(zone) {
+  return allPrimaryCanteens.value.filter((canteen) => venueZone(canteen) === zone).length;
+}
+
+function canteenLocationLabel(canteen) {
+  if (!canteen) return '';
+  const fixed = {
+    'west-xinyi': '西区大食堂 · 1F',
+    'west-minzu': '西区大食堂 · 1F'
+  };
+  return fixed[canteen.id] || canteen.location || '校内';
+}
 
 function canteenOrder(left, right) { return Number(left.displayOrder ?? 999) - Number(right.displayOrder ?? 999) || String(left.name).localeCompare(String(right.name), 'zh-CN'); }
 
@@ -328,6 +374,22 @@ async function selectStall(stallId) {
   level.value = 'stall-dishes';
   await loadStallDishes(1);
 }
+
+async function openQueryTarget() {
+  if (!store.canteens.length) return;
+  const requestedStall = String(route.query.stall || '');
+  const stall = requestedStall ? store.stalls.find((item) => String(item.id) === requestedStall) : null;
+  const requestedCanteen = String(stall?.canteenId || route.query.canteen || '');
+  if (!requestedCanteen) return;
+  const canteen = store.canteens.find((item) => String(item.id) === requestedCanteen);
+  if (!canteen) return;
+  const primaryId = canteen.parentId || canteen.id;
+  selectPrimary(primaryId);
+  if (canteen.parentId) selectSubCanteen(canteen.id);
+  if (stall) await selectStall(stall.id);
+}
+
+watch(() => [route.query.canteen, route.query.stall, store.canteens.length, store.stalls.length], openQueryTarget, { immediate: true });
 
 async function loadStallDishes(page = 1) {
   if (!selectedStallId.value || stallDishesLoading.value) return;
@@ -429,6 +491,13 @@ function crowdClass(value) {
 .back-row { margin-bottom: 14px; }
 .back-btn { cursor: pointer; border: 1px solid rgba(255,255,255,.6); background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(255,255,255,.56)); }
 
+.campus-zone-map { display:grid; gap:14px; margin:4px 0 24px; padding:18px 0; border-block:1px solid rgba(31,122,77,.14); }
+.zone-map-heading { display:flex; align-items:end; justify-content:space-between; gap:14px; }.zone-map-heading h2 { margin:0; font-size:20px; }.zone-map-heading .active { color:#fff; background:var(--primary); }
+.zone-map-track { display:grid; grid-template-columns:minmax(0,1fr) minmax(70px,1.2fr) minmax(0,1fr); align-items:center; }
+.zone-map-route { height:3px; background:#a7b9aa; }
+.zone-map-stop { display:flex; min-height:72px; align-items:center; gap:12px; padding:14px 16px; border:1px solid #ccd9cb; border-radius:6px; background:#fff; color:#173a26; text-align:left; }
+.zone-map-stop.east { color:#205b6d; border-color:#b9d2da; }.zone-map-stop:hover,.zone-map-stop.active { border-color:var(--primary); box-shadow:0 0 0 3px rgba(31,122,77,.1); }.zone-map-stop span { display:grid; gap:3px; }.zone-map-stop strong { font-size:16px; }.zone-map-stop small,.zone-map-note { color:var(--muted); font-size:12px; }.zone-map-note { margin:0; }
+
 .canteen-grid { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .canteen-card { cursor: pointer; padding: 18px; animation: canteen-enter .42s ease both; transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
 .canteen-card:nth-child(2) { animation-delay: 70ms; }.canteen-card:nth-child(3) { animation-delay: 140ms; }.canteen-card:nth-child(4) { animation-delay: 210ms; }
@@ -481,6 +550,7 @@ function crowdClass(value) {
 
 /* Mobile */
 @media (max-width: 640px) {
+  .zone-map-track { grid-template-columns:1fr; gap:8px; }.zone-map-route { width:3px; height:28px; margin-left:26px; }
   .canteen-grid { grid-template-columns: 1fr; }
   .stall-cards { grid-template-columns: 1fr; }
   .dish-preview-grid { grid-template-columns: 1fr; }

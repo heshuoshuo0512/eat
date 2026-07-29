@@ -156,7 +156,7 @@ describe('miniapp student navigation visibility', () => {
     assert.match(home, /<sc-reveal-card/);
     assert.match(home, /class="core-actions"/);
     assert.match(home, /class="[^"]*explore-grid[^"]*"/);
-    assert.deepEqual(getStudentEntries(EXPLORE_ENTRY_IDS).map((entry) => entry.label), ['食堂导航', '校园排行榜', '区域推荐']);
+    assert.deepEqual(getStudentEntries(EXPLORE_ENTRY_IDS).map((entry) => entry.label), ['食堂导航', '校园排行榜', '地区口味推荐']);
     assert.match(home, /:title="greeting"/);
     assert.match(home, /const greeting = computed/);
     assert.doesNotMatch(home, /brand-intro|数据已连接|档案目标|评分菜品/);
@@ -411,7 +411,7 @@ describe('manifest and production environment', () => {
 
   it('enables WeChat privacy checking without deprecated camera permission', () => {
     assert.equal(mp.__usePrivacyCheck__, true);
-    assert.equal(mp.setting.urlCheck, false);
+    assert.equal(mp.setting.urlCheck, true);
     assert.equal(mp.permission?.['scope.camera'], undefined);
   });
 

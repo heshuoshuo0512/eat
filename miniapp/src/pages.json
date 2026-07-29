@@ -13,7 +13,7 @@
     { "path": "pages/canteen-detail/canteen-detail", "style": { "navigationBarTitleText": "食堂详情", "navigationStyle": "custom" } },
     { "path": "pages/stall-detail/stall-detail", "style": { "navigationBarTitleText": "档口详情", "navigationStyle": "custom" } },
     { "path": "pages/rankings/rankings", "style": { "navigationBarTitleText": "排行榜", "navigationStyle": "custom", "enablePullDownRefresh": true } },
-    { "path": "pages/regions/regions", "style": { "navigationBarTitleText": "区域推荐", "navigationStyle": "custom" } },
+    { "path": "pages/regions/regions", "style": { "navigationBarTitleText": "地区口味推荐", "navigationStyle": "custom" } },
     { "path": "pages/region-detail/region-detail", "style": { "navigationBarTitleText": "区域菜品", "navigationStyle": "custom" } },
     { "path": "pages/dish-detail/dish-detail", "style": { "navigationBarTitleText": "菜品详情", "navigationStyle": "custom" } },
     { "path": "pages/health-profile/health-profile", "style": { "navigationBarTitleText": "健康档案", "navigationStyle": "custom" } },

@@ -1,8 +1,8 @@
 <template>
   <section class="page-heading">
     <p class="eyebrow">个人记录</p>
-    <h1>收藏与吃过</h1>
-    <p>把想再吃的菜和真实用餐记录集中放在这里。</p>
+    <h1>收藏与用餐记录</h1>
+    <p>收藏想再吃的菜；小程序订单完成后会自动记录吃过次数。</p>
   </section>
 
   <section class="saved-summary">
@@ -31,16 +31,15 @@
           <div><strong>{{ entry.name }}</strong><small>{{ locationLabel(entry) }} · ¥{{ entry.price }}</small></div>
           <div class="saved-actions">
             <button class="icon-action active" type="button" title="取消收藏" aria-label="取消收藏" @click="toggleFavorite(entry.id)">★</button>
-            <button class="icon-action" type="button" title="记录吃过" aria-label="记录吃过" @click="markEaten(entry.id)">✓</button>
             <RouterLink class="primary button-link compact" :to="{ path: '/orders', query: { dish: entry.id } }">点餐</RouterLink>
           </div>
         </div>
       </article>
     </div>
     <button v-if="store.savedCatalog.favorite.page.hasMore" class="secondary load-more" type="button" :disabled="savedLoading" @click="loadMoreSaved('favorite')">{{ savedLoading ? '加载中…' : '加载更多收藏' }}</button>
-    <div v-else class="card empty-state">
+    <div v-if="!favoriteEntries.length" class="card empty-state">
       <h2>还没有收藏</h2>
-      <p>在菜品检索、区域推荐或智能推荐中点击星标即可加入。</p>
+      <p>在菜品检索、地区口味推荐或智能推荐中点击星标即可加入。</p>
       <RouterLink class="primary button-link" to="/dishes">浏览菜品</RouterLink>
     </div>
   </section>
@@ -55,7 +54,7 @@
       </article>
     </div>
     <button v-if="store.savedCatalog.eaten.page.hasMore" class="secondary load-more" type="button" :disabled="savedLoading" @click="loadMoreSaved('eaten')">{{ savedLoading ? '加载中…' : '加载更多记录' }}</button>
-    <p v-else class="muted">还没有“吃过”记录。</p>
+    <p v-if="!eatenEntries.length" class="muted">还没有用餐记录；完成小程序订单后会自动出现在这里。</p>
   </section>
 
   <p v-if="message" class="form-message" :class="{ danger: isError }" aria-live="polite">{{ message }}</p>

@@ -179,6 +179,9 @@ describe('Order flow', () => {
   it('admin can transition order through valid status chain: pending → preparing → ready → completed', async () => {
     const list = await req('/api/orders', { token: studentToken });
     const orderId = list.data.orders[0].id;
+    const orderedItem = list.data.orders[0].items[0];
+    const beforePreference = db.prepare("SELECT eaten_count FROM user_dish_preferences WHERE tenant_id = 'default' AND user_id = 'u-demo-student' AND dish_id = ?").get(orderedItem.dishId);
+    const beforeEaten = Number(beforePreference?.eaten_count || 0);
 
     const transitions = ['preparing', 'ready', 'completed'];
     let currentStatus = 'pending';
@@ -192,6 +195,13 @@ describe('Order flow', () => {
       assert.equal(data.order.status, nextStatus, `transitioned from ${currentStatus} → ${nextStatus}`);
       currentStatus = nextStatus;
     }
+    const afterPreference = db.prepare("SELECT eaten_count, last_eaten_at FROM user_dish_preferences WHERE tenant_id = 'default' AND user_id = 'u-demo-student' AND dish_id = ?").get(orderedItem.dishId);
+    assert.equal(Number(afterPreference.eaten_count), beforeEaten + Number(orderedItem.quantity));
+    assert.ok(afterPreference.last_eaten_at);
+    const repeat = await req(`/api/admin/orders/${orderId}/status`, { method: 'PATCH', token: adminToken, body: { status: 'completed' } });
+    assert.equal(repeat.status, 400);
+    const afterRepeat = db.prepare("SELECT eaten_count FROM user_dish_preferences WHERE tenant_id = 'default' AND user_id = 'u-demo-student' AND dish_id = ?").get(orderedItem.dishId);
+    assert.equal(Number(afterRepeat.eaten_count), beforeEaten + Number(orderedItem.quantity));
   });
 
   /* ── Invalid status transition returns 400 ───────────────────── */

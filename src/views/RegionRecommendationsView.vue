@@ -1,7 +1,7 @@
 <template>
   <section class="page-heading region-page-heading">
     <p class="eyebrow">风味 / 评分 / 热度</p>
-    <h1>{{ selectedRegion ? selectedRegion.name : '区域推荐' }}</h1>
+    <h1>{{ selectedRegion ? selectedRegion.name : '地区口味推荐' }}</h1>
     <p>{{ selectedRegion ? selectedRegion.description : '从校园餐单里找到更合口味的那一片，打开区域就能继续挑菜。' }}</p>
   </section>
 

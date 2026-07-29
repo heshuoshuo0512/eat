@@ -11,10 +11,12 @@ const orbit = read('src/components/StudentFeatureOrbit.vue');
 const dishes = read('src/views/DishesView.vue');
 const recommend = read('src/views/RecommendView.vue');
 const orders = read('src/views/OrdersView.vue');
+const canteens = read('src/views/CanteensView.vue');
+const searchSelect = read('src/components/SearchSelect.vue');
 
 describe('student UI refresh contracts', () => {
   it('keeps the required student navigation order and production reservation entry', () => {
-    const labels = ['菜品检索', '智能推荐', '菜品评价', '校园帖子', '食堂导航', '排行榜', '区域推荐', '收藏与吃过', '到店预约', '健康档案'];
+    const labels = ['菜品检索', '智能推荐', '菜品评价', '校园帖子', '食堂导航', '排行榜', '地区口味推荐', '我的', '收藏与用餐记录', '到店预约', '健康档案'];
     let previous = -1;
     for (const label of labels) {
       const index = app.indexOf(`label: '${label}'`);
@@ -36,8 +38,19 @@ describe('student UI refresh contracts', () => {
     assert.match(orbit, /setInterval[\s\S]*5000/);
     assert.match(orbit, /mouseenter="paused = true"/);
     assert.match(orbit, /keydown\.left/);
+    assert.match(orbit, /pointerdown="startDrag"/);
+    assert.match(orbit, /orbit-side-arrow/);
     assert.match(orbit, /scroll-snap-type:\s*x mandatory/);
     assert.match(orbit, /prefers-reduced-motion/);
+    assert.match(orbit, /iconFor\(item\.icon\)/);
+    assert.match(orbit, /v-if="item\.imageUrl" class="orbit-scrim"/);
+  });
+
+  it('groups long dish selectors and provides east-west canteen navigation with verified 1F labels', () => {
+    assert.match(searchSelect, /option\.group/);
+    assert.match(canteens, /按东西区找食堂/);
+    assert.match(canteens, /'west-xinyi': '西区大食堂 · 1F'/);
+    assert.match(canteens, /'west-minzu': '西区大食堂 · 1F'/);
   });
 
   it('uses one composer model across discovery and recommendation', () => {
@@ -60,10 +73,11 @@ describe('student UI refresh contracts', () => {
 describe('student discovery helpers', () => {
   it('builds profile-aware prompts from budget, meal, taste, and avoid lists', () => {
     const prompts = buildProfilePrompts({ goal: 'fatLoss', mealType: 'lunch', budgetMax: 35, taste: '麻辣', avoid: ['花生'], preferLowCrowd: true }, 'search');
-    assert.equal(prompts.length, 4);
+    assert.equal(prompts.length, 5);
     assert.ok(prompts.some((item) => item.query.includes('35')));
     assert.ok(prompts.some((item) => item.query.includes('麻辣')));
     assert.ok(prompts.some((item) => item.query.includes('花生')));
+    assert.ok(prompts.some((item) => item.label === '轻松少排队'));
   });
 
   it('sorts by review-aware display rating in both directions', () => {

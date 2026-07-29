@@ -64,6 +64,30 @@ export function openDatabase(path = process.env.SMART_CANTEEN_DB || DEFAULT_DB_P
   return db;
 }
 
+export function cleanDishCatalogName(value) {
+  return String(value || '')
+    .replace(/^\s*\d+\s*[.、]\s*/u, '')
+    .replace(/^\s*[.、]\s*/u, '')
+    .trim();
+}
+
+export function isServingTierCatalogName(value) {
+  return /^(?:\d+\s*[-~至]\s*\d+|\d+|单|双|多)\s*人份$/u.test(cleanDishCatalogName(value));
+}
+
+export function inferDishCatalogCategory({ name = '', cuisine = '', tags = [], semanticLabels = [] } = {}) {
+  const text = [name, cuisine, ...tags, ...semanticLabels].join(' ');
+  if (/奶茶|咖啡|果汁|豆浆|酸奶|牛奶|饮料|饮品|茶|水吧|可乐|雪碧/u.test(text)) return '饮品';
+  if (/面条|拌面|汤面|炒面|拉面|粉|米线|河粉|板面|刀削面|馄饨|饺子/u.test(text)) return '面食粉类';
+  if (/米饭|盖饭|炒饭|焖饭|拌饭|套餐|便当|鸡排饭|烤肉饭/u.test(text)) return '米饭套餐';
+  if (/包子|馒头|烧麦|粥|饼|油条|早餐|豆腐脑|鸡蛋灌饼/u.test(text)) return '早餐面点';
+  if (/麻辣烫|麻辣香锅|火锅|冒菜|串串/u.test(text)) return '火锅麻辣烫';
+  if (/汉堡|炸鸡|鸡排|烤肠|丸子|小吃|甜品|蛋挞|薯条|加蛋|加面|加饭/u.test(text)) return '小吃加料';
+  if (/蔬菜|素菜|青菜|土豆丝|豆腐|豆芽|茄子|菜花/u.test(text)) return '素菜';
+  if (/鸡|鸭|鹅|猪|牛|羊|鱼|虾|肉|排骨|肘|蛋/u.test(text)) return '荤菜';
+  return '其他';
+}
+
 function alignRealCampusVenueCatalog(db) {
   const approved = Number(db.prepare("SELECT COUNT(*) AS count FROM data_import_batches WHERE tenant_id = 'default' AND entity_type = 'real_catalog' AND status IN ('validated', 'approved')").get()?.count || 0);
   if (!approved) return;
@@ -199,6 +223,8 @@ function migrate(db) {
       seasonings_json TEXT NOT NULL DEFAULT '[]',
       additives_json TEXT NOT NULL DEFAULT '[]',
       tags_json TEXT NOT NULL DEFAULT '[]',
+      catalog_item_type TEXT NOT NULL DEFAULT 'meal' CHECK(catalog_item_type IN ('meal','beverage','addon','fee','variant')),
+      parent_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL,
       halal INTEGER NOT NULL DEFAULT 0,
       meal_types_json TEXT NOT NULL DEFAULT '["lunch","dinner"]',
       calories REAL NOT NULL DEFAULT 0,
@@ -211,7 +237,7 @@ function migrate(db) {
       image TEXT NOT NULL DEFAULT '🍽️',
       image_url TEXT,
       description TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','hidden','inactive','archived')),
       reservation_enabled INTEGER NOT NULL DEFAULT 0,
       regional_taste TEXT NOT NULL DEFAULT '',
       allergens_json TEXT NOT NULL DEFAULT '[]',
@@ -492,6 +518,42 @@ function migrate(db) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS content_reactions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      target_type TEXT NOT NULL CHECK(target_type IN ('post','review')),
+      target_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      reaction TEXT NOT NULL CHECK(reaction IN ('like','dislike')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, target_type, target_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS post_comments (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      post_id TEXT NOT NULL REFERENCES campus_posts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('approved','hidden')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS content_reports (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      reporter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      target_type TEXT NOT NULL CHECK(target_type IN ('post','review','comment')),
+      target_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','resolved','dismissed')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS health_profiles (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       goal TEXT NOT NULL DEFAULT 'healthy',
@@ -510,7 +572,7 @@ function migrate(db) {
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'default',
       phone_hash TEXT NOT NULL,
-      purpose TEXT NOT NULL CHECK(purpose IN ('register','reset_password')),
+      purpose TEXT NOT NULL CHECK(purpose IN ('register','reset_password','delete_account')),
       code_hash TEXT NOT NULL,
       requested_ip TEXT NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -910,6 +972,8 @@ function migrate(db) {
   try { db.exec("ALTER TABLE dishes ADD COLUMN aliases_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN semantic_labels_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN source_ref_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN catalog_item_type TEXT NOT NULL DEFAULT 'meal'"); } catch {}
+  try { db.exec('ALTER TABLE dishes ADD COLUMN parent_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL'); } catch {}
   db.exec("UPDATE dishes SET price_display = CAST(price AS TEXT) || '元' WHERE price_display IS NULL OR price_display = ''");
   const legacySafetyRows = db.prepare("SELECT id, allergens_json, safety_declarations_json FROM dishes WHERE safety_declarations_json IS NULL OR safety_declarations_json = '[]'").all();
   const updateLegacySafety = db.prepare('UPDATE dishes SET safety_declarations_json = ? WHERE id = ?');
@@ -1005,7 +1069,11 @@ function migrate(db) {
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL AND wechat_openid != '';
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_tenant_phone_hash ON users(tenant_id, phone_hash) WHERE phone_hash IS NOT NULL AND phone_hash != '';
-    CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
+      CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
+      CREATE INDEX IF NOT EXISTS idx_content_reactions_target ON content_reactions(tenant_id, target_type, target_id);
+      CREATE INDEX IF NOT EXISTS idx_post_comments_post ON post_comments(tenant_id, post_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_content_reports_target ON content_reports(tenant_id, target_type, target_id, status);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_content_reports_pending_unique ON content_reports(tenant_id, reporter_id, target_type, target_id) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS idx_auth_codes_phone_created ON auth_verification_codes(tenant_id, phone_hash, purpose, created_at);
     CREATE INDEX IF NOT EXISTS idx_canteens_tenant ON canteens(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_stalls_tenant_canteen ON stalls(tenant_id, canteen_id);
@@ -1243,10 +1311,15 @@ export function rowToDish(row) {
     priceDisplay: row.price_display,
     pricing: parseJson(row.pricing_json, {}),
   }, row.price);
+  const sourceName = String(row.name || '').trim();
+  const name = cleanDishCatalogName(sourceName);
+  const tags = parseJson(row.tags_json, []).filter((tag) => tag !== '不辣');
+  const semanticLabels = parseJson(row.semantic_labels_json, []);
   return {
     id: row.id,
     stallId: row.stall_id,
-    name: row.name,
+    name,
+    sourceName: sourceName !== name ? sourceName : null,
     price: row.price,
     pricingMode: pricing.mode,
     priceDisplay: pricing.display,
@@ -1256,7 +1329,7 @@ export function rowToDish(row) {
     ingredients: parseJson(row.ingredients_json, []),
     seasonings: parseJson(row.seasonings_json, []),
     additives: parseJson(row.additives_json, []),
-    tags: parseJson(row.tags_json, []).filter((tag) => tag !== '不辣'),
+    tags,
     halal: Boolean(row.halal),
     mealTypes: parseJson(row.meal_types_json, ['lunch', 'dinner']),
     nutrition: { calories: row.calories, protein: row.protein, fat: row.fat, carbs: row.carbs },
@@ -1282,7 +1355,10 @@ export function rowToDish(row) {
     dataVersion: row.data_version || 'legacy',
     synthetic: Boolean(row.synthetic),
     aliases: parseJson(row.aliases_json, []),
-    semanticLabels: parseJson(row.semantic_labels_json, []),
+    semanticLabels,
+    catalogItemType: row.catalog_item_type || 'meal',
+    parentDishId: row.parent_dish_id || null,
+    catalogCategory: inferDishCatalogCategory({ name, cuisine: row.cuisine, tags, semanticLabels }),
     sourceRef: parseJson(row.source_ref_json, {}),
     regionalTaste: row.regional_taste || '',
     rating: row.rating,
@@ -1309,6 +1385,7 @@ export function rowToReview(row) {
     rating: row.rating,
     content: row.content,
     status: row.status || 'approved',
+    linkedPostId: row.linked_post_id || null,
     createdAt: row.created_at
   };
 }

@@ -1,5 +1,5 @@
 <template>
-  <sc-page-shell back title="区域推荐" subtitle="六种风味分区" tone="explore">
+  <sc-page-shell back title="地区口味推荐" subtitle="六种地区风味" tone="explore">
     <view class="region-intro"><text class="ui-strong">从风味开始选</text><text class="ui-small">按区域风味、菜系、口味和食材整理校内菜品。</text></view>
     <sc-state-card v-if="store.loading.value&&!store.loaded.value" type="loading" title="正在整理区域菜品" />
     <view v-else class="region-grid">

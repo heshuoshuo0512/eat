@@ -137,6 +137,14 @@ export const apiClient = {
   async resetPassword(payload) {
     return request('/api/auth/password/reset', { method: 'POST', body: JSON.stringify(payload) });
   },
+  async exportAccount() {
+    return request('/api/account/export');
+  },
+  async deleteAccount(payload) {
+    const result = await request('/api/account', { method: 'DELETE', body: JSON.stringify(payload) });
+    clearSession();
+    return result;
+  },
   async deferProfileOnboarding() {
     return request('/api/health/profile/onboarding', { method: 'PATCH', body: JSON.stringify({ status: 'deferred' }) });
   },
@@ -171,6 +179,24 @@ export const apiClient = {
   },
   async createPost(payload) {
     return request('/api/posts', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async reactToContent(type, id, reaction) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}/reaction`, { method: 'PUT', body: JSON.stringify({ reaction }) });
+  },
+  async reportContent(type, id, payload = {}) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}/report`, { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async listPostComments(id) {
+    return request(`/api/posts/${encodeURIComponent(id)}/comments`);
+  },
+  async createPostComment(id, content) {
+    return request(`/api/posts/${encodeURIComponent(id)}/comments`, { method: 'POST', body: JSON.stringify({ content }) });
+  },
+  async updateCommunityContent(type, id, payload) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+  async deleteCommunityContent(type, id) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
   async saveProfile(payload) {
     return request('/api/health/profile', { method: 'PUT', body: JSON.stringify(payload) });

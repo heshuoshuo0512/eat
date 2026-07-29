@@ -151,6 +151,15 @@ export const apiClient = {
   resetPassword(payload) {
     return request('/api/auth/password/reset', { method: 'POST', body: payload });
   },
+  exportAccount() {
+    return request('/api/account/export');
+  },
+  async deleteAccount(payload) {
+    const result = await request('/api/account', { method: 'DELETE', body: payload });
+    tokenStore().removeItem(TOKEN_KEY);
+    tokenStore().removeItem(REFRESH_TOKEN_KEY);
+    return result;
+  },
   wechatLogin(payload) {
     return authenticate('/api/auth/wechat-login', payload);
   },
@@ -204,6 +213,24 @@ export const apiClient = {
   },
   createPost(payload) {
     return request('/api/posts', { method: 'POST', body: payload });
+  },
+  reactToContent(type, id, reaction) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}/reaction`, { method: 'PUT', body: { reaction } });
+  },
+  reportContent(type, id, payload = {}) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}/report`, { method: 'POST', body: payload });
+  },
+  listPostComments(id) {
+    return request(`/api/posts/${encodeURIComponent(id)}/comments`);
+  },
+  createPostComment(id, content) {
+    return request(`/api/posts/${encodeURIComponent(id)}/comments`, { method: 'POST', body: { content } });
+  },
+  updateCommunityContent(type, id, payload) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload });
+  },
+  deleteCommunityContent(type, id) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
   uploadImage(payload) {
     return request('/api/uploads', { method: 'POST', body: payload, timeoutMs: 60000 });

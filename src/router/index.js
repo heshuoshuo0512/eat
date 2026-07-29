@@ -18,6 +18,7 @@ const HealthProfileView = () => import('../views/HealthProfileView.vue');
 const SavedView = () => import('../views/SavedView.vue');
 const ReviewsView = () => import('../views/ReviewsView.vue');
 const CommunityView = () => import('../views/CommunityView.vue');
+const ProfileView = () => import('../views/ProfileView.vue');
 const AdminCatalogView = () => import('../views/AdminCatalogView.vue');
 
 export const router = createRouter({
@@ -42,6 +43,7 @@ export const router = createRouter({
     { path: '/saved', name: 'saved', component: SavedView, meta: { audience: 'student' } },
     { path: '/reviews', name: 'reviews', component: ReviewsView, meta: { audience: 'student' } },
     { path: '/community', name: 'community', component: CommunityView, meta: { audience: 'student' } },
+    { path: '/profile', name: 'profile', component: ProfileView, meta: { audience: 'student' } },
     { path: '/visual-meal', name: 'visual-meal', component: VisualMealView, meta: { audience: 'student', hidden: true } },
     { path: '/orders', name: 'orders', component: OrdersView, meta: { audience: 'student' } },
     { path: '/stall-console', name: 'stall-console', component: StallConsoleView, meta: { audience: 'admin', hidden: true } },

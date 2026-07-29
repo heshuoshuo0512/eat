@@ -253,15 +253,15 @@ function featureImage(dishIndex, canteenIndex = 0) {
 }
 
 const studentFeatures = computed(() => [
-  { id: 'dishes', to: '/dishes', eyebrow: '智能吃饭', label: '菜品检索', description: '从真实菜品中按综合评分挑选', imageUrl: featureImage(0), icon: '检' },
-  { id: 'recommend', to: '/recommend', eyebrow: '智能吃饭', label: '智能推荐', description: '结合健康档案和校园菜单生成建议', imageUrl: featureImage(1), icon: '荐' },
-  { id: 'canteens', to: '/canteens', eyebrow: '更多探索', label: '食堂导航', description: '快速找到食堂、楼层与档口', imageUrl: featureImage(2, 0), icon: '导' },
-  { id: 'rankings', to: '/rankings', eyebrow: '更多探索', label: '排行榜', description: '查看校园真实评分与热度', imageUrl: featureImage(3), icon: '榜' },
-  { id: 'regions', to: '/regions', eyebrow: '更多探索', label: '区域推荐', description: '按风味区域发现下一餐', imageUrl: featureImage(4), icon: '味' },
-  { id: 'reviews', to: '/reviews', eyebrow: '校园互动', label: '菜品评价', description: '汇总各食堂审核通过的评价', imageUrl: featureImage(5), icon: '评' },
-  { id: 'community', to: '/community', eyebrow: '校园互动', label: '校园帖子', description: '分享菜品体验与校园口碑', imageUrl: featureImage(6), icon: '帖' },
-  { id: 'saved', to: '/saved', eyebrow: '个人记录', label: '收藏与吃过', description: '把喜欢和吃过的菜统一收好', imageUrl: featureImage(7), icon: '藏' },
-  { id: 'orders', to: '/orders', eyebrow: '校园菜单', label: '到店预约', description: '同档口预约，到店确认并支付', imageUrl: featureImage(8), icon: '餐' }
+  { id: 'dishes', to: '/dishes', eyebrow: '智能吃饭', label: '菜品检索', description: '从真实菜品中按综合评分挑选', imageUrl: featureImage(0), icon: 'Search' },
+  { id: 'recommend', to: '/recommend', eyebrow: '智能吃饭', label: '智能推荐', description: '结合健康档案和校园菜单生成建议', imageUrl: featureImage(1), icon: 'Sparkles' },
+  { id: 'canteens', to: '/canteens', eyebrow: '更多探索', label: '食堂导航', description: '快速找到食堂、楼层与档口', imageUrl: featureImage(2, 0), icon: 'MapPinned' },
+  { id: 'rankings', to: '/rankings', eyebrow: '更多探索', label: '排行榜', description: '查看校园真实评分与热度', imageUrl: featureImage(3), icon: 'Trophy' },
+  { id: 'regions', to: '/regions', eyebrow: '更多探索', label: '地区口味推荐', description: '按地区风味发现下一餐', imageUrl: featureImage(4), icon: 'Map' },
+  { id: 'reviews', to: '/reviews', eyebrow: '校园互动', label: '菜品评价', description: '汇总各食堂审核通过的评价', imageUrl: featureImage(5), icon: 'MessageSquareText' },
+  { id: 'community', to: '/community', eyebrow: '校园互动', label: '校园帖子', description: '分享菜品体验与校园口碑', imageUrl: featureImage(6), icon: 'MessagesSquare' },
+  { id: 'saved', to: '/saved', eyebrow: '个人记录', label: '收藏与吃过', description: '把喜欢和吃过的菜统一收好', imageUrl: featureImage(7), icon: 'Heart' },
+  { id: 'orders', to: '/orders', eyebrow: '校园菜单', label: '到店预约', description: '同档口预约，到店确认并支付', imageUrl: featureImage(8), icon: 'CalendarCheck' }
 ]);
 
 const contextSummary = computed(() => {

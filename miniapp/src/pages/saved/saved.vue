@@ -1,5 +1,5 @@
 <template>
-  <sc-page-shell back title="收藏与吃过" subtitle="个人记录" tone="records">
+  <sc-page-shell back title="收藏与用餐记录" subtitle="订单完成后自动统计" tone="records">
     <view class="saved-workspace">
       <view class="saved-aside">
         <view class="saved-stats">
@@ -15,18 +15,18 @@
         <view v-if="activePanel==='favorites'" class="saved-list">
           <view v-for="dish in saved.favorites" :key="dish.id" class="saved-entry">
             <sc-list-row :title="dish.name" :description="locationLabel(dish)" :meta="dishPriceText(dish)" badge="已收藏" @tap="openDish(dish.id)" />
-        <view class="entry-actions"><button @tap="toggleFavorite(dish.id)"><view>取消收藏</view></button><button @tap="markEaten(dish.id)"><view>记录吃过</view></button><button class="order-preview" @tap="openOrder(dish.id)"><view>到店预约</view></button></view>
+        <view class="entry-actions"><button @tap="toggleFavorite(dish.id)"><view>取消收藏</view></button><button class="order-preview" @tap="openOrder(dish.id)"><view>到店预约</view></button></view>
           </view>
-          <sc-state-card v-if="!saved.favorites.length" type="empty" illustration="empty-saved" title="还没有收藏菜品" desc="在菜品详情、区域推荐或智能推荐中加入收藏。" action-text="去找菜" @action="openDishes" />
+          <sc-state-card v-if="!saved.favorites.length" type="empty" illustration="empty-saved" title="还没有收藏菜品" desc="在菜品详情、地区口味推荐或智能推荐中加入收藏。" action-text="去找菜" @action="openDishes" />
           <text v-else-if="favoritePage.hasMore" class="page-progress">继续上拉加载更多收藏</text>
         </view>
 
         <view v-else class="history-list">
           <view v-for="dish in saved.eaten" :key="dish.id" class="history-row">
             <sc-list-row :title="dish.name" :description="`最近记录 ${formatDate(dish.lastEatenAt)} · 揭晓 ${dish.drawnCount||0} 次`" :meta="`${dish.eatenCount} 次`" @tap="openDish(dish.id)" />
-            <button class="again-button" @tap="markEaten(dish.id)">再记一次</button>
+            <button class="again-button" @tap="markEaten(dish.id)">补录一次</button>
           </view>
-          <sc-state-card v-if="!saved.eaten.length" type="empty" illustration="empty-saved" title="还没有吃过记录" desc="在菜品详情中记录真实用餐，统计会出现在这里。" action-text="浏览菜品" @action="openDishes" />
+          <sc-state-card v-if="!saved.eaten.length" type="empty" illustration="empty-saved" title="还没有用餐记录" desc="订单完成后，购买的菜品会自动记录在这里。" action-text="浏览菜品" @action="openDishes" />
           <text v-else-if="eatenPage.hasMore" class="page-progress">继续上拉加载更多记录</text>
         </view>
       </view>

@@ -243,6 +243,12 @@ describe('dish search workflow', () => {
     assert.equal(result.items[0].availability.price, 16, 'stable catalog price is database truth');
   });
 
+  it('turns low-queue wording into reservable-first and low-crowd preferences', () => {
+    const parsed = parseDishSearchRequest('想轻松少排队，找现在容易买到的菜');
+    assert.equal(parsed.filters.orderableOnly, true);
+    assert.equal(parsed.filters.preferLowCrowd, true);
+  });
+
   it('prefers the longest explicitly named dish over a shorter contained name', async () => {
     const result = await runDishSearchWorkflow({
       tenantId: 'tenant-a',

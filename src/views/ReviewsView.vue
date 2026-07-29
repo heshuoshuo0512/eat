@@ -18,9 +18,9 @@
   </section>
 
   <section class="card filter-panel">
-    <label><span>食堂</span><select v-model="filters.canteenId" @change="onCanteenChange"><option value="">全部食堂</option><option v-for="canteen in store.canteens" :key="canteen.id" :value="canteen.id">{{ canteen.name }}</option></select></label>
-    <label v-if="filters.targetType === 'dish'"><span>档口</span><select v-model="filters.stallId" @change="onStallChange"><option value="">全部档口</option><option v-for="stall in availableStalls" :key="stall.id" :value="stall.id">{{ stall.name }}</option></select></label>
-    <label v-if="filters.targetType === 'dish'"><span>菜品</span><select v-model="filters.dishId" @change="resetAndLoad"><option value="">全部菜品</option><option v-for="dish in availableDishes" :key="dish.id" :value="dish.id">{{ dish.name }}</option></select></label>
+    <label><span>食堂</span><SearchSelect v-model="filters.canteenId" :options="canteenOptions" placeholder="输入食堂名称" @change="onCanteenChange" /></label>
+    <label v-if="filters.targetType === 'dish'"><span>档口</span><SearchSelect v-model="filters.stallId" :options="stallOptions" placeholder="输入档口名称" @change="onStallChange" /></label>
+    <label v-if="filters.targetType === 'dish'"><span>菜品</span><SearchSelect v-model="filters.dishId" :options="dishOptions" placeholder="输入菜品名称" @change="resetAndLoad" @search="searchDishOptions" /></label>
     <button class="ghost reset-button" type="button" @click="resetFilters">重置筛选</button>
   </section>
 
@@ -40,10 +40,17 @@
         <div class="review-title"><strong>{{ targetName(review) }}</strong><span class="pill">{{ review.targetType === 'dish' ? '菜品' : '食堂' }}</span></div>
         <small>{{ locationLabel(review) }}</small>
         <p>{{ review.content }}</p>
-        <footer><span>{{ review.user }}</span><time>{{ formatDate(review.createdAt) }}</time></footer>
+        <footer><span>{{ review.user }}</span><time>{{ formatDate(review.createdAt) }}</time><span v-if="review.isOwn" class="pill">{{ statusLabel(review.status) }}</span></footer>
+        <div class="engagement-actions">
+          <button type="button" :class="{ active: review.viewerReaction === 'like' }" @click="react(review, 'like')">赞 {{ review.engagement?.likes || 0 }}</button>
+          <button type="button" :class="{ active: review.viewerReaction === 'dislike' }" @click="react(review, 'dislike')">踩 {{ review.engagement?.dislikes || 0 }}</button>
+          <button v-if="!review.isOwn" type="button" :disabled="review.viewerReported" @click="report(review)">{{ review.viewerReported ? '已举报' : '举报' }}</button>
+          <button v-if="review.canEdit" type="button" @click="editReview(review)">修改</button>
+          <button v-if="review.canDelete" type="button" class="danger-text" @click="deleteReview(review)">删除</button>
+        </div>
       </div>
-      <RouterLink v-if="review.dish" class="secondary button-link" :to="{ path: '/dishes', query: { dish: review.dish.id } }">查看菜品</RouterLink>
-      <RouterLink v-else class="secondary button-link" to="/canteens">查看食堂</RouterLink>
+      <RouterLink v-if="review.dish" class="secondary button-link" :to="{ name: 'dish-detail', params: { id: review.dish.id } }">查看菜品</RouterLink>
+      <RouterLink v-else class="secondary button-link" :to="{ path: '/canteens', query: { canteen: review.canteen?.id } }">查看食堂</RouterLink>
     </article>
   </section>
   <section v-else class="card empty-state"><h2>没有符合条件的评价</h2><p>调整筛选条件后再试。</p></section>
@@ -58,6 +65,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import SearchSelect from '../components/SearchSelect.vue';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
@@ -68,6 +76,27 @@ const error = ref('');
 const filters = reactive({ targetType: 'dish', canteenId: '', stallId: '', dishId: '', sort: 'rating_desc' });
 const availableStalls = computed(() => store.stalls.filter((stall) => !filters.canteenId || stall.canteenId === filters.canteenId));
 const availableDishes = ref([]);
+let dishSearchTimer;
+const canteenOptions = computed(() => store.canteens.map((item) => ({ id: item.id, label: item.name, description: item.location })));
+const stallOptions = computed(() => {
+  const nameCounts = new Map();
+  for (const item of availableStalls.value) nameCounts.set(item.name, Number(nameCounts.get(item.name) || 0) + 1);
+  return availableStalls.value.map((item) => {
+    const canteen = store.canteens.find((entry) => entry.id === item.canteenId);
+    const location = [canteen?.displayName || canteen?.name, item.floor].filter(Boolean).join(' · ');
+    return {
+      id: item.id,
+      label: nameCounts.get(item.name) > 1 && location ? `${item.name}（${location}）` : item.name,
+      description: location
+    };
+  });
+});
+const dishOptions = computed(() => availableDishes.value.map((item) => ({
+  id: item.id,
+  label: item.name,
+  group: item.category || '其他',
+  description: [item.canteenName, item.stallName, item.priceDisplay].filter(Boolean).join(' · ')
+})));
 
 function setTargetType(value) { filters.targetType = value; filters.stallId = ''; filters.dishId = ''; loadDishOptions(); resetAndLoad(); }
 function onCanteenChange() { filters.stallId = ''; filters.dishId = ''; loadDishOptions(); resetAndLoad(); }
@@ -76,10 +105,14 @@ function resetAndLoad() { page.value = 0; loadReviews(); }
 function resetFilters() { Object.assign(filters, { targetType: filters.targetType, canteenId: '', stallId: '', dishId: '', sort: 'rating_desc' }); resetAndLoad(); }
 function changePage(next) { page.value = next; loadReviews(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
-async function loadDishOptions() {
+function searchDishOptions(query) {
+  clearTimeout(dishSearchTimer);
+  dishSearchTimer = setTimeout(() => loadDishOptions(query), 250);
+}
+async function loadDishOptions(query = '') {
   if (filters.targetType !== 'dish') { availableDishes.value = []; return; }
   try {
-    const result = await store.loadCommunityDishOptions({ venueId: filters.canteenId, stallId: filters.stallId, page: 1, pageSize: 100 });
+    const result = await store.loadCommunityDishOptions({ query, venueId: filters.canteenId, stallId: filters.stallId, page: 1, pageSize: 100 });
     availableDishes.value = result.options || [];
   } catch {
     availableDishes.value = [];
@@ -90,7 +123,7 @@ async function loadReviews() {
   loading.value = true;
   error.value = '';
   try {
-    await store.loadStudentReviews({ ...filters, limit: pageSize, offset: page.value * pageSize });
+    await store.loadStudentReviews({ ...filters, includeMine: true, limit: pageSize, offset: page.value * pageSize });
   } catch (loadError) {
     error.value = loadError.message || '评价加载失败';
   } finally {
@@ -101,6 +134,26 @@ async function loadReviews() {
 function targetName(review) { return review.dish?.name || review.canteen?.name || '校园评价'; }
 function locationLabel(review) { return [review.canteen?.name, review.stall?.name].filter(Boolean).join(' · ') || review.canteen?.location || '校内食堂'; }
 function formatDate(value) { return String(value || '').slice(0, 10); }
+function statusLabel(status) { return { pending: '审核中', approved: '已公开', rejected: '未通过' }[status] || status; }
+async function react(review, reaction) {
+  await store.reactToCommunityContent('review', review.id, review.viewerReaction === reaction ? null : reaction);
+}
+async function report(review) {
+  if (!window.confirm('确认举报这条评价？')) return;
+  await store.reportCommunityContent('review', review.id, { reason: 'inappropriate' });
+}
+async function editReview(review) {
+  const content = window.prompt('修改评价内容，提交后将重新审核', review.content);
+  if (content === null) return;
+  const ratingText = window.prompt('评分（1-5）', String(review.rating));
+  if (ratingText === null) return;
+  try { await store.updateCommunityContent('review', review.id, { content, rating: Number(ratingText) }); }
+  catch (editError) { window.alert(editError.message || '评价修改失败'); }
+}
+async function deleteReview(review) {
+  if (!window.confirm('删除后无法恢复，确认删除这条评价？')) return;
+  await store.deleteCommunityContent('review', review.id);
+}
 onMounted(() => Promise.all([loadDishOptions(), loadReviews()]));
 </script>
 
@@ -123,6 +176,7 @@ onMounted(() => Promise.all([loadDishOptions(), loadReviews()]));
 .review-score { width: 58px; height: 58px; display: grid; place-items: center; align-content: center; border-radius: 50%; background: #eff8e8; color: var(--primary-dark); }
 .review-score strong { font-size: 22px; line-height: 1; }.review-score span { color: #d59a16; font-size: 12px; }
 .review-content { min-width: 0; }.review-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }.review-content p { margin: 9px 0; line-height: 1.65; }.review-content footer { display: flex; gap: 12px; color: var(--muted); font-size: 12px; }
+.engagement-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }.engagement-actions button { min-height:30px; padding:0 9px; border:1px solid #dce5da; border-radius:5px; color:var(--muted); background:#fff; }.engagement-actions button.active { color:var(--primary-dark); border-color:#a9c9a4; background:#eef6eb; }.engagement-actions .danger-text { color:#a33737; }
 .pagination { display: flex; justify-content: center; align-items: center; gap: 14px; margin-top: 20px; }
 @keyframes review-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 850px) { .filter-panel { grid-template-columns: repeat(2, 1fr); }.review-summary { grid-template-columns: repeat(2, 1fr); } }

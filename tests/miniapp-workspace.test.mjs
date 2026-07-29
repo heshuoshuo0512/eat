@@ -34,7 +34,7 @@ describe('miniapp unified workspaces', () => {
     assert.match(community, /lastLoadedAt/);
     assert.match(community, /Date\.now\(\)-lastLoadedAt>15000/);
     assert.match(community, /watch\(section/);
-    assert.match(community, /listPosts\(\{targetType:postType\.value,q:postQuery\.value\.trim\(\)/);
+    assert.match(community, /listPosts\(\{targetType:postType\.value==='mine'\?'':postType\.value,mine:postType\.value==='mine',q:postQuery\.value\.trim\(\)/);
     assert.match(community, /listReviews\(\{\.\.\.reviewFilters,q:reviewQuery\.value\.trim\(\)/);
   });
 

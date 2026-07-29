@@ -18,11 +18,11 @@
 
       <!-- Collapsed: top 3 preview -->
       <div v-if="expandedSection !== 'dishes'" class="rank-preview">
-        <div v-for="(dish, i) in filteredDishes.slice(0, 3)" :key="dish.id" class="preview-item">
+        <RouterLink v-for="(dish, i) in filteredDishes.slice(0, 3)" :key="dish.id" class="preview-item" :to="rankingLink('dishes', dish)">
           <span class="preview-rank">{{ i + 1 }}</span>
           <span class="preview-name">{{ dish.name }}</span>
           <span class="preview-score">{{ dishRatingText(dish) }}</span>
-        </div>
+        </RouterLink>
         <p v-if="filteredDishes.length === 0" class="preview-empty">暂无数据</p>
       </div>
 
@@ -40,10 +40,11 @@
         </div>
 
         <div v-if="filteredDishes.length" class="rank-list">
-          <div
+          <RouterLink
             v-for="(dish, i) in filteredDishes"
             :key="dish.id"
             class="rank-item"
+            :to="rankingLink('dishes', dish)"
           >
             <span class="rank-badge" :class="{ 'badge-top': i < 3, 'badge-gold': i === 0, 'badge-silver': i === 1, 'badge-bronze': i === 2 }">{{ i + 1 }}</span>
             <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="rank-thumb" />
@@ -60,7 +61,7 @@
               <small class="rank-path">{{ dishLocationPath(dish) }}</small>
             </div>
             <span class="rank-score">{{ dishRatingText(dish) }}</span>
-          </div>
+          </RouterLink>
         </div>
         <button v-if="rankingPages.dishes.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='dishes'" @click="loadMore('dishes')">{{ loadingMore==='dishes'?'加载中…':'加载更多菜品' }}</button>
         <div v-else class="empty-state">
@@ -81,21 +82,22 @@
 
       <!-- Collapsed: top 3 preview -->
       <div v-if="expandedSection !== 'stalls'" class="rank-preview">
-        <div v-for="(stall, i) in rankedStalls.slice(0, 3)" :key="stall.id" class="preview-item">
+        <RouterLink v-for="(stall, i) in rankedStalls.slice(0, 3)" :key="stall.id" class="preview-item" :to="rankingLink('stalls', stall)">
           <span class="preview-rank">{{ i + 1 }}</span>
           <span class="preview-name">{{ stall.name }}</span>
           <span class="preview-score">{{ stall.rankScore }}</span>
-        </div>
+        </RouterLink>
         <p v-if="rankedStalls.length === 0" class="preview-empty">暂无数据</p>
       </div>
 
       <!-- Expanded: full list -->
       <template v-if="expandedSection === 'stalls'">
         <div v-if="rankedStalls.length" class="rank-list">
-          <div
+          <RouterLink
             v-for="(stall, i) in rankedStalls"
             :key="stall.id"
             class="rank-item"
+            :to="rankingLink('stalls', stall)"
           >
             <span class="rank-badge" :class="{ 'badge-top': i < 3, 'badge-gold': i === 0, 'badge-silver': i === 1, 'badge-bronze': i === 2 }">{{ i + 1 }}</span>
             <div class="rank-body">
@@ -113,7 +115,7 @@
               </small>
             </div>
             <span class="rank-score">{{ stall.rankScore }}</span>
-          </div>
+          </RouterLink>
         </div>
         <button v-if="rankingPages.stalls.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='stalls'" @click="loadMore('stalls')">{{ loadingMore==='stalls'?'加载中…':'加载更多档口' }}</button>
         <div v-else class="empty-state">
@@ -134,21 +136,22 @@
 
       <!-- Collapsed: top 3 preview -->
       <div v-if="expandedSection !== 'canteens'" class="rank-preview">
-        <div v-for="(canteen, i) in rankedSubCanteens.slice(0, 3)" :key="canteen.id" class="preview-item">
+        <RouterLink v-for="(canteen, i) in rankedSubCanteens.slice(0, 3)" :key="canteen.id" class="preview-item" :to="rankingLink('canteens', canteen)">
           <span class="preview-rank">{{ i + 1 }}</span>
           <span class="preview-name">{{ canteen.name }}</span>
           <span class="preview-score">{{ canteen.rankScore }}</span>
-        </div>
+        </RouterLink>
         <p v-if="rankedSubCanteens.length === 0" class="preview-empty">暂无数据</p>
       </div>
 
       <!-- Expanded: full list -->
       <template v-if="expandedSection === 'canteens'">
         <div v-if="rankedSubCanteens.length" class="rank-list">
-          <div
+          <RouterLink
             v-for="(canteen, i) in rankedSubCanteens"
             :key="canteen.id"
             class="rank-item"
+            :to="rankingLink('canteens', canteen)"
           >
             <span class="rank-badge" :class="{ 'badge-top': i < 3, 'badge-gold': i === 0, 'badge-silver': i === 1, 'badge-bronze': i === 2 }">{{ i + 1 }}</span>
             <div class="rank-body">
@@ -163,7 +166,7 @@
               </small>
             </div>
             <span class="rank-score">{{ canteen.rankScore }}</span>
-          </div>
+          </RouterLink>
         </div>
         <button v-if="rankingPages.canteens.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='canteens'" @click="loadMore('canteens')">{{ loadingMore==='canteens'?'加载中…':'加载更多场所' }}</button>
         <div v-else class="empty-state">
@@ -176,6 +179,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { RouterLink } from 'vue-router';
 import { dishNutritionPresentation, dishPriceText, dishRatingText } from '../domain/dishPresentation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
@@ -191,6 +195,11 @@ const rankingPages = ref({
 const expandedSection = ref('');
 function toggleSection(name) {
   expandedSection.value = expandedSection.value === name ? '' : name;
+}
+function rankingLink(type, item) {
+  if (type === 'dishes') return { name: 'dish-detail', params: { id: item.id } };
+  if (type === 'stalls') return { path: '/canteens', query: { stall: item.id } };
+  return { path: '/canteens', query: { canteen: item.id } };
 }
 
 /* ── Dish category chips ── */
@@ -338,6 +347,8 @@ function crowdLabel(level) {
   gap: 6px;
 }
 .preview-item {
+  color: inherit;
+  text-decoration: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -415,6 +426,8 @@ function crowdLabel(level) {
 }
 
 .rank-item {
+  color: inherit;
+  text-decoration: none;
   display: flex;
   align-items: center;
   gap: 10px;

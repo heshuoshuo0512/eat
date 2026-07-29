@@ -32,6 +32,7 @@
     "catalog:promote:pg": "node scripts/promote-real-catalog-postgres.mjs",
     "catalog:introductions:import:pg": "node scripts/import-catalog-introductions-postgres.mjs",
     "admin:bootstrap": "node scripts/bootstrap-admin.mjs",
+    "pilot:hash-phone": "node scripts/hash-pilot-phone.mjs",
     "collector:staff": "node scripts/bootstrap-collector-staff.mjs",
     "collector:export": "node scripts/export-collector-dataset.mjs",
     "collector:train": "node scripts/train-collector-model.mjs",

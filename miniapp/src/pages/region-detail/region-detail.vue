@@ -1,5 +1,5 @@
 <template>
-  <sc-page-shell back :title="region?.name||'区域推荐'" :subtitle="region?.subtitle||'风味分区'" tone="explore">
+  <sc-page-shell back :title="region?.name||'地区口味推荐'" :subtitle="region?.subtitle||'地区风味'" tone="explore">
     <sc-state-card v-if="!region" type="error" title="区域不存在" desc="返回区域列表重新选择。" />
     <template v-else>
       <view class="region-workspace">

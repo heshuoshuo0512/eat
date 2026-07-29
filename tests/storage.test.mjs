@@ -1,9 +1,9 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { resetS3ClientForTests, setS3ClientForTests, storeUpload } from '../server/storage.js';
+import { deleteStoredUpload, resetS3ClientForTests, setS3ClientForTests, storeUpload } from '../server/storage.js';
 
 const pngBase64 = Buffer.from('fake-image').toString('base64');
 const originalEnv = { ...process.env };
@@ -30,6 +30,8 @@ describe('storage adapter tenant-scoped contracts', () => {
       assert.match(upload.url, new RegExp(`^/api/uploads/${upload.id}/content\\?expires=\\d+&signature=`));
       assert.equal(upload.visibility, 'private');
       assert.equal(readFileSync(join(dir, upload.storageKey), 'utf8'), 'fake-image');
+      await deleteStoredUpload(upload);
+      assert.equal(existsSync(join(dir, upload.storageKey)), false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -77,6 +79,24 @@ describe('storage adapter tenant-scoped contracts', () => {
     assert.equal(sent[0].input.Body.toString('utf8'), 'fake-image');
     assert.equal(sent[0].config.endpoint, 'http://minio:9000');
     assert.equal(sent[0].config.forcePathStyle, true);
+  });
+
+  it('deletes S3 uploads with the same tenant-scoped object key', async () => {
+    const sent = [];
+    class FakePutObjectCommand { constructor(input) { this.input = input; } }
+    class FakeDeleteObjectCommand { constructor(input) { this.input = input; } }
+    class FakeS3Client {
+      async send(command) { sent.push(command.input); }
+    }
+    setS3ClientForTests(FakeS3Client, FakePutObjectCommand, null, FakeDeleteObjectCommand);
+    process.env.S3_BUCKET = 'smart-canteen-uploads';
+    process.env.S3_ACCESS_KEY_ID = 'key';
+    process.env.S3_SECRET_ACCESS_KEY = 'secret';
+
+    const upload = await storeUpload({ filename: 'meal.webp', contentType: 'image/webp', dataBase64: pngBase64, tenantId: 'tenant-b', ownerId: 'user-b' });
+    await deleteStoredUpload(upload);
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent[1], { Bucket: 'smart-canteen-uploads', Key: upload.storageKey });
   });
 
   it('rejects invalid content type and empty content', () => {

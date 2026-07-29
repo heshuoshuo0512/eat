@@ -20,7 +20,7 @@ describe('dual retrieval frontend contracts', () => {
 
   it('keeps search and recommendation response state independent', () => {
     assert.match(store, /dishSearchResult = ref\(emptyDishSearchResult\(\)\)/);
-    assert.match(store, /searchDishes\(payload\)[\s\S]*apiClient\.dishesSearch\(payload\)/);
+    assert.match(store, /searchDishes\(payload,\s*\{ append = false \} = \{\}\)[\s\S]*apiClient\.dishesSearch\(payload\)/);
     assert.match(store, /requestRecommendation\(payload = \{\}\)[\s\S]*apiClient\.recommend\(payload\)/);
     assert.match(store, /recommendations:[\s\S]*evidence:[\s\S]*suggestedRelaxations/);
   });

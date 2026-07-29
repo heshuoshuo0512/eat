@@ -1,5 +1,5 @@
 <template>
-  <section class="card smart-meal-composer">
+  <section :class="['card', 'smart-meal-composer', `variant-${variant}`]">
     <div class="composer-heading">
       <div>
         <p class="eyebrow">Smart Meal</p>
@@ -69,7 +69,8 @@ defineProps({
   actionText: { type: String, default: '帮我找菜' },
   memoryOpen: Boolean,
   memoryDraft: { type: String, default: '' },
-  memorySaving: Boolean
+  memorySaving: Boolean,
+  variant: { type: String, default: 'search', validator: (value) => ['search', 'recommend'].includes(value) }
 });
 
 defineEmits([
@@ -85,6 +86,10 @@ defineEmits([
 
 <style scoped>
 .smart-meal-composer { display: grid; gap: 16px; padding: 20px; overflow: hidden; }
+.variant-search { border-top: 3px solid var(--primary); background: #fff; }
+.variant-recommend { border-left: 4px solid #315f78; background: #f4f7f9; box-shadow: 0 16px 34px rgba(36, 69, 88, .08); }
+.variant-recommend .profile-prompt { border-color: rgba(49,95,120,.18); background: #fff; }
+.variant-recommend .profile-prompt:hover { border-color: rgba(49,95,120,.42); background: #edf3f6; }
 .composer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .composer-heading h2 { margin: 0; font-size: 20px; }
 .composer-heading p:not(.eyebrow) { margin: 6px 0 0; color: var(--muted); line-height: 1.55; }

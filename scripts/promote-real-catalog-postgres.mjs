@@ -80,7 +80,11 @@ function cleanText(value) {
 }
 
 function cleanDishName(value) {
-  return cleanText(value).replace(/^\s*(?:3|4)\s*\.\s*/, '').replace(/^\s*\.\s*/, '').trim();
+  return cleanText(value).replace(/^\s*\d+\s*[.、]\s*/u, '').replace(/^\s*[.、]\s*/u, '').trim();
+}
+
+function isServingTierName(value) {
+  return /^(?:\d+\s*[-~至]\s*\d+|\d+|单|双|多)\s*人份$/u.test(cleanDishName(value));
 }
 
 function cleanJsonText(value) {
@@ -129,6 +133,7 @@ function valueForColumn(table, column, row, checksum, { preparedSource = false }
   if ((table === 'stalls' || table === 'dishes') && column === 'reservation_enabled') return true;
   if (table === 'stalls' && column === 'open') return 1;
   if (table === 'dishes' && column === 'name') return cleanDishName(row.name);
+  if (table === 'dishes' && column === 'status' && isServingTierName(row.name)) return 'inactive';
   if (column === 'description' || column.endsWith('_json')) return column.endsWith('_json') ? cleanJsonText(row[column]) : cleanText(row[column]);
   if (table === 'data_import_batches' && column === 'status') return 'approved';
   if (table === 'data_import_batches' && column === 'reviewed_by') return 'catalog-promotion';
@@ -154,6 +159,23 @@ async function insertRenovatingVenues(client, tenantId) {
       [id, tenantId, name, displayName, displayOrder, location, description]);
   }
   return rows.length;
+}
+
+async function applyCatalogItemCorrections(client, tenantId) {
+  if (tenantId !== 'default') {
+    const ragDocuments = await client.query(`SELECT COUNT(*)::integer AS count FROM rag_documents
+      WHERE tenant_id IN ($1, '__global__')`, [tenantId]);
+    return { itemTypes: {}, ragDocuments: Number(ragDocuments.rows[0]?.count || 0) };
+  }
+  await client.query(readFileSync(resolve('server/migrations/025_catalog_item_types.sql'), 'utf8'));
+  const counts = await client.query(`SELECT catalog_item_type, COUNT(*)::integer AS count FROM dishes
+    WHERE tenant_id = $1 GROUP BY catalog_item_type ORDER BY catalog_item_type`, [tenantId]);
+  const ragDocuments = await client.query(`SELECT COUNT(*)::integer AS count FROM rag_documents
+    WHERE tenant_id IN ($1, '__global__')`, [tenantId]);
+  return {
+    itemTypes: Object.fromEntries(counts.rows.map((row) => [row.catalog_item_type, Number(row.count)])),
+    ragDocuments: Number(ragDocuments.rows[0]?.count || 0),
+  };
 }
 
 async function targetColumns(client, table) {
@@ -293,9 +315,14 @@ try {
       preserveMatchingRows: true,
     });
     inserted.dish_ai_annotations = await insertRows(client, sourceDb, 'dish_ai_annotations', inspection.checksum, [], { preparedSource });
+    inserted.catalog_item_types = await applyCatalogItemCorrections(client, tenantId);
     const counts = await targetCounts(client, tenantId);
     for (const key of ['canteens', 'stalls', 'dishes', 'catalog_import_rows', 'rag_documents', 'dish_ai_annotations']) {
-      const expected = key === 'canteens' ? TARGET_CANTEEN_COUNT : SOURCE_EXPECTED[key];
+      const expected = key === 'canteens'
+        ? TARGET_CANTEEN_COUNT
+        : key === 'rag_documents'
+          ? inserted.catalog_item_types.ragDocuments
+          : SOURCE_EXPECTED[key];
       if (counts[key] !== expected) throw new Error(`Post-import count mismatch for ${key}: ${counts[key]}`);
     }
     for (const key of ['users', 'reviews', 'menus', 'menu_items']) {
