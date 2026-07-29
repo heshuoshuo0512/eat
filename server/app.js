@@ -39,6 +39,7 @@ import { businessDate, businessDayUtcRange } from './time.js';
 import { enqueueOutboxEvent, outboxBacklog } from './outbox.js';
 import { createRuntimeMetrics } from './metrics.js';
 import { normalizeDishPricing, PRICING_MODES } from './dishPricing.js';
+import { classifyCatalogItem } from './catalogClassification.js';
 import {
   RETRIEVAL_INDEX_VERSION,
   getRetrievalIndexStatus,
@@ -1215,7 +1216,7 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   const normalizedId = String(id || '').trim();
   const stallId = String(body.stallId || '').trim();
   const conflictingRecord = await db.prepare(`SELECT tenant_id, stall_id, pricing_mode, price_display, pricing_json,
-      aliases_json, semantic_labels_json, source_ref_json, catalog_item_type, parent_dish_id,
+      aliases_json, semantic_labels_json, source_ref_json, catalog_item_type, catalog_category, parent_dish_id,
       rating, review_count, sales FROM dishes WHERE id = ?`).get(normalizedId);
   if (conflictingRecord && conflictingRecord.tenant_id !== tenantId) {
     throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), {
@@ -1233,10 +1234,13 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   const iron = Number(body.iron ?? nutrition.iron ?? 0);
   const status = body.status == null ? 'active' : String(body.status).trim();
   if (!['active', 'hidden'].includes(status)) throw Object.assign(new Error('菜品状态必须为 active 或 hidden'), { status: 400 });
-  const catalogItemType = String(body.catalogItemType || conflictingRecord?.catalog_item_type || 'meal').trim();
-  if (!['meal', 'beverage', 'addon', 'fee'].includes(catalogItemType)) {
-    throw Object.assign(new Error('目录类型仅支持餐食、饮品、加购项或费用项'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
+  const stallRecord = await db.prepare('SELECT name FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantId, stallId);
+  const automaticClassification = classifyCatalogItem({ name: body.name, price: body.price, stallName: stallRecord?.name, currentType: conflictingRecord?.catalog_item_type || 'meal' });
+  const catalogItemType = String(body.catalogItemType || conflictingRecord?.catalog_item_type || automaticClassification.itemType).trim();
+  if (!['meal', 'beverage', 'snack', 'addon', 'fee'].includes(catalogItemType)) {
+    throw Object.assign(new Error('目录类型仅支持餐食、小吃、饮品、加购项或费用项'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
   }
+  const catalogCategory = String(body.catalogCategory || conflictingRecord?.catalog_category || automaticClassification.category).trim().slice(0, 30) || '其他餐食';
   const dietaryLabels = splitList(body.dietaryLabels || []);
   if (dietaryLabels.some((label) => !['pescatarian', 'vegetarian', 'vegan'].includes(label))) {
     throw Object.assign(new Error('饮食模式标签仅支持 pescatarian、vegetarian、vegan'), { status: 400, code: 'INVALID_DIETARY_LABEL' });
@@ -1322,7 +1326,9 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
       normalizedId,
     );
   await db.prepare(`UPDATE dishes SET pricing_mode = ?, price_display = ?, pricing_json = ?, aliases_json = ?,
-      semantic_labels_json = ?, source_ref_json = ?, catalog_item_type = ? WHERE tenant_id = ? AND id = ?`)
+      semantic_labels_json = ?, source_ref_json = ?, catalog_item_type = ?, catalog_category = ?,
+      reservation_enabled = CASE WHEN ? IN ('addon', 'fee') THEN FALSE ELSE reservation_enabled END
+      WHERE tenant_id = ? AND id = ?`)
     .run(
       pricing.mode,
       pricing.display,
@@ -1330,6 +1336,8 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
       serializeJson(Object.prototype.hasOwnProperty.call(body, 'aliases') ? splitList(body.aliases) : parseJsonField(conflictingRecord?.aliases_json, [])),
       serializeJson(Object.prototype.hasOwnProperty.call(body, 'semanticLabels') ? splitList(body.semanticLabels) : parseJsonField(conflictingRecord?.semantic_labels_json, [])),
       serializeJson(Object.prototype.hasOwnProperty.call(body, 'sourceRef') ? body.sourceRef : parseJsonField(conflictingRecord?.source_ref_json, {})),
+      catalogItemType,
+      catalogCategory,
       catalogItemType,
       tenantId,
       normalizedId,
@@ -1844,7 +1852,7 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   const budgetOnlyQuery = /^\s*(?:预算|价格)?\s*(?:不超过|不高于|最多|低于|少于)?\s*[¥￥]?\s*\d+(?:\.\d+)?\s*元?\s*(?:以内|以下|内)?\s*$/u.test(rawQuery);
   const keyword = (budgetOnlyQuery ? '' : rawQuery).toLocaleLowerCase();
   const requestedItemType = String(body.itemType || filters.itemType || '').trim().toLowerCase();
-  const allowedItemTypes = new Set(['meal', 'beverage', 'addon', 'fee', 'all']);
+  const allowedItemTypes = new Set(['meal', 'beverage', 'snack', 'addon', 'fee', 'all']);
   if (requestedItemType && !allowedItemTypes.has(requestedItemType)) {
     throw Object.assign(new Error('目录商品类型不合法'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
   }
@@ -1858,7 +1866,7 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   } else if (!requestedItemType && !keyword) {
     clauses.push("d.catalog_item_type = 'meal'");
   } else if (!requestedItemType) {
-    clauses.push("d.catalog_item_type NOT IN ('addon', 'fee', 'variant')");
+    clauses.push("d.catalog_item_type NOT IN ('addon', 'fee', 'variant', 'section')");
   }
   if (keyword) {
     clauses.push("LOWER(d.name || ' ' || d.cuisine || ' ' || d.taste || ' ' || d.tags_json || ' ' || d.description) LIKE ?");
@@ -1978,7 +1986,7 @@ async function listCommunityDishOptions(db, tenantId, params) {
     itemType: 'all',
   });
   const options = result.items
-    .filter((dish) => ['meal', 'beverage'].includes(dish.catalogItemType) && !isServingTierCatalogName(dish.name))
+    .filter((dish) => ['meal', 'beverage', 'snack'].includes(dish.catalogItemType) && !isServingTierCatalogName(dish.name))
     .map((dish) => ({
       id: dish.id,
       name: dish.name,

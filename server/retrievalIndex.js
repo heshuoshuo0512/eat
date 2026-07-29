@@ -1363,7 +1363,7 @@ async function loadDishRows(db, tenantId, dishId = null) {
      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = d.tenant_id
      WHERE d.tenant_id = ? AND d.status = 'active'
-       AND d.catalog_item_type IN ('meal', 'beverage')${dishFilter}`,
+       AND d.catalog_item_type IN ('meal', 'beverage', 'snack')${dishFilter}`,
   ).all(...params);
 }
 

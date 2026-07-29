@@ -84,7 +84,7 @@ function cleanDishName(value) {
 }
 
 function isServingTierName(value) {
-  return /^(?:\d+\s*[-~至]\s*\d+|\d+|单|双|多)\s*人份$/u.test(cleanDishName(value));
+  return /^(?:\d+\s*[-~至‐‑–—]\s*\d+|\d+|单|双|多)\s*人份$/u.test(cleanDishName(value));
 }
 
 function cleanJsonText(value) {
@@ -168,6 +168,7 @@ async function applyCatalogItemCorrections(client, tenantId) {
     return { itemTypes: {}, ragDocuments: Number(ragDocuments.rows[0]?.count || 0) };
   }
   await client.query(readFileSync(resolve('server/migrations/025_catalog_item_types.sql'), 'utf8'));
+  await client.query(readFileSync(resolve('server/migrations/026_catalog_classification.sql'), 'utf8'));
   const counts = await client.query(`SELECT catalog_item_type, COUNT(*)::integer AS count FROM dishes
     WHERE tenant_id = $1 GROUP BY catalog_item_type ORDER BY catalog_item_type`, [tenantId]);
   const ragDocuments = await client.query(`SELECT COUNT(*)::integer AS count FROM rag_documents

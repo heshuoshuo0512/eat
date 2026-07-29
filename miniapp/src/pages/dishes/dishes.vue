@@ -65,7 +65,7 @@ const store=useCanteenStore();
 const exploreEntries=getStudentEntries(EXPLORE_ENTRY_IDS);
 const modeOptions=[{value:'search',label:'菜品检索'},{value:'recommend',label:'智能推荐'}];
 const sortOptions=[{value:'desc',label:'高分优先'},{value:'asc',label:'低分优先'}];
-const catalogItemTypeOptions=[{value:'meal',label:'餐食'},{value:'beverage',label:'饮品'},{value:'addon',label:'加购'},{value:'all',label:'全部'}];
+const catalogItemTypeOptions=[{value:'meal',label:'餐食'},{value:'snack',label:'小吃'},{value:'beverage',label:'饮品'},{value:'addon',label:'加购'},{value:'all',label:'全部'}];
 const mode=ref(store.discoveryMode.value || 'search');
 const query=ref(''); const searching=ref(false); const searchResult=ref(null); const sortDirection=ref('desc'); const message=ref(''); const isError=ref(false); const citationsExpanded=ref(false); const resultsExpanded=ref(false);
 const catalogItemType=ref('meal');
@@ -79,7 +79,7 @@ const sourceDishes=computed(()=>searchResult.value?.items || store.dishes.value.
 const sortedDishes=computed(()=>sortDishesByRating(sourceDishes.value,ratingMap.value,sortDirection.value));
 const visibleDishes=computed(()=>!searchResult.value || resultsExpanded.value ? sortedDishes.value : sortedDishes.value.slice(0,1));
 const searchTotal=computed(()=>Number(searchResult.value?.page?.total??searchResult.value?.availability?.totalCount??searchResult.value?.items?.length??0));
-const catalogItemTypeTitle=computed(()=>({meal:'全部餐食',beverage:'全部饮品',addon:'全部加购项',all:'全部目录商品'})[catalogItemType.value]||'全部目录商品');
+const catalogItemTypeTitle=computed(()=>({meal:'全部餐食',snack:'全部小吃',beverage:'全部饮品',addon:'全部加购项',all:'全部目录商品'})[catalogItemType.value]||'全部目录商品');
 const resultCountLabel=computed(()=>searchResult.value?`已显示 ${sortedDishes.value.length} / ${searchTotal.value} 道菜`:`已显示 ${sortedDishes.value.length} / ${store.catalogPage.value.total} 项`);
 const resultSummary=computed(()=>{ const result=searchResult.value;if(!result)return'';const total=searchTotal.value;const orderable=Number(result.availability?.orderableCount??result.items?.filter((dish)=>dish.availability?.orderable).length??0);return total?`共匹配 ${total} 道真实菜品，已显示 ${result.items?.length||0} 道，本页 ${orderable} 道当前可预约。20 元以内属于宽范围，可继续加载或增加口味、位置、餐次条件。`:'没有满足全部条件的真实菜品，可参考放宽建议。'; });
 const mealPicks=computed(()=>{const raw=recommendationResult.value?.recommendations||recommendationResult.value?.mealPlan?.dishes||recommendationResult.value?.mealPlan?.picks||recommendationResult.value?.ranked||[];const catalog=new Map(store.dishes.value.map((dish)=>[String(dish.id),dish]));const hydrated=raw.map((pick)=>{const id=pick.id||pick.dishId;return{...(catalog.get(String(id))||{}),...pick,id};}).filter((dish)=>dish.id);return sortDishesByRating(hydrated,ratingMap.value,recommendSort.value);});

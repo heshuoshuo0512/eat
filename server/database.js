@@ -72,20 +72,33 @@ export function cleanDishCatalogName(value) {
 }
 
 export function isServingTierCatalogName(value) {
-  return /^(?:\d+\s*[-~至]\s*\d+|\d+|单|双|多)\s*人份$/u.test(cleanDishCatalogName(value));
+  return /^(?:\d+\s*[-~至‐‑–—]\s*\d+|\d+|单|双|多)\s*人份$/u.test(cleanDishCatalogName(value));
 }
 
-export function inferDishCatalogCategory({ name = '', cuisine = '', tags = [], semanticLabels = [] } = {}) {
+export function inferDishCatalogCategory({ name = '', cuisine = '', tags = [], semanticLabels = [], catalogItemType = 'meal' } = {}) {
   const text = [name, cuisine, ...tags, ...semanticLabels].join(' ');
+  if (catalogItemType === 'beverage') return '饮品';
+  if (catalogItemType === 'snack') return /汉堡|堡/u.test(text) ? '汉堡小吃' : '小吃单品';
+  if (catalogItemType === 'addon') return /丸|鱼豆腐|蟹棒|蟹排/u.test(text) ? '火锅配菜' : '加购项';
+  if (catalogItemType === 'fee') return '费用';
+  if (catalogItemType === 'variant') return '规格选项';
+  if (catalogItemType === 'section') return '目录分组';
   if (/奶茶|咖啡|果汁|豆浆|酸奶|牛奶|饮料|饮品|茶|水吧|可乐|雪碧/u.test(text)) return '饮品';
   if (/面条|拌面|汤面|炒面|拉面|粉|米线|河粉|板面|刀削面|馄饨|饺子/u.test(text)) return '面食粉类';
-  if (/米饭|盖饭|炒饭|焖饭|拌饭|套餐|便当|鸡排饭|烤肉饭/u.test(text)) return '米饭套餐';
-  if (/包子|馒头|烧麦|粥|饼|油条|早餐|豆腐脑|鸡蛋灌饼/u.test(text)) return '早餐面点';
+  if (/饭|套餐|便当/u.test(text)) return '米饭套餐';
+  if (/包子|馒头|烧麦|粥|饼|油条|早餐|豆腐脑|锅贴|盒子|粽子|夹馍|汤圆/u.test(text)) return '早餐面点';
   if (/麻辣烫|麻辣香锅|火锅|冒菜|串串/u.test(text)) return '火锅麻辣烫';
+  if (/汤|羹/u.test(text)) return '汤羹';
+  if (/干锅/u.test(text)) return '干锅菜';
+  if (/砂锅|煲/u.test(text)) return '砂锅煲类';
+  if (/水煮/u.test(text)) return '水煮菜';
+  if (/蒸/u.test(text)) return '蒸菜';
+  if (/沙拉|三明治|谷物/u.test(text)) return '轻食简餐';
+  if (/烤鱼/u.test(text)) return '烤鱼';
   if (/汉堡|炸鸡|鸡排|烤肠|丸子|小吃|甜品|蛋挞|薯条|加蛋|加面|加饭/u.test(text)) return '小吃加料';
   if (/蔬菜|素菜|青菜|土豆丝|豆腐|豆芽|茄子|菜花/u.test(text)) return '素菜';
   if (/鸡|鸭|鹅|猪|牛|羊|鱼|虾|肉|排骨|肘|蛋/u.test(text)) return '荤菜';
-  return '其他';
+  return '家常热菜';
 }
 
 function alignRealCampusVenueCatalog(db) {
@@ -223,7 +236,8 @@ function migrate(db) {
       seasonings_json TEXT NOT NULL DEFAULT '[]',
       additives_json TEXT NOT NULL DEFAULT '[]',
       tags_json TEXT NOT NULL DEFAULT '[]',
-      catalog_item_type TEXT NOT NULL DEFAULT 'meal' CHECK(catalog_item_type IN ('meal','beverage','addon','fee','variant')),
+      catalog_item_type TEXT NOT NULL DEFAULT 'meal' CHECK(catalog_item_type IN ('meal','beverage','snack','addon','fee','variant','section')),
+      catalog_category TEXT NOT NULL DEFAULT '其他餐食',
       parent_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL,
       halal INTEGER NOT NULL DEFAULT 0,
       meal_types_json TEXT NOT NULL DEFAULT '["lunch","dinner"]',
@@ -973,6 +987,7 @@ function migrate(db) {
   try { db.exec("ALTER TABLE dishes ADD COLUMN semantic_labels_json TEXT NOT NULL DEFAULT '[]'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN source_ref_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN catalog_item_type TEXT NOT NULL DEFAULT 'meal'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN catalog_category TEXT NOT NULL DEFAULT '其他餐食'"); } catch {}
   try { db.exec('ALTER TABLE dishes ADD COLUMN parent_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL'); } catch {}
   db.exec("UPDATE dishes SET price_display = CAST(price AS TEXT) || '元' WHERE price_display IS NULL OR price_display = ''");
   const legacySafetyRows = db.prepare("SELECT id, allergens_json, safety_declarations_json FROM dishes WHERE safety_declarations_json IS NULL OR safety_declarations_json = '[]'").all();
@@ -1358,7 +1373,7 @@ export function rowToDish(row) {
     semanticLabels,
     catalogItemType: row.catalog_item_type || 'meal',
     parentDishId: row.parent_dish_id || null,
-    catalogCategory: inferDishCatalogCategory({ name, cuisine: row.cuisine, tags, semanticLabels }),
+    catalogCategory: row.catalog_category || inferDishCatalogCategory({ name, cuisine: row.cuisine, tags, semanticLabels, catalogItemType: row.catalog_item_type || 'meal' }),
     sourceRef: parseJson(row.source_ref_json, {}),
     regionalTaste: row.regional_taste || '',
     rating: row.rating,

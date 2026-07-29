@@ -10,6 +10,16 @@
       </label>
       <label>菜名<input v-model.trim="form.name" name="name" required maxlength="40" /></label>
       <div class="dish-field-grid two">
+        <label>目录类型
+          <select v-model="form.catalogItemType" name="catalogItemType">
+            <option value="meal">餐食</option>
+            <option value="snack">小吃单品</option>
+            <option value="beverage">饮品</option>
+            <option value="addon">加购项</option>
+            <option value="fee">费用项</option>
+          </select>
+        </label>
+        <label>展示分类<input v-model.trim="form.catalogCategory" name="catalogCategory" maxlength="30" placeholder="如：火锅配菜、汉堡小吃" /></label>
         <label>价格<input v-model.number="form.price" name="price" type="number" min="1" max="200" step="0.1" required /></label>
         <label>口味<input v-model.trim="form.taste" name="taste" required maxlength="20" /></label>
         <label>菜系<input v-model.trim="form.cuisine" name="cuisine" required maxlength="30" /></label>

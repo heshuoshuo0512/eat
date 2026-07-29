@@ -1,6 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { classifyCatalogItem } from '../server/catalogClassification.js';
 
 let db;
 let server;
@@ -154,5 +155,52 @@ describe('catalog item type boundaries', () => {
     assert.equal(indexed.has(fixture.addon), false);
     assert.equal(indexed.has(fixture.fee), false);
     assert.equal(indexed.has(fixture.variant), false);
+  });
+});
+
+describe('real catalog classification rules', () => {
+  const classify = (name, price, stallName = '') => classifyCatalogItem({ name, price, stallName });
+
+  it('separates add-ons, headings, beverages, snacks and complete meals', () => {
+    assert.equal(classify('丸子', 1.5, '安徽板面').itemType, 'addon');
+    assert.equal(classify('卤蛋', 1.5, '小笼粥饼屋').itemType, 'addon');
+    assert.equal(classify('加鸡蛋', 2, '蜀小面大馄饨').itemType, 'addon');
+    assert.equal(classify('酸汤水饺+', 1, '手工水饺').itemType, 'addon');
+    assert.equal(classify('猪肉主荤类', 8, '燕鸣湖小份菜').itemType, 'section');
+    assert.equal(classify('山药玉米汁', 3, '肉灌饼').itemType, 'beverage');
+    assert.equal(classify('香辣鸡腿堡', 8, '汉堡工坊').itemType, 'snack');
+    assert.equal(classify('A套餐(薯条+鸡块+洋葱圈)', 25, '汉堡工坊').itemType, 'meal');
+    assert.equal(classify('香锅低消', 12, '香锅 麻辣烫').itemType, 'fee');
+    assert.equal(classify('麻辣烫低消', 8, '香锅 麻辣烫').itemType, 'fee');
+    assert.equal(classify('T3(黄金鸡腿堡2个)', 9.9, '燃能-中国汉堡').category, '汉堡套餐');
+  });
+
+  it('uses stall context without turning real low-price meals into add-ons', () => {
+    assert.equal(classify('鸡排', 5, '胡椒厨房板烧饭').itemType, 'addon');
+    assert.equal(classify('鸡柳', 4, '民族餐厅综合档口').itemType, 'snack');
+    assert.equal(classify('牛奶燕麦粥(甜)', 2, '小笼粥饼屋').itemType, 'meal');
+    assert.equal(classify('香菇油菜', 3, '心怡快餐').itemType, 'meal');
+    assert.equal(classify('香菇油菜', 3, '心怡快餐').category, '家常热菜');
+    assert.equal(classify('干锅花菜', 10, '小炒档口').category, '干锅菜');
+    assert.equal(classify('鸡丁滑蛋饭', 12, '滑蛋饭').category, '米饭套餐');
+    assert.equal(classify('鸡肉谷物沙拉', 15, '轻食档口').category, '轻食简餐');
+    assert.equal(classify('可乐鸡块盖饭', 12, '盖饭档口').itemType, 'meal');
+    assert.equal(classify('红烧鸡块面', 12, '面馆').itemType, 'meal');
+    assert.equal(classify('烤鸡皮', 2, '掉渣饼 剁椒面').itemType, 'addon');
+    assert.equal(classify('鱼肉', 3, '五谷渔粉面').itemType, 'addon');
+    assert.equal(classify('生烫吊龙牛肉', 6, '长安畔·鲜烫牛肉米线').itemType, 'addon');
+    assert.equal(classify('鲜切牛肉', 6, '桂英嫂生烫牛肉米线').itemType, 'addon');
+    assert.equal(classify('牛肉', 7, '汤の饼相见').itemType, 'addon');
+    assert.equal(classify('大鸡腿', 7, '燃能-中国汉堡').itemType, 'snack');
+    assert.equal(classify('冒牛肉', 12, '香锅 麻辣烫').category, '火锅麻辣烫');
+    assert.equal(classify('溜肉段', 12, '小炒盖饭').category, '米饭套餐');
+    assert.equal(classify('烤里鱼', 18, '青年盖饭干锅').category, '烤鱼');
+    assert.equal(classify('大葱香菜肉', 10, '手工水饺').category, '面食粉类');
+    assert.equal(classify('标配款', 9, '肉灌饼').category, '早餐面点');
+  });
+
+  it('recognizes source rows that are flavor or portion variants', () => {
+    assert.equal(classify('原味', 3, '掉渣饼 剁椒面').itemType, 'variant');
+    assert.equal(classify('肥瘦', 6, '西安名吃 炒饼 炒面皮').itemType, 'variant');
   });
 });

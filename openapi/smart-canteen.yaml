@@ -693,7 +693,7 @@ components:
       type: object
       properties:
         query: { type: string, maxLength: 500, description: Natural-language dish query. Rule extraction runs before optional semantic retrieval. }
-        itemType: { type: string, enum: [meal, beverage, addon, fee, all], description: Empty browse defaults to meal; keyword search includes meal and beverage. }
+        itemType: { type: string, enum: [meal, snack, beverage, addon, fee, all], description: Empty browse defaults to meal; keyword search includes meals, snacks and beverages. }
         filters: { $ref: '#/components/schemas/DishSearchFilters' }
         sort: { type: string, enum: [relevance, price_asc, price_desc, rating, sales], default: relevance }
         limit: { type: integer, minimum: 1, maximum: 50, default: 20 }
@@ -810,7 +810,8 @@ components:
       properties:
         id: { type: string }
         name: { type: string }
-        catalogItemType: { type: string, enum: [meal, beverage, addon, fee, variant] }
+        catalogItemType: { type: string, enum: [meal, snack, beverage, addon, fee, variant, section] }
+        catalogCategory: { type: string, description: Human-readable catalog category such as 火锅配菜 or 汉堡小吃. }
         parentDishId: { type: string, nullable: true, description: Canonical parent for an internal variant row. Variant rows are not returned by catalog search. }
         price: { type: number }
         pricingMode: { type: string, enum: [fixed, per_weight, per_person, variants, tiered] }
@@ -1118,7 +1119,8 @@ components:
         id: { type: string }
         stallId: { type: string }
         name: { type: string }
-        catalogItemType: { type: string, enum: [meal, beverage, addon, fee], default: meal }
+        catalogItemType: { type: string, enum: [meal, snack, beverage, addon, fee], default: meal }
+        catalogCategory: { type: string, maxLength: 30, default: 其他餐食 }
         price: { type: number, minimum: 0 }
         pricingMode: { type: string, enum: [fixed, per_weight, per_person, variants, tiered], default: fixed }
         priceDisplay: { type: string, description: Human-readable normalized price, for example 1.68元/50克. }

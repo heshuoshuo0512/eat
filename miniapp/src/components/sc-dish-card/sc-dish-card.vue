@@ -5,6 +5,7 @@
       <view class="dish-title-row"><text class="dish-name">{{ dish.name }}</text><text class="dish-price">{{ priceText }}</text></view>
       <text v-if="location" class="dish-location">{{ location }}</text>
       <view class="dish-meta-row">
+        <text v-if="catalogLabel" class="catalog-label">{{ catalogLabel }}</text>
         <text :class="{ rating: hasRating }">{{ ratingText }}</text>
         <text class="meta-divider">·</text>
         <text>{{ nutrition.label }}</text>
@@ -29,6 +30,10 @@ const hasRating = computed(() => ratingText.value !== '暂无评分');
 const normalizedVariant = computed(() => props.variant === 'featured' ? 'featured' : 'compact');
 const showMedia = computed(() => normalizedVariant.value === 'featured' && props.media === 'auto');
 const nutrition = computed(() => dishNutritionPresentation(props.dish));
+const catalogLabel = computed(() => {
+  const type = ({ meal: '餐食', snack: '小吃', beverage: '饮品', addon: '加购项', fee: '费用项' })[props.dish.catalogItemType] || '';
+  return props.dish.catalogCategory && props.dish.catalogCategory !== type ? `${type} · ${props.dish.catalogCategory}` : type;
+});
 const statusLabel = computed(() => props.supplyStatus || props.badge || '');
 const statusClass = computed(() => props.unavailable || /售罄|不可|非今日|未确认/.test(statusLabel.value) ? 'sold' : /紧张|限量/.test(statusLabel.value) ? 'limited' : 'available');
 const hasTrustWarning = computed(() => {
@@ -51,6 +56,7 @@ const hasTrustWarning = computed(() => {
 .dish-location { display:block; overflow:hidden; margin-top:4px; color:var(--muted); font-size:12px; white-space:nowrap; text-overflow:ellipsis; }
 .dish-meta-row { display:flex; min-width:0; flex-wrap:wrap; align-items:center; gap:6px; margin-top:9px; color:var(--muted); font-size:12px; line-height:22px; }
 .dish-meta-row .rating { color:var(--ink-2); font-weight:500; }
+.catalog-label { color:var(--module-dark); font-weight:600; }
 .meta-divider { color:#a1a1aa; }
 .status-badge { margin-left:auto; min-height:22px; padding:0 7px; border-radius:999px; color:var(--ink-2); background:var(--surface-soft); font-size:12px; line-height:22px; }
 .status-badge.available { color:var(--success); background:var(--success-soft); }

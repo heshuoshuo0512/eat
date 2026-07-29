@@ -122,8 +122,8 @@ function isActiveDish(candidate) {
   const name = String(candidate?.name || '').replace(/^\s*\d+\s*[.、]\s*/u, '').trim();
   const itemType = String(candidate?.catalogItemType || candidate?.catalog_item_type || 'meal');
   return candidate?.status === 'active'
-    && !['addon', 'fee', 'variant'].includes(itemType)
-    && !/^(?:\d+\s*[-~至]\s*\d+|\d+|单|双|多)\s*人份$/u.test(name);
+    && !['addon', 'fee', 'variant', 'section'].includes(itemType)
+    && !/^(?:\d+\s*[-~至‐‑–—]\s*\d+|\d+|单|双|多)\s*人份$/u.test(name);
 }
 
 function isMealCandidate(candidate) {

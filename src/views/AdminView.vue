@@ -1228,7 +1228,7 @@ function defaultCanteenForm() {
 }
 
 function defaultDishForm() {
-  return { id: '', stallId: store.stalls[0]?.id || '', name: '', price: 15, taste: '', cuisine: '', ingredients: '', seasonings: '', additives: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', rating: 0, reviewCount: 0, sales: 0, calories: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '', allergenDeclarationStatus: 'unknown', dietaryLabels: '', spiceLevel: null, nutritionFactStatus: 'unknown', recipeFactStatus: 'unknown', halalFactStatus: 'unknown', dietaryFactStatus: 'unknown', spiceFactStatus: 'unknown', factSource: 'manual', dataVersion: 'manual-v1' };
+  return { id: '', stallId: store.stalls[0]?.id || '', name: '', catalogItemType: 'meal', catalogCategory: '其他餐食', price: 15, taste: '', cuisine: '', ingredients: '', seasonings: '', additives: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', rating: 0, reviewCount: 0, sales: 0, calories: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '', allergenDeclarationStatus: 'unknown', dietaryLabels: '', spiceLevel: null, nutritionFactStatus: 'unknown', recipeFactStatus: 'unknown', halalFactStatus: 'unknown', dietaryFactStatus: 'unknown', spiceFactStatus: 'unknown', factSource: 'manual', dataVersion: 'manual-v1' };
 }
 
 function defaultStallForm() {
@@ -1389,6 +1389,8 @@ function dishPayload() {
     id: dishForm.id || undefined,
     stallId: dishForm.stallId,
     name: assertText(dishForm.name, '菜名', 2, 40),
+    catalogItemType: dishForm.catalogItemType || 'meal',
+    catalogCategory: assertText(dishForm.catalogCategory || '其他餐食', '展示分类', 2, 30),
     price: assertNumber(dishForm.price, '价格', 1, 200),
     taste: assertText(dishForm.taste, '口味', 1, 20),
     cuisine: assertText(dishForm.cuisine, '菜系', 1, 30),

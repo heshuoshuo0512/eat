@@ -109,6 +109,7 @@ const catalogLoadingMore = ref(false);
 const catalogItemType = ref('meal');
 const catalogItemTypes = [
   { value: 'meal', label: '餐食' },
+  { value: 'snack', label: '小吃' },
   { value: 'beverage', label: '饮品' },
   { value: 'addon', label: '加购' },
   { value: 'all', label: '全部目录' },
@@ -162,7 +163,8 @@ async function selectCatalogItemType(itemType) {
 }
 
 function catalogItemTypeLabel(dish) {
-  return ({ meal: '餐食', beverage: '饮品', addon: '加购项', fee: '费用项' })[dish.catalogItemType] || dish.catalogCategory || '目录商品';
+  const type = ({ meal: '餐食', snack: '小吃', beverage: '饮品', addon: '加购项', fee: '费用项' })[dish.catalogItemType] || '目录商品';
+  return dish.catalogCategory && dish.catalogCategory !== type ? `${type} · ${dish.catalogCategory}` : type;
 }
 
 function clearStallFilter() {
