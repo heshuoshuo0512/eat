@@ -1878,6 +1878,11 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   } else if (!requestedItemType) {
     clauses.push("d.catalog_item_type NOT IN ('addon', 'fee', 'variant', 'section')");
   }
+  const catalogCategory = String(body.catalogCategory || filters.catalogCategory || '').trim();
+  if (catalogCategory) {
+    clauses.push('d.catalog_category = ?');
+    values.push(catalogCategory);
+  }
   const likePattern = keyword ? `%${keyword}%` : null;
   if (keyword) {
     clauses.push("(LOWER(d.name || ' ' || d.ingredients_json || ' ' || d.cuisine || ' ' || d.taste || ' ' || d.description) LIKE ?)");

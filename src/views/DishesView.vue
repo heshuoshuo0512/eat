@@ -44,16 +44,16 @@
     <button class="text-link" type="button" @click="clearStallFilter">查看全部</button>
   </p>
 
-  <div v-if="!searchResultActive" class="catalog-type-bar" role="group" aria-label="目录商品分类">
+  <div v-if="!searchResultActive" class="catalog-type-bar" role="group" aria-label="菜品分类">
     <button
-      v-for="option in catalogItemTypes"
-      :key="option.value"
+      v-for="cat in dishCategories"
+      :key="cat.value"
       class="pill"
-      :class="{ active: catalogItemType === option.value }"
+      :class="{ active: selectedCategory === cat.value }"
       type="button"
       :disabled="catalogLoadingMore"
-      @click="selectCatalogItemType(option.value)"
-    >{{ option.label }}</button>
+      @click="selectCategory(cat.value)"
+    >{{ cat.label }}</button>
   </div>
 
   <div class="result-toolbar">
@@ -106,13 +106,19 @@ const router = useRouter();
 const stallFilter = ref(route.query.stall || '');
 const sortDir = ref('desc');
 const catalogLoadingMore = ref(false);
-const catalogItemType = ref('meal');
-const catalogItemTypes = [
-  { value: 'meal', label: '餐食' },
-  { value: 'snack', label: '小吃' },
-  { value: 'beverage', label: '饮品' },
-  { value: 'addon', label: '加购' },
-  { value: 'all', label: '全部目录' },
+const selectedCategory = ref('');
+const dishCategories = [
+  { value: '', label: '全部', itemType: 'all' },
+  { value: '早餐面点', label: '早餐', itemType: null },
+  { value: '快餐', label: '快餐', itemType: null },
+  { value: '套餐饭', label: '套餐饭', itemType: null },
+  { value: '面食粉类', label: '面食', itemType: null },
+  { value: '火锅麻辣烫', label: '麻辣烫', itemType: null },
+  { value: '家常热菜', label: '家常菜', itemType: null },
+  { value: '汉堡套餐', label: '汉堡', itemType: null },
+  { value: '轻食简餐', label: '轻食', itemType: null },
+  { value: '小吃', label: '小吃', itemType: 'snack' },
+  { value: '饮品', label: '饮品', itemType: 'beverage' },
 ];
 
 const stallFilterName = computed(() => store.stalls.find((s) => s.id === stallFilter.value)?.name || '');
@@ -135,7 +141,7 @@ const sortedDishes = computed(() => sortDishesByRating(filteredDishes.value, rat
 
 const searchResultActive = computed(() => Boolean(store.dishSearchResult.query));
 const resultCountLabel = computed(() => {
-  if (!searchResultActive.value) return `已显示 ${sortedDishes.value.length} / ${store.catalogPage.total} 项${catalogItemTypes.find((item) => item.value === catalogItemType.value)?.label || '目录'}`;
+  if (!searchResultActive.value) return `已显示 ${sortedDishes.value.length} / ${store.catalogPage.total} 项菜品`;
   const total = Number(ragResult.value?.page?.total ?? ragResult.value?.availability?.totalCount ?? sortedDishes.value.length);
   return `已显示 ${sortedDishes.value.length} / ${total} 道匹配菜品`;
 });
@@ -148,17 +154,28 @@ watch(() => route.query.dish, (val) => {
   if (val) router.replace({ name: 'dish-detail', params: { id: String(val) } });
 });
 
+function buildFilters() {
+  const cat = dishCategories.find(c => c.value === selectedCategory.value);
+  const filters = { sort: 'rating_desc' };
+  if (cat?.itemType) {
+    filters.itemType = cat.itemType;
+  } else if (selectedCategory.value) {
+    filters.catalogCategory = selectedCategory.value;
+  }
+  return filters;
+}
+
 async function loadMoreCatalog() {
   if (catalogLoadingMore.value || !store.catalogPage.hasMore) return;
   catalogLoadingMore.value = true;
-  try { await store.loadMoreCatalog({ sort: 'rating_desc', itemType: catalogItemType.value }); } finally { catalogLoadingMore.value = false; }
+  try { await store.loadMoreCatalog(buildFilters()); } finally { catalogLoadingMore.value = false; }
 }
 
-async function selectCatalogItemType(itemType) {
-  if (catalogLoadingMore.value || catalogItemType.value === itemType) return;
+async function selectCategory(value) {
+  if (catalogLoadingMore.value || selectedCategory.value === value) return;
   catalogLoadingMore.value = true;
-  catalogItemType.value = itemType;
-  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, sort: 'rating_desc', itemType }); }
+  selectedCategory.value = value;
+  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, ...buildFilters() }); }
   finally { catalogLoadingMore.value = false; }
 }
 
@@ -305,6 +322,8 @@ function dishLocation(dish) {
 
 onMounted(async () => {
   await loadMemory();
+  // 初始化时强制加载全部菜品（selectedCategory 初始为空，selectCategory 会跳过）
+  await store.loadCatalogDishes({ page: 1, pageSize: 50, sort: 'rating_desc', itemType: 'all' });
   if (route.query.dish) await router.replace({ name: 'dish-detail', params: { id: String(route.query.dish) } });
 });
 </script>
@@ -389,6 +408,7 @@ onMounted(async () => {
 .result-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 28px 0 14px; }.result-toolbar h2 { margin: 0; font-size: 20px; }
 .catalog-type-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0; }
 .catalog-type-bar .pill.active { color: #fff; background: #176b45; border-color: #176b45; }
+
 
 .stall-banner { display: flex; align-items: center; gap: 10px; padding: 12px 18px; margin-bottom: 14px; border-radius: 18px; background: linear-gradient(135deg, rgba(31,122,77,.1), rgba(255,255,255,.68)); border: 1px solid rgba(31,122,77,.14); font-size: 14px; }
 .sort-bar { display: flex; gap: 8px; margin: 0; }
