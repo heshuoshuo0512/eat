@@ -204,6 +204,8 @@ function migrate(db) {
       display_name TEXT NOT NULL DEFAULT '',
       display_order INTEGER NOT NULL DEFAULT 999,
       operating_status TEXT NOT NULL DEFAULT 'open' CHECK(operating_status IN ('open','renovating','closed')),
+      review_status TEXT NOT NULL DEFAULT 'approved' CHECK(review_status IN ('approved','pending','excluded')),
+      retrieval_eligible INTEGER NOT NULL DEFAULT 1 CHECK(retrieval_eligible IN (0,1)),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -221,6 +223,8 @@ function migrate(db) {
       open INTEGER NOT NULL DEFAULT 1,
       reservation_enabled INTEGER NOT NULL DEFAULT 0,
       description TEXT NOT NULL,
+      review_status TEXT NOT NULL DEFAULT 'approved' CHECK(review_status IN ('approved','pending','excluded')),
+      retrieval_eligible INTEGER NOT NULL DEFAULT 1 CHECK(retrieval_eligible IN (0,1)),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -268,6 +272,8 @@ function migrate(db) {
       fact_expires_at TEXT,
       data_version TEXT NOT NULL DEFAULT 'legacy',
       synthetic INTEGER NOT NULL DEFAULT 0,
+      review_status TEXT NOT NULL DEFAULT 'approved' CHECK(review_status IN ('approved','pending','excluded')),
+      retrieval_eligible INTEGER NOT NULL DEFAULT 1 CHECK(retrieval_eligible IN (0,1)),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -989,6 +995,12 @@ function migrate(db) {
   try { db.exec("ALTER TABLE dishes ADD COLUMN catalog_item_type TEXT NOT NULL DEFAULT 'meal'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN catalog_category TEXT NOT NULL DEFAULT '其他餐食'"); } catch {}
   try { db.exec('ALTER TABLE dishes ADD COLUMN parent_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL'); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN retrieval_eligible INTEGER NOT NULL DEFAULT 1"); } catch {}
+  try { db.exec("ALTER TABLE stalls ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
+  try { db.exec("ALTER TABLE stalls ADD COLUMN retrieval_eligible INTEGER NOT NULL DEFAULT 1"); } catch {}
+  try { db.exec("ALTER TABLE canteens ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
+  try { db.exec("ALTER TABLE canteens ADD COLUMN retrieval_eligible INTEGER NOT NULL DEFAULT 1"); } catch {}
   db.exec("UPDATE dishes SET price_display = CAST(price AS TEXT) || '元' WHERE price_display IS NULL OR price_display = ''");
   const legacySafetyRows = db.prepare("SELECT id, allergens_json, safety_declarations_json FROM dishes WHERE safety_declarations_json IS NULL OR safety_declarations_json = '[]'").all();
   const updateLegacySafety = db.prepare('UPDATE dishes SET safety_declarations_json = ? WHERE id = ?');
@@ -1298,6 +1310,8 @@ export function rowToCanteen(row) {
     displayName: row.display_name || row.name,
     displayOrder: Number(row.display_order ?? 999),
     operatingStatus: row.operating_status || 'open',
+    reviewStatus: row.review_status || 'approved',
+    retrievalEligible: Boolean(row.retrieval_eligible ?? 1),
     image: row.image && !String(row.image).startsWith('http') && !String(row.image).startsWith('upload://') ? row.image : '',
     imageUrl: resolveUploadReference(row.image && (String(row.image).startsWith('http') || String(row.image).startsWith('upload://')) ? row.image : '')
   };
@@ -1316,7 +1330,9 @@ export function rowToStall(row) {
     avgPrice: row.avg_price,
     open: Boolean(row.open),
     reservationEnabled: Boolean(row.reservation_enabled),
-    description: row.description
+    description: row.description,
+    reviewStatus: row.review_status || 'approved',
+    retrievalEligible: Boolean(row.retrieval_eligible ?? 1)
   };
 }
 
@@ -1374,6 +1390,8 @@ export function rowToDish(row) {
     catalogItemType: row.catalog_item_type || 'meal',
     parentDishId: row.parent_dish_id || null,
     catalogCategory: row.catalog_category || inferDishCatalogCategory({ name, cuisine: row.cuisine, tags, semanticLabels, catalogItemType: row.catalog_item_type || 'meal' }),
+    reviewStatus: row.review_status || 'approved',
+    retrievalEligible: Boolean(row.retrieval_eligible ?? 1),
     sourceRef: parseJson(row.source_ref_json, {}),
     regionalTaste: row.regional_taste || '',
     rating: row.rating,
