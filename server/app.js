@@ -930,12 +930,21 @@ async function applyApprovedIntroductions(db, tenantId, entityType, entities) {
 }
 
 async function listCanteens(db, tenantId = 'default') {
-  const canteens = (await db.prepare('SELECT * FROM canteens WHERE tenant_id = ? ORDER BY CASE WHEN parent_id IS NULL THEN display_order ELSE 999 END, parent_id, display_order, name, id').all(tenantId)).map(rowToCanteen);
+  const canteens = (await db.prepare(`SELECT c.* FROM canteens c
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE c.tenant_id = ? AND c.review_status = 'approved'
+      AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+    ORDER BY CASE WHEN c.parent_id IS NULL THEN c.display_order ELSE 999 END, c.parent_id, c.display_order, c.name, c.id`).all(tenantId)).map(rowToCanteen);
   return applyApprovedIntroductions(db, tenantId, 'canteen', canteens);
 }
 
 async function listStalls(db, tenantId = 'default') {
-  const stalls = (await db.prepare('SELECT * FROM stalls WHERE tenant_id = ? ORDER BY canteen_id, floor, name').all(tenantId)).map(rowToStall);
+  const stalls = (await db.prepare(`SELECT s.* FROM stalls s
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE s.tenant_id = ? AND s.review_status = 'approved' AND c.review_status = 'approved'
+      AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+    ORDER BY s.canteen_id, s.floor, s.name`).all(tenantId)).map(rowToStall);
   return applyApprovedIntroductions(db, tenantId, 'stall', stalls);
 }
 
@@ -998,6 +1007,36 @@ async function requireDishStallInDiningArea(db, { tenantId, stallId }) {
   return stall;
 }
 
+async function findPublishedDish(db, tenantId, dishId) {
+  return db.prepare(`SELECT d.* FROM dishes d
+    JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE d.tenant_id = ? AND d.id = ? AND d.status = 'active' AND d.review_status = 'approved'
+      AND s.review_status = 'approved' AND c.review_status = 'approved'
+      AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).get(tenantId, dishId);
+}
+
+async function findPublishedCanteen(db, tenantId, canteenId) {
+  return db.prepare(`SELECT c.* FROM canteens c
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE c.tenant_id = ? AND c.id = ? AND c.review_status = 'approved'
+      AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).get(tenantId, canteenId);
+}
+
+async function requirePublishedCatalogTarget(db, tenantId, targetType, targetId) {
+  const target = targetType === 'dish'
+    ? await findPublishedDish(db, tenantId, targetId)
+    : await findPublishedCanteen(db, tenantId, targetId);
+  if (!target) {
+    throw Object.assign(new Error(targetType === 'dish' ? '关联菜品不存在或尚未发布' : '关联食堂不存在或尚未发布'), {
+      status: 404,
+      code: 'CATALOG_TARGET_NOT_PUBLISHED'
+    });
+  }
+  return target;
+}
+
 async function validateStallParent(db, { tenantId, stallId, canteenId, parentId, hasChildren = false }) {
   if (!parentId) return;
   if (parentId === stallId) throw Object.assign(new Error('档口不能将自身设置为父档口'), { status: 400, code: 'STALL_PARENT_SELF' });
@@ -1037,7 +1076,14 @@ function rejectDatabaseStallParentWrite(entityName, body) {
 }
 
 async function listDishes(db, params = new URLSearchParams(), tenantId = 'default') {
-  const mapped = (await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND status = 'active' ORDER BY name").all(tenantId)).map(rowToDish);
+  const mapped = (await db.prepare(`SELECT d.* FROM dishes d
+    JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'
+      AND s.review_status = 'approved' AND c.review_status = 'approved'
+      AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+    ORDER BY d.name`).all(tenantId)).map(rowToDish);
   const rows = await applyApprovedIntroductions(db, tenantId, 'dish', mapped);
   const keyword = String(params.get('keyword') || '').trim().toLowerCase();
   const maxPrice = Number(params.get('maxPrice') || 999);
@@ -1059,14 +1105,11 @@ async function listReviews(db, targetId, tenantId = 'default', { includeAll = fa
 }
 
 async function reviewCatalog(db, tenantId) {
-  const [dishRows, stallRows, canteenRows] = await Promise.all([
-    db.prepare('SELECT * FROM dishes WHERE tenant_id = ? ORDER BY name').all(tenantId),
-    db.prepare('SELECT * FROM stalls WHERE tenant_id = ? ORDER BY canteen_id, floor, name').all(tenantId),
-    db.prepare('SELECT * FROM canteens WHERE tenant_id = ? ORDER BY name').all(tenantId)
+  const [dishes, stalls, canteens] = await Promise.all([
+    listDishes(db, new URLSearchParams(), tenantId),
+    listStalls(db, tenantId),
+    listCanteens(db, tenantId),
   ]);
-  const dishes = dishRows.map(rowToDish);
-  const stalls = stallRows.map(rowToStall);
-  const canteens = canteenRows.map(rowToCanteen);
   return {
     dishes: new Map(dishes.map((item) => [item.id, item])),
     stalls: new Map(stalls.map((item) => [item.id, item])),
@@ -1146,11 +1189,19 @@ async function requireCommunityTarget(db, tenantId, targetType, targetId, { appr
 async function dishDetail(db, id, tenantId = 'default') {
   const requestedRow = await db.prepare('SELECT * FROM dishes WHERE tenant_id = ? AND id = ?').get(tenantId, id);
   if (!requestedRow) return null;
-  const row = requestedRow.status === 'active'
+  let row = requestedRow.status === 'active' && requestedRow.review_status === 'approved'
     ? requestedRow
     : requestedRow.parent_dish_id
-      ? await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, requestedRow.parent_dish_id)
+      ? await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active' AND review_status = 'approved'").get(tenantId, requestedRow.parent_dish_id)
       : null;
+  if (!row) return null;
+  row = await db.prepare(`SELECT d.* FROM dishes d
+    JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE d.tenant_id = ? AND d.id = ? AND d.status = 'active' AND d.review_status = 'approved'
+      AND s.review_status = 'approved' AND c.review_status = 'approved'
+      AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).get(tenantId, row.id);
   if (!row) return null;
   const [dish] = await applyApprovedIntroductions(db, tenantId, 'dish', [rowToDish(row)]);
   const stallRow = await db.prepare('SELECT * FROM stalls WHERE tenant_id = ? AND id = ?').get(tenantId, dish.stallId);
@@ -1177,7 +1228,11 @@ async function snapshot(db, user = null) {
   const canteens = await listCanteens(db, tenantId);
   const stalls = await listStalls(db, tenantId);
   const dishes = await listDishes(db, new URLSearchParams(), tenantId);
-  const reviews = (await db.prepare(`SELECT reviews.*, users.nickname, users.username FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND reviews.status = 'approved' ORDER BY reviews.created_at DESC`).all(tenantId)).map(rowToReview);
+  const publicDishIds = new Set(dishes.map((dish) => dish.id));
+  const publicCanteenIds = new Set(canteens.map((canteen) => canteen.id));
+  const reviews = (await db.prepare(`SELECT reviews.*, users.nickname, users.username FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND reviews.status = 'approved' ORDER BY reviews.created_at DESC`).all(tenantId))
+    .map(rowToReview)
+    .filter((review) => review.targetType === 'dish' ? publicDishIds.has(review.targetId) : publicCanteenIds.has(review.targetId));
   const dishPreferences = user ? (await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ?').all(tenantId, user.id)).map(rowToPreference) : [];
   return {
     session: { user: publicUser(user) },
@@ -1217,7 +1272,7 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   const stallId = String(body.stallId || '').trim();
   const conflictingRecord = await db.prepare(`SELECT tenant_id, stall_id, pricing_mode, price_display, pricing_json,
       aliases_json, semantic_labels_json, source_ref_json, catalog_item_type, catalog_category, parent_dish_id,
-      rating, review_count, sales FROM dishes WHERE id = ?`).get(normalizedId);
+      rating, review_count, sales, review_status, retrieval_eligible FROM dishes WHERE id = ?`).get(normalizedId);
   if (conflictingRecord && conflictingRecord.tenant_id !== tenantId) {
     throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), {
       status: 409,
@@ -1241,6 +1296,16 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
     throw Object.assign(new Error('目录类型仅支持餐食、小吃、饮品、加购项或费用项'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
   }
   const catalogCategory = String(body.catalogCategory || conflictingRecord?.catalog_category || automaticClassification.category).trim().slice(0, 30) || '其他餐食';
+  const structuralItem = ['addon', 'fee', 'variant', 'section'].includes(catalogItemType);
+  const reviewStatus = structuralItem
+    ? 'excluded'
+    : String(body.reviewStatus || conflictingRecord?.review_status || 'approved').trim();
+  if (!['approved', 'pending', 'excluded'].includes(reviewStatus)) {
+    throw Object.assign(new Error('目录审核状态仅支持 approved、pending 或 excluded'), { status: 400, code: 'INVALID_CATALOG_REVIEW_STATUS' });
+  }
+  const retrievalEligible = structuralItem
+    ? 0
+    : (body.retrievalEligible == null ? Number(conflictingRecord?.retrieval_eligible ?? 1) : (body.retrievalEligible ? 1 : 0));
   const dietaryLabels = splitList(body.dietaryLabels || []);
   if (dietaryLabels.some((label) => !['pescatarian', 'vegetarian', 'vegan'].includes(label))) {
     throw Object.assign(new Error('饮食模式标签仅支持 pescatarian、vegetarian、vegan'), { status: 400, code: 'INVALID_DIETARY_LABEL' });
@@ -1327,7 +1392,8 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
     );
   await db.prepare(`UPDATE dishes SET pricing_mode = ?, price_display = ?, pricing_json = ?, aliases_json = ?,
       semantic_labels_json = ?, source_ref_json = ?, catalog_item_type = ?, catalog_category = ?,
-      reservation_enabled = CASE WHEN ? IN ('addon', 'fee') THEN FALSE ELSE reservation_enabled END
+      reservation_enabled = CASE WHEN ? IN ('addon', 'fee') THEN FALSE ELSE reservation_enabled END,
+      review_status = ?, retrieval_eligible = ?
       WHERE tenant_id = ? AND id = ?`)
     .run(
       pricing.mode,
@@ -1339,6 +1405,8 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
       catalogItemType,
       catalogCategory,
       catalogItemType,
+      reviewStatus,
+      retrievalEligible,
       tenantId,
       normalizedId,
     );
@@ -1622,11 +1690,11 @@ async function withTransaction(db, operation) {
 }
 
 async function validateMenuOwnership(db, body, tenantId) {
-  const canteen = await db.prepare('SELECT id FROM canteens WHERE tenant_id = ? AND id = ?').get(tenantId, body.canteenId);
+  const canteen = await findPublishedCanteen(db, tenantId, body.canteenId);
   if (!canteen) throw Object.assign(new Error('菜单食堂不存在或不属于当前租户'), { status: 400 });
   const dishIds = [...new Set((Array.isArray(body.items) ? body.items : []).map((item) => item.dishId).filter(Boolean))];
   for (const dishId of dishIds) {
-    const dish = await db.prepare("SELECT id FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, dishId);
+    const dish = await findPublishedDish(db, tenantId, dishId);
     if (!dish) throw Object.assign(new Error(`菜单菜品不存在或不属于当前租户：${dishId}`), { status: 400 });
   }
 }
@@ -1782,14 +1850,14 @@ async function listCatalogStalls(db, tenantId, params) {
   const page = positivePage(params.get('page'), 1);
   const pageSize = positivePage(params.get('pageSize'), 30, 100);
   const venueId = String(params.get('venueId') || '').trim();
-  const clauses = ['s.tenant_id = ?', "c.operating_status = 'open'", "(parent.id IS NULL OR parent.operating_status = 'open')"];
+  const clauses = ['s.tenant_id = ?', "s.review_status = 'approved'", "c.review_status = 'approved'", "(parent.id IS NULL OR parent.review_status = 'approved')", "c.operating_status = 'open'", "(parent.id IS NULL OR parent.operating_status = 'open')"];
   const values = [tenantId];
   if (venueId) { clauses.push('s.canteen_id = ?'); values.push(venueId); }
   const where = clauses.join(' AND ');
   const from = 'FROM stalls s JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id';
   const total = Number((await db.prepare(`SELECT COUNT(*) AS count ${from} WHERE ${where}`).get(...values))?.count || 0);
   const rows = await db.prepare(`SELECT s.*,
-      (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active') AS dish_count
+      (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active' AND d.review_status = 'approved') AS dish_count
       ${from} WHERE ${where} ORDER BY s.canteen_id, s.floor, s.name LIMIT ? OFFSET ?`)
     .all(...values, pageSize, (page - 1) * pageSize);
   const stalls = await applyApprovedIntroductions(db, tenantId, 'stall', rows.map((row) => ({ ...rowToStall(row), dishCount: Number(row.dish_count || 0) })));
@@ -1856,7 +1924,7 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   if (requestedItemType && !allowedItemTypes.has(requestedItemType)) {
     throw Object.assign(new Error('目录商品类型不合法'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
   }
-  const clauses = ["d.tenant_id = ?", "d.status = 'active'", "c.operating_status = 'open'", "(parent.id IS NULL OR parent.operating_status = 'open')",
+  const clauses = ["d.tenant_id = ?", "d.status = 'active'", "d.review_status = 'approved'", "s.review_status = 'approved'", "c.review_status = 'approved'", "(parent.id IS NULL OR parent.review_status = 'approved')", "c.operating_status = 'open'", "(parent.id IS NULL OR parent.operating_status = 'open')",
     "TRIM(d.name) NOT LIKE '_人份'", "TRIM(d.name) NOT LIKE '_-_人份'", "TRIM(d.name) NOT LIKE '_~_人份'", "TRIM(d.name) NOT LIKE '_至_人份'",
     "TRIM(d.name) NOT LIKE '_._-_人份'", "TRIM(d.name) NOT LIKE '_、_-_人份'"];
   const values = [tenantId];
@@ -1923,27 +1991,51 @@ async function listCatalogRankings(db, tenantId, params) {
   let total = 0;
   let items = [];
   if (type === 'dishes') {
-    total = Number((await db.prepare("SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = ? AND status = 'active' AND catalog_item_type = 'meal'").get(tenantId))?.count || 0);
+    total = Number((await db.prepare(`SELECT COUNT(*) AS count FROM dishes d
+      JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'
+        AND s.review_status = 'approved' AND c.review_status = 'approved'
+        AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+        AND d.catalog_item_type = 'meal'`).get(tenantId))?.count || 0);
     const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind
       FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
       JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
-      WHERE d.tenant_id = ? AND d.status = 'active' AND d.catalog_item_type = 'meal'
+      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'
+        AND s.review_status = 'approved' AND c.review_status = 'approved'
+        AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+        AND d.catalog_item_type = 'meal'
       ORDER BY d.rating DESC, d.review_count DESC, d.sales DESC, d.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
     items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map((row) => ({ ...catalogDishPresentation(row), rankScore: Number(row.rating || 0) })));
   } else if (type === 'stalls') {
-    total = Number((await db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ?').get(tenantId))?.count || 0);
+    total = Number((await db.prepare(`SELECT COUNT(*) AS count FROM stalls s
+      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
+      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE s.tenant_id = ? AND s.review_status = 'approved' AND c.review_status = 'approved'
+        AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).get(tenantId))?.count || 0);
     const rows = await db.prepare(`SELECT s.*, c.name AS canteen_name,
-      (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active' AND d.catalog_item_type = 'meal') AS dish_count
+      (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active' AND d.review_status = 'approved' AND d.catalog_item_type = 'meal') AS dish_count
       FROM stalls s JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
-      WHERE s.tenant_id = ? ORDER BY s.rating DESC, dish_count DESC, s.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
+      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE s.tenant_id = ? AND s.review_status = 'approved' AND c.review_status = 'approved'
+        AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+      ORDER BY s.rating DESC, dish_count DESC, s.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
     items = await applyApprovedIntroductions(db, tenantId, 'stall', rows.map((row) => ({ ...rowToStall(row), canteenName: row.canteen_name || '', dishCount: Number(row.dish_count || 0), rankScore: Number(row.rating || 0) })));
   } else {
-    total = Number((await db.prepare('SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = ?').get(tenantId))?.count || 0);
+    total = Number((await db.prepare(`SELECT COUNT(*) AS count FROM canteens c
+      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE c.tenant_id = ? AND c.review_status = 'approved'
+        AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).get(tenantId))?.count || 0);
     const rows = await db.prepare(`SELECT c.*,
-      (SELECT COUNT(*) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id) AS stall_count,
-      (SELECT COALESCE(AVG(s.rating), 0) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id) AS rank_score
-      FROM canteens c WHERE c.tenant_id = ? ORDER BY rank_score DESC, stall_count DESC, c.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
+      (SELECT COUNT(*) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id AND s.review_status = 'approved') AS stall_count,
+      (SELECT COALESCE(AVG(s.rating), 0) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id AND s.review_status = 'approved') AS rank_score
+      FROM canteens c LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE c.tenant_id = ? AND c.review_status = 'approved'
+        AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+      ORDER BY rank_score DESC, stall_count DESC, c.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
     items = await applyApprovedIntroductions(db, tenantId, 'canteen', rows.map((row) => ({ ...rowToCanteen(row), stallCount: Number(row.stall_count || 0), rankScore: Number(Number(row.rank_score || 0).toFixed(2)) })));
   }
   return { type, items, page: { page, pageSize, total, hasMore: offset + items.length < total } };
@@ -1960,7 +2052,10 @@ async function listSavedCatalogDishes(db, user, params) {
   const from = `FROM user_dish_preferences p JOIN dishes d ON d.id = p.dish_id AND d.tenant_id = p.tenant_id
     JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
     JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
-    WHERE p.tenant_id = ? AND p.user_id = ? AND d.status = 'active' AND ${predicate}`;
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE p.tenant_id = ? AND p.user_id = ? AND d.status = 'active' AND d.review_status = 'approved'
+      AND s.review_status = 'approved' AND c.review_status = 'approved'
+      AND (c.parent_id IS NULL OR parent.review_status = 'approved') AND ${predicate}`;
   const total = Number((await db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...values))?.count || 0);
   const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind, p.favorite, p.eaten_count, p.drawn_count, p.last_eaten_at, p.last_drawn_at
@@ -2329,7 +2424,9 @@ async function createOrder(db, user, body) {
       FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
       JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
       LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-      WHERE d.tenant_id = ? AND d.id = ? AND d.status = 'active'`).get(tenantId, dishId);
+      WHERE d.tenant_id = ? AND d.id = ? AND d.status = 'active'
+        AND d.review_status = 'approved' AND s.review_status = 'approved' AND c.review_status = 'approved'
+        AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).get(tenantId, dishId);
     if (!row) throw Object.assign(new Error(`菜品不存在：${dishId}`), { status: 400, code: 'DISH_NOT_FOUND' });
     const dish = rowToDish(row);
     if ((row.area_operating_status || 'open') !== 'open' || (row.venue_operating_status && row.venue_operating_status !== 'open')) {
@@ -3700,7 +3797,9 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
         if (targetType && !['dish', 'canteen'].includes(targetType)) throw Object.assign(new Error('targetType 必须是 dish 或 canteen'), { status: 400 });
         if (!['rating_desc', 'rating_asc', 'latest'].includes(sort)) throw Object.assign(new Error('不支持的评价排序方式'), { status: 400 });
-        const enriched = await attachCommunityEngagement(db, tenantId, activeUser.id, 'review', rows.map(rowToReview).map((review) => enrichReview(review, catalog, activeUser.id)));
+        const enriched = await attachCommunityEngagement(db, tenantId, activeUser.id, 'review', rows.map(rowToReview)
+          .map((review) => enrichReview(review, catalog, activeUser.id))
+          .filter((review) => review.targetType === 'dish' ? Boolean(review.dish) : Boolean(review.canteen)));
         const filtered = enriched.filter((review) => {
           if (targetType && review.targetType !== targetType) return false;
           if (canteenId && review.canteen?.id !== canteenId) return false;
@@ -3736,9 +3835,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const body = await readBody(req);
         requireFields(body, ['targetId', 'rating', 'content']);
         const targetType = body.targetType === 'canteen' ? 'canteen' : 'dish';
-        const targetTable = targetType === 'canteen' ? 'canteens' : 'dishes';
-        const target = await db.prepare(`SELECT id FROM ${targetTable} WHERE id = ? AND tenant_id = ?`).get(body.targetId, tenantIdFor(activeUser));
-        if (!target) throw Object.assign(new Error(targetType === 'canteen' ? '食堂不存在。' : '菜品不存在。'), { status: 404 });
+        await requirePublishedCatalogTarget(db, tenantIdFor(activeUser), targetType, body.targetId);
         const rating = Number(body.rating);
         const content = String(body.content).trim();
         if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw Object.assign(new Error('评分需要在 1-5 分之间。'), { status: 400 });
@@ -3764,7 +3861,9 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const q = String(url.searchParams.get('q') || '').trim().slice(0, 80).toLocaleLowerCase();
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 100);
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
-        const enriched = await attachCommunityEngagement(db, tenantId, activeUser.id, 'post', rows.map(rowToPost).map((post) => enrichPost(post, catalog, activeUser.id)));
+        const enriched = await attachCommunityEngagement(db, tenantId, activeUser.id, 'post', rows.map(rowToPost)
+          .map((post) => enrichPost(post, catalog, activeUser.id))
+          .filter((post) => post.targetType === 'dish' ? Boolean(post.dish) : Boolean(post.canteen)));
         const posts = enriched.filter((post) => {
           if (mine && !post.isOwn) return false;
           if (targetType && post.targetType !== targetType) return false;
@@ -3789,9 +3888,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const content = String(body.content || '').trim();
         if (!targetType || !targetId) throw Object.assign(new Error('请选择帖子关联的食堂或菜品'), { status: 400 });
         if (content.length < 2 || content.length > 600) throw Object.assign(new Error('帖子内容长度需要在 2-600 个字符之间'), { status: 400 });
-        const targetTable = targetType === 'dish' ? 'dishes' : 'canteens';
-        const target = await db.prepare(`SELECT id FROM ${targetTable} WHERE tenant_id = ? AND id = ?`).get(tenantId, targetId);
-        if (!target) throw Object.assign(new Error(targetType === 'dish' ? '关联菜品不存在' : '关联食堂不存在'), { status: 404 });
+        await requirePublishedCatalogTarget(db, tenantId, targetType, targetId);
         let rating = null;
         if (body.rating != null && body.rating !== '') {
           rating = Number(body.rating);
@@ -5036,7 +5133,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const body = await readBody(req);
         if (!body.dishId) throw Object.assign(new Error('缺少 dishId'), { status: 400 });
         const tenantId = tenantIdFor(activeUser);
-        const dish = await db.prepare("SELECT id FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, body.dishId);
+        const dish = await findPublishedDish(db, tenantId, body.dishId);
         if (!dish) throw Object.assign(new Error('菜品不存在'), { status: 404 });
         const prefId = `udp-${activeUser.id}-${body.dishId}`;
         const favorite = body.favorite !== undefined ? (body.favorite ? 1 : 0) : undefined;
@@ -5060,7 +5157,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const activeUser = await requireCapability(db, req, 'preference:write');
         const dishId = decodeURIComponent(pathParts[3]);
         const tenantId = tenantIdFor(activeUser);
-        const dish = await db.prepare("SELECT id FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, dishId);
+        const dish = await findPublishedDish(db, tenantId, dishId);
         if (!dish) throw Object.assign(new Error('菜品不存在'), { status: 404 });
         const prefId = `udp-${activeUser.id}-${dishId}`;
         const existing = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ? AND dish_id = ?').get(tenantId, activeUser.id, dishId);
@@ -5080,7 +5177,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const activeUser = await requireCapability(db, req, 'preference:write');
         const dishId = decodeURIComponent(pathParts[3]);
         const tenantId = tenantIdFor(activeUser);
-        const dish = await db.prepare("SELECT id FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active'").get(tenantId, dishId);
+        const dish = await findPublishedDish(db, tenantId, dishId);
         if (!dish) throw Object.assign(new Error('菜品不存在'), { status: 404 });
         const prefId = `udp-${activeUser.id}-${dishId}`;
         const existing = await db.prepare('SELECT * FROM user_dish_preferences WHERE tenant_id = ? AND user_id = ? AND dish_id = ?').get(tenantId, activeUser.id, dishId);

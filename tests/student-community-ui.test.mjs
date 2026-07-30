@@ -10,9 +10,16 @@ const home = read('src/views/HomeView.vue');
 const dishes = read('src/views/DishesView.vue');
 const reviews = read('src/views/ReviewsView.vue');
 const community = read('src/views/CommunityView.vue');
+const saved = read('src/views/SavedView.vue');
+const rankings = read('src/views/RankingsView.vue');
+const healthProfile = read('src/views/HealthProfileView.vue');
+const regions = read('src/views/RegionRecommendationsView.vue');
 const canteens = read('src/views/CanteensView.vue');
 const orders = read('src/views/OrdersView.vue');
 const admin = read('src/views/AdminView.vue');
+const miniCommunity = read('miniapp/src/pages/community/community.vue');
+const miniSaved = read('miniapp/src/pages/saved/saved.vue');
+const miniRegion = read('miniapp/src/pages/region-detail/region-detail.vue');
 
 describe('student community and workspace UI contracts', () => {
   it('registers student routes and navigation entries', () => {
@@ -52,6 +59,39 @@ describe('student community and workspace UI contracts', () => {
     assert.match(community, /form\.rating/);
     assert.match(community, /submitPost/);
     assert.match(admin, /updatePostStatusAdmin/);
+  });
+
+  it('filters campus posts by keyword, canteen, and dish on both clients', () => {
+    for (const source of [community, miniCommunity]) {
+      assert.match(source, /canteenId/);
+      assert.match(source, /dishId/);
+      assert.match(source, /listPosts|loadCommunityPosts/);
+    }
+    assert.match(community, /feedKeyword/);
+    assert.match(community, /feedCanteenId/);
+    assert.match(community, /feedDishId/);
+    assert.match(miniCommunity, /postCanteenId/);
+    assert.match(miniCommunity, /postDishId/);
+    assert.match(miniCommunity, /loadPostDishOptions/);
+  });
+
+  it('groups favorites and never renders zero-count eaten records', () => {
+    assert.match(saved, /favoriteGroupMode/);
+    assert.match(saved, /favoriteGroups/);
+    assert.match(saved, /Number\(dish\.eatenCount \|\| 0\) > 0/);
+    assert.match(miniSaved, /favoriteGroupMode/);
+    assert.match(miniSaved, /favoriteGroups/);
+    assert.match(miniSaved, /Number\(dish\.eatenCount\|\|0\)>0/);
+    assert.match(miniSaved, /eatenDishTotal/);
+  });
+
+  it('uses full-width ranking actions and grouped region dishes', () => {
+    assert.equal((rankings.match(/rank-expand-button/g) || []).length >= 6, true);
+    assert.match(regions, /selectedDishGroups/);
+    assert.match(regions, /主食与套餐/);
+    assert.match(miniRegion, /dishGroups/);
+    assert.match(miniRegion, /主食与套餐/);
+    assert.match(healthProfile, /overflow-wrap:\s*anywhere/);
   });
 
   it('keeps primary canteens 2x2 on desktop and one column on mobile', () => {

@@ -91,8 +91,11 @@
         </div>
       </div>
 
-      <TransitionGroup v-if="selectedDishes.length" name="region-dish" tag="div" class="region-dish-grid">
-        <article v-for="dish in selectedDishes" :key="dish.id" class="region-dish-card">
+      <div v-if="selectedDishGroups.length" class="region-dish-groups">
+        <section v-for="group in selectedDishGroups" :key="group.id" class="region-dish-group">
+          <header><div><h3>{{ group.label }}</h3><p>{{ group.description }}</p></div><span>{{ group.items.length }} 道</span></header>
+          <TransitionGroup name="region-dish" tag="div" class="region-dish-grid">
+        <article v-for="dish in group.items" :key="dish.id" class="region-dish-card">
           <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="region-dish-image" />
           <span v-else class="emoji large region-dish-image-fallback">{{ dish.image }}</span>
           <div class="region-dish-content">
@@ -114,7 +117,9 @@
             </div>
           </div>
         </article>
-      </TransitionGroup>
+          </TransitionGroup>
+        </section>
+      </div>
       <p v-else class="muted region-empty">这个区域暂时还没有可展示的菜品，去菜品检索看看其他选择。</p>
     </section>
   </template>
@@ -164,7 +169,36 @@ const selectedDishes = computed(() => {
     preferences: store.dishPreferences
   });
 });
+const selectedDishGroups = computed(() => {
+  const order = ['staple', 'noodle', 'hot', 'snack', 'beverage', 'other'];
+  const definitions = {
+    staple: { label: '主食与套餐', description: '米饭、盖饭、早餐主食和组合套餐' },
+    noodle: { label: '面食粉类', description: '面、粉、米线、水饺与馄饨' },
+    hot: { label: '热菜与锅物', description: '家常热菜、干锅、砂锅和火锅类' },
+    snack: { label: '小吃', description: '可单独购买的小吃与甜品' },
+    beverage: { label: '饮品', description: '茶饮、豆浆、汽水与其他饮料' },
+    other: { label: '其他餐食', description: '暂未归入以上分类的目录菜品' }
+  };
+  const groups = new Map();
+  for (const dish of selectedDishes.value) {
+    const id = regionDishGroup(dish);
+    if (!groups.has(id)) groups.set(id, { id, ...definitions[id], items: [] });
+    groups.get(id).items.push(dish);
+  }
+  return order.filter((id) => groups.has(id)).map((id) => groups.get(id));
+});
 const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) => [dish.id, dish])));
+
+function regionDishGroup(dish) {
+  const itemType = String(dish.catalogItemType || 'meal');
+  const category = String(dish.catalogCategory || dish.category || '');
+  if (itemType === 'beverage' || /饮品/u.test(category)) return 'beverage';
+  if (itemType === 'snack' || /小吃|甜品/u.test(category)) return 'snack';
+  if (/面食|粉类|水饺|馄饨/u.test(category)) return 'noodle';
+  if (/米饭|早餐|套餐|主食|轻食/u.test(category)) return 'staple';
+  if (/热菜|火锅|麻辣烫|干锅|砂锅|烤鱼|水煮|蒸菜|汤羹/u.test(category)) return 'hot';
+  return 'other';
+}
 
 function formatSales(value) {
   const sales = Number(value || 0);
@@ -232,7 +266,8 @@ function backToRegions() {
 .region-card-body p { min-height: 2.8rem; margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.6; }
 .region-card-meta { display: flex; flex-wrap: wrap; gap: .5rem; color: var(--primary-dark); font-size: .75rem; font-weight: 720; }
 .region-detail-actions { margin: -.35rem 0 1rem; }
-.region-back-button { cursor: pointer; border: 1px solid rgba(31,122,77,.12); }
+.region-back-button { min-height: 2.75rem; padding: .625rem 1rem; cursor: pointer; border: 1px solid rgba(31,122,77,.2); color: var(--primary-dark); background: #f4f8f1; font-size: .875rem; font-weight: 760; }
+.region-back-button:hover { border-color: rgba(31,122,77,.36); background: #edf5e9; }
 .region-detail-hero { display: grid; grid-template-columns: minmax(16rem, .95fr) minmax(0, 1.2fr); gap: 1.5rem; align-items: center; }
 .region-detail-image { overflow: hidden; min-height: 15rem; border-radius: 1.25rem; background: linear-gradient(135deg, rgba(235,247,229,.72), rgba(255,255,255,.62)); }
 .region-detail-image img { display: block; width: 100%; height: 100%; min-height: 15rem; object-fit: cover; }
@@ -245,6 +280,7 @@ function backToRegions() {
 .region-sort-bar { justify-content: flex-end; margin: 0; }
 .region-sort-bar .tab { border: 0; transition: transform .16s var(--ease), background .15s var(--ease), box-shadow .15s var(--ease); }
 .region-sort-bar .tab:active { transform: scale(.94); }
+.region-dish-groups { display: grid; gap: 1.75rem; }.region-dish-group { display: grid; gap: .875rem; }.region-dish-group > header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; padding-bottom: .625rem; border-bottom: 1px solid rgba(31,122,77,.12); }.region-dish-group h3, .region-dish-group p { margin: 0; }.region-dish-group h3 { font-size: 1.125rem; }.region-dish-group p { margin-top: .25rem; color: var(--muted); font-size: .8125rem; }.region-dish-group > header > span { flex: 0 0 auto; color: var(--primary-dark); font-size: .75rem; font-weight: 760; }
 .region-dish-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .region-dish-card { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: 1rem; min-width: 0; padding: .875rem; border: 1px solid rgba(255,255,255,.72); border-radius: 1.25rem; background: linear-gradient(135deg, rgba(255,255,255,.84), rgba(244,250,239,.68)); box-shadow: var(--shadow-soft); transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease); }
 .region-dish-card:hover { transform: translateY(-2px); border-color: rgba(31,122,77,.16); box-shadow: var(--shadow-hover); }

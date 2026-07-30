@@ -1363,6 +1363,10 @@ async function loadDishRows(db, tenantId, dishId = null) {
      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = d.tenant_id
      WHERE d.tenant_id = ? AND d.status = 'active'
+       AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+       AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+       AND c.review_status = 'approved' AND c.retrieval_eligible = 1
+       AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1))
        AND d.catalog_item_type IN ('meal', 'beverage', 'snack')${dishFilter}`,
   ).all(...params);
 }
@@ -1378,7 +1382,9 @@ async function loadStallRows(db, tenantId, stallId = null) {
      FROM stalls s
      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = s.tenant_id
-     WHERE s.tenant_id = ?${stallFilter}`,
+     WHERE s.tenant_id = ? AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+       AND c.review_status = 'approved' AND c.retrieval_eligible = 1
+       AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1))${stallFilter}`,
   ).all(...params);
 }
 
@@ -1389,7 +1395,8 @@ async function loadCanteenRows(db, tenantId, canteenId = null) {
   return db.prepare(`SELECT c.*, parent.name AS parent_canteen_name
     FROM canteens c
     LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-    WHERE c.tenant_id = ?${canteenFilter}
+    WHERE c.tenant_id = ? AND c.review_status = 'approved' AND c.retrieval_eligible = 1
+      AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1))${canteenFilter}
     ORDER BY c.parent_id, c.display_order, c.name, c.id`).all(...params);
 }
 

@@ -29,6 +29,18 @@ describe('administrator companion UI contracts', () => {
     assert.match(admin, /linkedReviewStatus/);
   });
 
+  it('supports explicit selection and bounded batch moderation', () => {
+    assert.match(admin, /selectedReviewIds/);
+    assert.match(admin, /selectedPostIds/);
+    assert.match(admin, /toggleAllReviewSelections/);
+    assert.match(admin, /toggleAllPostSelections/);
+    assert.match(admin, /Promise\.allSettled\(ids\.map\(\(id\) => store\.updateReviewStatusAdmin\(id, status\)\)\)/);
+    assert.match(admin, /Promise\.allSettled\(ids\.map\(\(id\) => store\.updatePostStatusAdmin\(id, status\)\)\)/);
+    assert.match(admin, /finally \{\s*reviewBulkBusy\.value = false;/);
+    assert.match(admin, /finally \{\s*postBulkBusy\.value = false;/);
+    assert.match(admin, /class="bulk-moderation-bar"/);
+  });
+
   it('derives dining venues from the catalog and keeps a responsive grid', () => {
     assert.match(admin, /store\.adminCatalogTree\?\.regions/);
     assert.match(admin, /!canteen\.parentId\s*\|\|\s*!ids\.has\(canteen\.parentId\)/);

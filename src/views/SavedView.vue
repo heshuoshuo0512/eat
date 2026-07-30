@@ -6,8 +6,8 @@
   </section>
 
   <section class="saved-summary">
-    <article><strong>{{ favoriteEntries.length }}</strong><span>收藏菜品</span></article>
-    <article><strong>{{ eatenEntries.length }}</strong><span>吃过菜品</span></article>
+    <article><strong>{{ store.savedCatalog.favorite.page.total || favoriteEntries.length }}</strong><span>收藏菜品</span></article>
+    <article><strong>{{ store.savedCatalog.eaten.page.total || eatenEntries.length }}</strong><span>吃过菜品</span></article>
     <article><strong>{{ totalEaten }}</strong><span>累计吃过</span></article>
   </section>
 
@@ -21,21 +21,32 @@
       <div><p class="eyebrow">Favorites</p><h2>收藏菜品</h2></div>
       <RouterLink class="text-link" to="/dishes">继续找菜</RouterLink>
     </div>
-    <div v-if="favoriteEntries.length" class="saved-grid">
-      <article v-for="entry in favoriteEntries" :key="entry.id" class="saved-item">
-        <RouterLink :to="{ path: '/dishes', query: { dish: entry.id } }" class="saved-media">
-          <img v-if="entry.imageUrl" :src="entry.imageUrl" :alt="entry.name" />
-          <span v-else class="emoji large">{{ entry.image || '🍽️' }}</span>
-        </RouterLink>
-        <div class="saved-body">
-          <div><strong>{{ entry.name }}</strong><small>{{ locationLabel(entry) }} · ¥{{ entry.price }}</small></div>
-          <div class="saved-actions">
-            <button class="icon-action active" type="button" title="取消收藏" aria-label="取消收藏" @click="toggleFavorite(entry.id)">★</button>
-            <RouterLink class="primary button-link compact" :to="{ path: '/orders', query: { dish: entry.id } }">点餐</RouterLink>
+    <template v-if="favoriteEntries.length">
+      <div class="favorite-group-controls segmented" aria-label="收藏分组方式">
+        <button type="button" :class="{ active: favoriteGroupMode === 'canteen' }" @click="favoriteGroupMode = 'canteen'">按食堂</button>
+        <button type="button" :class="{ active: favoriteGroupMode === 'category' }" @click="favoriteGroupMode = 'category'">按类型</button>
+      </div>
+      <div class="saved-groups">
+        <section v-for="group in favoriteGroups" :key="group.id" class="saved-group">
+          <header><h3>{{ group.label }}</h3><span>{{ group.items.length }} 道</span></header>
+          <div class="saved-grid">
+            <article v-for="entry in group.items" :key="entry.id" class="saved-item">
+              <RouterLink :to="{ name: 'dish-detail', params: { id: entry.id } }" class="saved-media">
+                <img v-if="entry.imageUrl" :src="entry.imageUrl" :alt="entry.name" />
+                <span v-else class="emoji large">{{ entry.image || '🍽️' }}</span>
+              </RouterLink>
+              <div class="saved-body">
+                <div><strong>{{ entry.name }}</strong><small>{{ locationLabel(entry) }} · {{ priceLabel(entry) }}</small></div>
+                <div class="saved-actions">
+                  <button class="icon-action active" type="button" title="取消收藏" aria-label="取消收藏" @click="toggleFavorite(entry.id)">★</button>
+                  <RouterLink class="primary button-link compact" :to="{ path: '/orders', query: { dish: entry.id } }">点餐</RouterLink>
+                </div>
+              </div>
+            </article>
           </div>
-        </div>
-      </article>
-    </div>
+        </section>
+      </div>
+    </template>
     <button v-if="store.savedCatalog.favorite.page.hasMore" class="secondary load-more" type="button" :disabled="savedLoading" @click="loadMoreSaved('favorite')">{{ savedLoading ? '加载中…' : '加载更多收藏' }}</button>
     <div v-if="!favoriteEntries.length" class="card empty-state">
       <h2>还没有收藏</h2>
@@ -46,15 +57,17 @@
 
   <section v-else class="saved-section saved-panel">
     <div class="section-title"><p class="eyebrow">History</p><h2>吃过统计</h2></div>
-    <div v-if="eatenEntries.length" class="history-list">
-      <article v-for="entry in eatenEntries" :key="entry.id" class="history-row">
-        <span class="history-count">{{ entry.eatenCount }}</span>
-        <span class="history-main"><strong>{{ entry.name }}</strong><small>抽取 {{ entry.drawnCount }} 次 · 最近记录 {{ formatDate(entry.lastEatenAt) }}</small></span>
-        <button class="secondary" type="button" @click="markEaten(entry.id)">再记一次</button>
-      </article>
-    </div>
-    <button v-if="store.savedCatalog.eaten.page.hasMore" class="secondary load-more" type="button" :disabled="savedLoading" @click="loadMoreSaved('eaten')">{{ savedLoading ? '加载中…' : '加载更多记录' }}</button>
-    <p v-if="!eatenEntries.length" class="muted">还没有用餐记录；完成小程序订单后会自动出现在这里。</p>
+    <template v-if="eatenEntries.length">
+      <div class="history-list">
+        <article v-for="entry in eatenEntries" :key="entry.id" class="history-row">
+          <span class="history-count">{{ entry.eatenCount }}</span>
+          <span class="history-main"><strong>{{ entry.name }}</strong><small>抽取 {{ entry.drawnCount }} 次 · 最近记录 {{ formatDate(entry.lastEatenAt) }}</small></span>
+          <button class="secondary" type="button" @click="markEaten(entry.id)">再记一次</button>
+        </article>
+      </div>
+      <button v-if="store.savedCatalog.eaten.page.hasMore" class="secondary load-more" type="button" :disabled="savedLoading" @click="loadMoreSaved('eaten')">{{ savedLoading ? '加载中…' : '加载更多记录' }}</button>
+    </template>
+    <p v-else class="muted">还没有用餐记录；完成小程序订单后会自动出现在这里。</p>
   </section>
 
   <p v-if="message" class="form-message" :class="{ danger: isError }" aria-live="polite">{{ message }}</p>
@@ -69,14 +82,26 @@ const store = useCanteenStore();
 const message = ref('');
 const isError = ref(false);
 const activeSavedTab = ref('favorites');
+const favoriteGroupMode = ref('canteen');
 const savedLoading = ref(false);
 
 const favoriteEntries = computed(() => store.savedCatalog.favorite.items
   .map((dish) => ({ ...dish, ...(dish.preference || {}) })));
 const eatenEntries = computed(() => store.savedCatalog.eaten.items
   .map((dish) => ({ ...dish, ...(dish.preference || {}) }))
+  .filter((dish) => Number(dish.eatenCount || 0) > 0)
   .sort((left, right) => right.eatenCount - left.eatenCount));
 const totalEaten = computed(() => eatenEntries.value.reduce((sum, item) => sum + Number(item.eatenCount || 0), 0));
+const favoriteGroups = computed(() => {
+  const groups = new Map();
+  for (const dish of favoriteEntries.value) {
+    const label = favoriteGroupMode.value === 'canteen' ? canteenLabel(dish) : categoryLabel(dish);
+    const id = `${favoriteGroupMode.value}:${label}`;
+    if (!groups.has(id)) groups.set(id, { id, label, items: [] });
+    groups.get(id).items.push(dish);
+  }
+  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+});
 
 function locationLabel(dish) {
   const stall = store.stalls.find((item) => item.id === dish.stallId);
@@ -104,6 +129,23 @@ function toggleFavorite(dishId) {
   return runAction(async () => { await store.toggleFavorite(dishId); await store.loadSavedCatalog('favorite'); }, '收藏状态已更新。');
 }
 
+function canteenLabel(dish) {
+  const stall = store.stalls.find((item) => item.id === dish.stallId);
+  const canteen = store.canteens.find((item) => item.id === stall?.canteenId);
+  const parent = store.canteens.find((item) => item.id === canteen?.parentId);
+  return [parent?.name, canteen?.name].filter(Boolean).join(' · ') || '其他校内场所';
+}
+
+function categoryLabel(dish) {
+  if (dish.catalogItemType === 'beverage') return '饮品';
+  if (dish.catalogItemType === 'snack') return '小吃';
+  return dish.catalogCategory || dish.category || '其他餐食';
+}
+
+function priceLabel(dish) {
+  return dish.priceDisplay || (Number.isFinite(Number(dish.price)) ? `¥${dish.price}` : '价格待核验');
+}
+
 function markEaten(dishId) {
   return runAction(async () => { await store.markDishEaten(dishId); await store.loadSavedCatalog('eaten'); }, '已记录一次“吃过”。');
 }
@@ -125,6 +167,8 @@ onMounted(() => Promise.all([store.loadSavedCatalog('favorite'), store.loadSaved
 .saved-tabs { display: inline-grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); margin-bottom: 22px; padding: 4px; border: 1px solid rgba(31,122,77,.16); background: #eef5eb; }.saved-tabs button { border: 0; background: transparent; color: var(--muted); }.saved-tabs button.active { background: #fff; color: var(--primary-dark); box-shadow: 0 3px 10px rgba(21,95,59,.1); }
 .saved-section { margin-bottom: 32px; }
 .saved-panel { animation: saved-panel-in .26s ease both; }
+.favorite-group-controls { margin-bottom: 18px; }
+.saved-groups { display: grid; gap: 24px; }.saved-group { display: grid; gap: 12px; }.saved-group > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(31, 122, 77, .12); }.saved-group h3 { margin: 0; font-size: 17px; }.saved-group > header span { color: var(--muted); font-size: 13px; font-weight: 700; }
 .saved-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .saved-item { display: grid; grid-template-columns: 132px minmax(0, 1fr); min-height: 132px; overflow: hidden; border: 1px solid rgba(31, 122, 77, .14); border-radius: 8px; background: #fff; transition: transform .22s ease, box-shadow .22s ease; }
 .saved-item:hover { transform: translateY(-3px); box-shadow: 0 14px 30px rgba(21, 95, 59, .1); }

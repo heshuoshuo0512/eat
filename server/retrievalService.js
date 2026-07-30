@@ -121,7 +121,9 @@ function includesTerm(value, term) {
 function isActiveDish(candidate) {
   const name = String(candidate?.name || '').replace(/^\s*\d+\s*[.、]\s*/u, '').trim();
   const itemType = String(candidate?.catalogItemType || candidate?.catalog_item_type || 'meal');
+  const reviewStatus = String(candidate?.reviewStatus || candidate?.review_status || 'approved');
   return candidate?.status === 'active'
+    && reviewStatus === 'approved'
     && !['addon', 'fee', 'variant', 'section'].includes(itemType)
     && !/^(?:\d+\s*[-~至‐‑–—]\s*\d+|\d+|单|双|多)\s*人份$/u.test(name);
 }
@@ -432,7 +434,10 @@ async function loadCandidatesFromDatabase(db, tenantId, { date, mealType }) {
       FROM dishes d
       LEFT JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
       LEFT JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
-      WHERE d.tenant_id = ? AND d.status = 'active'`).all(tenantId);
+      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'
+        AND s.review_status = 'approved' AND c.review_status = 'approved'
+        AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).all(tenantId);
   return dishRows.map((row) => mapCandidate(row, tenantId));
 }
 

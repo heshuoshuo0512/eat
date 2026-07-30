@@ -25,6 +25,7 @@
         </RouterLink>
         <p v-if="filteredDishes.length === 0" class="preview-empty">暂无数据</p>
       </div>
+      <button v-if="expandedSection !== 'dishes'" class="rank-expand-button" type="button" @click="toggleSection('dishes')"><span>展开完整菜品榜</span><b aria-hidden="true">›</b></button>
 
       <!-- Expanded: full list with category filter -->
       <template v-if="expandedSection === 'dishes'">
@@ -67,6 +68,7 @@
         <div v-else class="empty-state">
           <p>{{ selectedCategory === '全部' ? '暂无菜品数据。' : `"${selectedCategory}"分类暂无菜品。` }}</p>
         </div>
+        <button class="rank-expand-button collapse" type="button" @click="toggleSection('dishes')"><span>收起菜品榜</span><b aria-hidden="true">⌃</b></button>
       </template>
     </section>
 
@@ -89,6 +91,7 @@
         </RouterLink>
         <p v-if="rankedStalls.length === 0" class="preview-empty">暂无数据</p>
       </div>
+      <button v-if="expandedSection !== 'stalls'" class="rank-expand-button" type="button" @click="toggleSection('stalls')"><span>展开完整档口榜</span><b aria-hidden="true">›</b></button>
 
       <!-- Expanded: full list -->
       <template v-if="expandedSection === 'stalls'">
@@ -121,6 +124,7 @@
         <div v-else class="empty-state">
           <p>暂无档口数据。</p>
         </div>
+        <button class="rank-expand-button collapse" type="button" @click="toggleSection('stalls')"><span>收起档口榜</span><b aria-hidden="true">⌃</b></button>
       </template>
     </section>
 
@@ -143,6 +147,7 @@
         </RouterLink>
         <p v-if="rankedSubCanteens.length === 0" class="preview-empty">暂无数据</p>
       </div>
+      <button v-if="expandedSection !== 'canteens'" class="rank-expand-button" type="button" @click="toggleSection('canteens')"><span>展开完整场所榜</span><b aria-hidden="true">›</b></button>
 
       <!-- Expanded: full list -->
       <template v-if="expandedSection === 'canteens'">
@@ -172,6 +177,7 @@
         <div v-else class="empty-state">
           <p>暂无食堂数据。</p>
         </div>
+        <button class="rank-expand-button collapse" type="button" @click="toggleSection('canteens')"><span>收起场所榜</span><b aria-hidden="true">⌃</b></button>
       </template>
     </section>
   </div>
@@ -391,6 +397,8 @@ function crowdLabel(level) {
   text-align: center;
   padding: 12px;
 }
+.rank-expand-button { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 0 12px; border: 1px solid rgba(31, 122, 77, .16); border-radius: 8px; color: var(--primary-dark); background: #f4f8f1; font-weight: 720; text-align: left; }
+.rank-expand-button:hover { border-color: rgba(31, 122, 77, .3); background: #edf5e9; }.rank-expand-button:active { transform: translateY(1px); }.rank-expand-button b { font-size: 22px; line-height: 1; }.rank-expand-button.collapse { justify-content: center; margin-top: 16px; }
 
 /* ── Category chips ── */
 .category-filter {

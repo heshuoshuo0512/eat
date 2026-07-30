@@ -81,6 +81,17 @@
         <label>事实来源<input v-model.trim="form.factSource" name="factSource" placeholder="recipe_audit / supplier" /></label>
         <label>数据版本<input v-model.trim="form.dataVersion" name="dataVersion" placeholder="2026.07" /></label>
       </div>
+      <div class="dish-field-grid two">
+        <label>目录发布状态
+          <select v-model="form.reviewStatus" name="reviewStatus">
+            <option value="approved">已发布到学生端</option>
+            <option value="pending">待人工核验</option>
+            <option value="excluded">仅保留在管理目录</option>
+          </select>
+        </label>
+        <label class="dish-switch-row"><input v-model="form.retrievalEligible" name="retrievalEligible" type="checkbox" /><span>允许作为 RAG 检索证据</span></label>
+      </div>
+      <small class="field-help">加料、收费、规格和栏目行会由服务端强制隔离，不能发布或进入 RAG。小吃、饮品和完整餐食可在人工核验后发布。</small>
       <div class="dish-field-grid nutrition">
         <label v-for="entry in factStatusFields" :key="entry.key">{{ entry.label }}
           <select v-model="form[entry.key]" :name="entry.key">

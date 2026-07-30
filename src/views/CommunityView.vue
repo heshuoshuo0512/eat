@@ -28,6 +28,13 @@
 
   <section class="feed-toolbar"><div class="segmented"><button type="button" :class="{ active: feedType === '' }" @click="changeFeed('')">全部</button><button type="button" :class="{ active: feedType === 'dish' }" @click="changeFeed('dish')">菜品</button><button type="button" :class="{ active: feedType === 'canteen' }" @click="changeFeed('canteen')">食堂</button><button type="button" :class="{ active: feedType === 'mine' }" @click="changeFeed('mine')">我的</button></div><button class="ghost" type="button" :disabled="loading" @click="loadPosts">刷新</button></section>
 
+  <section class="feed-filters" aria-label="帖子筛选">
+    <label><span>搜索帖子</span><input v-model.trim="feedKeyword" maxlength="80" placeholder="帖子、食堂、档口或菜品" @keyup.enter="loadPosts" /></label>
+    <label><span>食堂</span><SearchSelect v-model="feedCanteenId" :options="feedCanteenOptions" placeholder="全部食堂" @change="onFeedCanteenChange" /></label>
+    <label><span>菜品</span><SearchSelect v-model="feedDishId" :options="feedDishOptions" placeholder="输入菜名筛选" @search="searchFeedDishOptions" @change="loadPosts" /></label>
+    <div class="feed-filter-actions"><button class="primary" type="button" :disabled="loading" @click="loadPosts">筛选</button><button class="ghost" type="button" :disabled="!hasFeedFilters" @click="clearFeedFilters">清空</button></div>
+  </section>
+
   <section v-if="loading" class="card empty-state"><p>正在加载校园动态…</p></section>
   <section v-else-if="loadError" class="card empty-state"><p>{{ loadError }}</p><button class="primary" type="button" @click="loadPosts">重试</button></section>
   <section v-else-if="store.communityPosts.length" class="post-feed">
@@ -71,6 +78,10 @@ const composerError = ref(false);
 const loading = ref(false);
 const loadError = ref('');
 const feedType = ref('');
+const feedKeyword = ref('');
+const feedCanteenId = ref('');
+const feedDishId = ref('');
+const feedAvailableDishes = ref([]);
 const selectedCanteenId = ref('');
 const selectedStallId = ref('');
 const availableDishes = ref([]);
@@ -100,11 +111,24 @@ const dishOptions = computed(() => availableDishes.value.map((item) => ({
   group: item.category || '其他',
   description: [item.canteenName, item.stallName, item.priceDisplay].filter(Boolean).join(' · ')
 })));
+const feedCanteenOptions = computed(() => store.canteens.map((item) => ({
+  id: item.id,
+  label: item.displayName || item.name,
+  description: [item.location, item.floor].filter(Boolean).join(' · ')
+})));
+const feedDishOptions = computed(() => feedAvailableDishes.value.map((item) => ({
+  id: item.id,
+  label: item.name,
+  group: item.category || '其他',
+  description: [item.canteenName, item.stallName].filter(Boolean).join(' · ')
+})));
+const hasFeedFilters = computed(() => Boolean(feedKeyword.value || feedCanteenId.value || feedDishId.value));
 const commentsByPost = reactive({});
 const commentDrafts = reactive({});
 const openCommentsId = ref('');
 const commentsLoading = ref(false);
 let dishSearchTimer;
+let feedDishSearchTimer;
 
 function setTargetType(type) { form.targetType = type; form.targetId = ''; form.rating = 0; selectedCanteenId.value = ''; selectedStallId.value = ''; availableDishes.value = []; }
 function onCanteenChange() { selectedStallId.value = ''; availableDishes.value = []; form.targetId = form.targetType === 'canteen' ? selectedCanteenId.value : ''; }
@@ -127,6 +151,30 @@ async function loadDishOptions(query = '') {
   availableDishes.value = result.options || [];
 }
 function changeFeed(type) { feedType.value = type; loadPosts(); }
+async function loadFeedDishOptions(query = '') {
+  try {
+    const result = await store.loadCommunityDishOptions({ query, venueId: feedCanteenId.value, page: 1, pageSize: 100 });
+    feedAvailableDishes.value = result.options || [];
+  } catch {
+    feedAvailableDishes.value = [];
+  }
+}
+function searchFeedDishOptions(query) {
+  clearTimeout(feedDishSearchTimer);
+  feedDishSearchTimer = setTimeout(() => loadFeedDishOptions(query), 250);
+}
+async function onFeedCanteenChange() {
+  feedDishId.value = '';
+  await loadFeedDishOptions();
+  await loadPosts();
+}
+function clearFeedFilters() {
+  feedKeyword.value = '';
+  feedCanteenId.value = '';
+  feedDishId.value = '';
+  feedAvailableDishes.value = [];
+  loadPosts();
+}
 
 function selectImage(event) {
   const file = event.target.files?.[0];
@@ -165,7 +213,24 @@ async function submitPost() {
   finally { submitting.value = false; }
 }
 
-async function loadPosts() { loading.value = true; loadError.value = ''; try { await store.loadCommunityPosts({ targetType: feedType.value === 'mine' ? '' : feedType.value, mine: feedType.value === 'mine', limit: 100 }); } catch (error) { loadError.value = error.message || '帖子加载失败'; } finally { loading.value = false; } }
+async function loadPosts() {
+  loading.value = true;
+  loadError.value = '';
+  try {
+    await store.loadCommunityPosts({
+      targetType: feedType.value === 'mine' ? '' : feedType.value,
+      mine: feedType.value === 'mine',
+      q: feedKeyword.value,
+      canteenId: feedCanteenId.value,
+      dishId: feedDishId.value,
+      limit: 100
+    });
+  } catch (error) {
+    loadError.value = error.message || '帖子加载失败';
+  } finally {
+    loading.value = false;
+  }
+}
 function targetLink(post) { return post.dish ? { name: 'dish-detail', params: { id: post.dish.id } } : { path: '/canteens', query: { canteen: post.canteen?.id } }; }
 function formatDate(value) { return String(value || '').replace('T', ' ').slice(0, 16); }
 function statusLabel(status) { return { pending: '审核中', approved: '已公开', rejected: '未通过' }[status] || status; }
@@ -199,7 +264,7 @@ async function editPost(post) {
 }
 async function deletePost(post) { if (window.confirm('删除后无法恢复，确认删除这条帖子？')) await store.deleteCommunityContent('post', post.id); }
 onMounted(loadPosts);
-onBeforeUnmount(clearImage);
+onBeforeUnmount(() => { clearImage(); clearTimeout(dishSearchTimer); clearTimeout(feedDishSearchTimer); });
 </script>
 
 <style scoped>
@@ -211,6 +276,8 @@ onBeforeUnmount(clearImage);
 .rating-picker { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }.star-button { width: 36px; height: 36px; padding: 0; border: 0; background: transparent; color: #c9cec7; font-size: 24px; transition: color .18s ease, transform .18s ease; }.star-button.active { color: #e0a11a; transform: scale(1.08); }.star-button:active { transform: scale(.9); }
 .image-upload { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }.upload-button input { display: none; }.image-upload img { width: 120px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; }
 .composer-actions { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }.feed-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 16px; }
+.feed-filters { display: grid; grid-template-columns: minmax(12rem, 1.2fr) repeat(2, minmax(11rem, 1fr)) auto; gap: 12px; align-items: end; margin: -4px 0 18px; padding: 14px; border: 1px solid rgba(31, 122, 77, .12); border-radius: 8px; background: rgba(242, 248, 239, .7); }
+.feed-filters label { min-width: 0; display: grid; gap: 6px; }.feed-filters label > span { color: var(--muted); font-size: 12px; font-weight: 700; }.feed-filters input { width: 100%; min-height: 42px; box-sizing: border-box; }.feed-filter-actions { display: flex; gap: 8px; }.feed-filter-actions button { min-height: 42px; }
 .post-feed { columns: 2; column-gap: 16px; }.post-item { break-inside: avoid; display: grid; gap: 14px; margin-bottom: 16px; padding: 18px; border: 1px solid rgba(31, 122, 77, .14); border-radius: 8px; background: #fff; animation: post-enter .34s ease both; transition: transform .22s ease, box-shadow .22s ease; }.post-item:hover { transform: translateY(-3px); box-shadow: 0 14px 28px rgba(21, 95, 59, .09); }.post-item:active { transform: scale(.99); }
 .post-item header { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 10px; }.post-item header > div:nth-child(2) { display: grid; gap: 2px; }.avatar { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: var(--primary); color: #fff; font-weight: 800; }.status-badge { padding: 4px 8px; border-radius: 10px; font-size: 11px; background: #eef2ed; }.status-badge.pending { color: #956400; background: #fff5d9; }.status-badge.approved { color: var(--primary-dark); background: #e8f4e5; }.status-badge.rejected { color: #a33737; background: #fdeaea; }
 .post-content { margin: 0; line-height: 1.75; white-space: pre-wrap; }.post-image { width: 100%; max-height: 440px; object-fit: cover; border-radius: 6px; }.post-item footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid rgba(31, 122, 77, .1); padding-top: 12px; }.post-target { display: grid; grid-template-columns: 30px minmax(0, 1fr); color: inherit; text-decoration: none; min-width: 0; }.post-target > span { grid-row: 1 / 3; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: #edf6e9; color: var(--primary-dark); font-size: 11px; }.post-target small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.post-rating { white-space: nowrap; color: #c9cec7; }.post-rating .active { color: #e0a11a; }
@@ -219,6 +286,7 @@ onBeforeUnmount(clearImage);
 @keyframes composer-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes post-enter { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 760px) { .community-heading { align-items: stretch; flex-direction: column; }.community-heading button { width: 100%; }.target-grid { grid-template-columns: 1fr; }.post-feed { columns: 1; } }
-@media (max-width: 480px) { .feed-toolbar { align-items: stretch; flex-direction: column; }.feed-toolbar .segmented, .feed-toolbar > button { width: 100%; }.post-item footer { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 980px) { .feed-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }.feed-filter-actions { align-self: stretch; }.feed-filter-actions button { flex: 1; } }
+@media (max-width: 480px) { .feed-toolbar { align-items: stretch; flex-direction: column; }.feed-toolbar .segmented, .feed-toolbar > button { width: 100%; }.feed-filters { grid-template-columns: 1fr; }.post-item footer { align-items: flex-start; flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { .post-composer, .post-item { animation: none; }.post-item, .star-button { transition: none; } }
 </style>

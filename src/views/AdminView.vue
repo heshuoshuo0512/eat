@@ -75,6 +75,12 @@
             <span>当前页 {{ filteredAdminReviews.length }} 条</span>
             <span>共 {{ store.adminReviewTotal }} 条{{ reviewStatusFilter ? statusLabel(reviewStatusFilter) : '评价' }}</span>
           </div>
+          <div v-if="filteredAdminReviews.length" class="bulk-moderation-bar">
+            <button class="ghost" type="button" :disabled="reviewBulkBusy" @click="toggleAllReviewSelections">{{ allVisibleReviewsSelected ? '取消全选' : '全选当前页' }}</button>
+            <span>已选 {{ selectedReviewIds.size }} 条</span>
+            <button class="primary" type="button" :disabled="reviewBulkBusy || !selectedReviewIds.size" @click="bulkModerateReviews('approved')">批量通过</button>
+            <button class="ghost danger" type="button" :disabled="reviewBulkBusy || !selectedReviewIds.size" @click="bulkModerateReviews('rejected')">批量驳回</button>
+          </div>
           <div v-if="reviewLoading && !store.adminReviews.length" class="moderation-empty">正在加载评价...</div>
           <div v-else-if="!filteredAdminReviews.length" class="moderation-empty">
             <strong>没有符合条件的评价</strong>
@@ -82,9 +88,10 @@
           </div>
           <div v-else class="table-wrap moderation-table">
             <table>
-              <thead><tr><th>时间 / 作者</th><th>评价对象</th><th>评分</th><th>内容</th><th>状态</th><th>审核操作</th></tr></thead>
+              <thead><tr><th class="selection-column">选择</th><th>时间 / 作者</th><th>评价对象</th><th>评分</th><th>内容</th><th>状态</th><th>审核操作</th></tr></thead>
               <tbody>
                 <tr v-for="review in filteredAdminReviews" :key="review.id">
+                  <td class="selection-column" data-label="选择"><input type="checkbox" :checked="selectedReviewIds.has(review.id)" :aria-label="`选择评价 ${reviewTargetName(review)}`" @change="toggleReviewSelection(review.id)" /></td>
                   <td data-label="时间 / 作者"><strong>{{ formatDateTime(review.createdAt) }}</strong><br /><span class="muted">{{ review.user || '匿名用户' }}</span></td>
                   <td data-label="评价对象"><span class="target-type">{{ review.targetType === 'canteen' ? '食堂评价' : '菜品评价' }}</span><strong class="target-name">{{ reviewTargetName(review) }}</strong><span class="target-path">{{ reviewTargetPath(review) }}</span></td>
                   <td data-label="评分"><span class="rating-pill">{{ review.rating }} / 5</span></td>
@@ -131,6 +138,12 @@
             <span>当前页 {{ store.adminPosts.length }} 条</span>
             <span>共 {{ store.adminPostTotal }} 条{{ postStatusFilter ? statusLabel(postStatusFilter) : '帖子' }}</span>
           </div>
+          <div v-if="store.adminPosts.length" class="bulk-moderation-bar">
+            <button class="ghost" type="button" :disabled="postBulkBusy" @click="toggleAllPostSelections">{{ allVisiblePostsSelected ? '取消全选' : '全选当前页' }}</button>
+            <span>已选 {{ selectedPostIds.size }} 条</span>
+            <button class="primary" type="button" :disabled="postBulkBusy || !selectedPostIds.size" @click="bulkModeratePosts('approved')">批量通过</button>
+            <button class="ghost danger" type="button" :disabled="postBulkBusy || !selectedPostIds.size" @click="bulkModeratePosts('rejected')">批量驳回</button>
+          </div>
           <div v-if="postLoading && !store.adminPosts.length" class="moderation-empty">正在加载帖子...</div>
           <div v-else-if="!store.adminPosts.length" class="moderation-empty">
             <strong>没有符合条件的帖子</strong>
@@ -138,6 +151,7 @@
           </div>
           <div v-else class="post-moderation-list">
             <article v-for="post in store.adminPosts" :key="post.id" class="post-moderation-row">
+              <label class="post-selection"><input type="checkbox" :checked="selectedPostIds.has(post.id)" :aria-label="`选择帖子 ${post.id}`" @change="togglePostSelection(post.id)" /></label>
               <img v-if="post.imageUrl" class="post-admin-thumb" :src="post.imageUrl" alt="帖子图片" />
               <div v-else class="post-image-placeholder" aria-hidden="true">无图片</div>
               <div class="post-moderation-body">
@@ -1147,6 +1161,8 @@ const reviewCanteenFilter = ref('');
 const reviewStallFilter = ref('');
 const reviewDishFilter = ref('');
 const reviewBusyIds = ref(new Set());
+const selectedReviewIds = ref(new Set());
+const reviewBulkBusy = ref(false);
 const moderationTab = ref(route.query.tab === 'posts' ? 'posts' : 'reviews');
 const postPage = ref(0);
 const postPageSize = 20;
@@ -1155,6 +1171,8 @@ const postMessageType = ref('info');
 const postLoading = ref(false);
 const postStatusFilter = ref('pending');
 const postBusyIds = ref(new Set());
+const selectedPostIds = ref(new Set());
+const postBulkBusy = ref(false);
 
 const reviewFilterCanteens = computed(() => store.canteens);
 const reviewFilterStalls = computed(() => store.stalls.filter((stall) => !reviewCanteenFilter.value || stall.canteenId === reviewCanteenFilter.value));
@@ -1192,6 +1210,10 @@ const filteredAdminReviews = computed(() => [...store.adminReviews].filter((revi
   if (reviewDishFilter.value && dish?.id !== reviewDishFilter.value) return false;
   return true;
 }).sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || ''))));
+const allVisibleReviewsSelected = computed(() => filteredAdminReviews.value.length > 0
+  && filteredAdminReviews.value.every((review) => selectedReviewIds.value.has(review.id)));
+const allVisiblePostsSelected = computed(() => store.adminPosts.length > 0
+  && store.adminPosts.every((post) => selectedPostIds.value.has(post.id)));
 
 const auditPage = ref(0);
 const auditPageSize = 20;
@@ -1228,7 +1250,7 @@ function defaultCanteenForm() {
 }
 
 function defaultDishForm() {
-  return { id: '', stallId: store.stalls[0]?.id || '', name: '', catalogItemType: 'meal', catalogCategory: '其他餐食', price: 15, taste: '', cuisine: '', ingredients: '', seasonings: '', additives: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', rating: 0, reviewCount: 0, sales: 0, calories: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '', allergenDeclarationStatus: 'unknown', dietaryLabels: '', spiceLevel: null, nutritionFactStatus: 'unknown', recipeFactStatus: 'unknown', halalFactStatus: 'unknown', dietaryFactStatus: 'unknown', spiceFactStatus: 'unknown', factSource: 'manual', dataVersion: 'manual-v1' };
+  return { id: '', stallId: store.stalls[0]?.id || '', name: '', catalogItemType: 'meal', catalogCategory: '其他餐食', price: 15, taste: '', cuisine: '', ingredients: '', seasonings: '', additives: '', tags: '', mealTypes: 'lunch, dinner', image: '🍽️', imageUrl: '', description: '', status: 'active', reviewStatus: 'approved', retrievalEligible: true, rating: 0, reviewCount: 0, sales: 0, calories: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, sodium: 0, sugar: 0, calcium: 0, iron: 0, halal: false, allergens: '', allergenDeclarationStatus: 'unknown', dietaryLabels: '', spiceLevel: null, nutritionFactStatus: 'unknown', recipeFactStatus: 'unknown', halalFactStatus: 'unknown', dietaryFactStatus: 'unknown', spiceFactStatus: 'unknown', factSource: 'manual', dataVersion: 'manual-v1' };
 }
 
 function defaultStallForm() {
@@ -1411,6 +1433,8 @@ function dishPayload() {
     imageUrl: dishForm.imageUrl || undefined,
     description: String(dishForm.description || '').trim() || '管理员录入菜品。',
     status: dishForm.status || 'active',
+    reviewStatus: dishForm.reviewStatus || 'approved',
+    retrievalEligible: Boolean(dishForm.retrievalEligible),
     rating: Number(dishForm.rating ?? 0),
     reviewCount: Number(dishForm.reviewCount ?? 0),
     sales: Number(dishForm.sales ?? 0),
@@ -1953,6 +1977,60 @@ function isPostBusy(id) {
   return postBusyIds.value.has(id);
 }
 
+function toggleSetEntry(targetRef, id) {
+  const next = new Set(targetRef.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  targetRef.value = next;
+}
+
+function toggleReviewSelection(id) { toggleSetEntry(selectedReviewIds, id); }
+function togglePostSelection(id) { toggleSetEntry(selectedPostIds, id); }
+function toggleAllReviewSelections() {
+  selectedReviewIds.value = allVisibleReviewsSelected.value
+    ? new Set()
+    : new Set(filteredAdminReviews.value.map((review) => review.id));
+}
+function toggleAllPostSelections() {
+  selectedPostIds.value = allVisiblePostsSelected.value
+    ? new Set()
+    : new Set(store.adminPosts.map((post) => post.id));
+}
+
+async function bulkModerateReviews(status) {
+  const ids = [...selectedReviewIds.value];
+  if (!ids.length || reviewBulkBusy.value) return;
+  if (!window.confirm(`确认${status === 'approved' ? '通过' : '驳回'}选中的 ${ids.length} 条评价？`)) return;
+  reviewBulkBusy.value = true;
+  try {
+    const results = await Promise.allSettled(ids.map((id) => store.updateReviewStatusAdmin(id, status)));
+    const failed = results.filter((result) => result.status === 'rejected').length;
+    selectedReviewIds.value = new Set();
+    reviewMessage.value = failed ? `已处理 ${ids.length - failed} 条评价，${failed} 条失败，请刷新后重试。` : `已批量${status === 'approved' ? '通过' : '驳回'} ${ids.length} 条评价。`;
+    reviewMessageType.value = failed ? 'error' : 'info';
+    await refreshReviews(true);
+  } finally {
+    reviewBulkBusy.value = false;
+  }
+}
+
+async function bulkModeratePosts(status) {
+  const ids = [...selectedPostIds.value];
+  if (!ids.length || postBulkBusy.value) return;
+  if (!window.confirm(`确认${status === 'approved' ? '通过' : '驳回'}选中的 ${ids.length} 条帖子？`)) return;
+  postBulkBusy.value = true;
+  try {
+    const results = await Promise.allSettled(ids.map((id) => store.updatePostStatusAdmin(id, status)));
+    const failed = results.filter((result) => result.status === 'rejected').length;
+    selectedPostIds.value = new Set();
+    postMessage.value = failed ? `已处理 ${ids.length - failed} 条帖子，${failed} 条失败，请刷新后重试。` : `已批量${status === 'approved' ? '通过' : '驳回'} ${ids.length} 条帖子。`;
+    postMessageType.value = failed ? 'error' : 'info';
+    await refreshPosts(true);
+  } finally {
+    postBulkBusy.value = false;
+  }
+}
+
 async function moderateReview(id, status) {
   if (isReviewBusy(id)) return;
   setBusyId(reviewBusyIds, id, true);
@@ -2328,10 +2406,12 @@ watch(() => [store.canteens.length, store.stalls.length, store.dishes.length], (
 .moderation-filters label.disabled { opacity: .52; }
 .moderation-refresh { min-height: 2.75rem; align-self: end; }
 .moderation-summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; color: var(--muted); font-size: 0.8125rem; font-weight: 650; }
+.bulk-moderation-bar { display: flex; min-height: 3.5rem; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .625rem .75rem; border: 1px solid rgba(31,122,77,.14); border-radius: .5rem; background: #f8fbf6; }.bulk-moderation-bar span { margin-right: auto; color: var(--muted); font-size: .8125rem; font-weight: 700; }.bulk-moderation-bar button { min-height: 2.75rem; padding-inline: 1rem; }
 .moderation-empty { min-height: 9rem; display: grid; place-content: center; gap: 0.375rem; text-align: center; color: var(--muted); border: 1px dashed rgba(31, 122, 77, .2); border-radius: 0.5rem; background: rgba(255, 255, 255, .34); }
 .moderation-empty strong { color: var(--text); }
 .moderation-table table { min-width: 62rem; }
 .moderation-table td { vertical-align: top; }
+.selection-column { width: 3.75rem; text-align: center; }.selection-column input, .post-selection input { width: 1.125rem; height: 1.125rem; accent-color: var(--primary); }
 .moderation-content { min-width: 15rem; max-width: 26rem; white-space: normal; line-height: 1.65; }
 .target-type, .target-name, .target-path { display: block; }
 .target-type { color: var(--primary); font-size: 0.6875rem; font-weight: 760; }
@@ -2343,9 +2423,9 @@ watch(() => [store.canteens.length, store.stalls.length, store.dishes.length], (
 .status-approved { color: #14623d; background: #dff3e7; }
 .status-pending { color: #795500; background: #fff1c7; }
 .status-rejected { color: #9a2f2f; background: #fbe1df; }
-.moderation-actions { min-width: 8rem; }
+.moderation-actions { min-width: 9rem; gap: .625rem; }.moderation-actions button { min-height: 2.75rem; padding: .625rem .875rem; }
 .post-moderation-list { display: grid; border-top: 1px solid rgba(31, 122, 77, .12); }
-.post-moderation-row { display: grid; grid-template-columns: 7rem minmax(0, 1fr) auto; gap: 1rem; align-items: start; padding: 1rem 0; border-bottom: 1px solid rgba(31, 122, 77, .12); }
+.post-moderation-row { display: grid; grid-template-columns: 2rem 7rem minmax(0, 1fr) auto; gap: 1rem; align-items: start; padding: 1rem 0; border-bottom: 1px solid rgba(31, 122, 77, .12); }.post-selection { display: grid; min-height: 2.75rem; place-items: center; }
 .post-admin-thumb, .post-image-placeholder { width: 7rem; height: 5.25rem; border-radius: 0.375rem; }
 .post-admin-thumb { object-fit: cover; }
 .post-image-placeholder { display: grid; place-items: center; color: var(--muted); font-size: 0.75rem; background: rgba(31, 122, 77, .06); border: 1px dashed rgba(31, 122, 77, .16); }
@@ -2354,7 +2434,7 @@ watch(() => [store.canteens.length, store.stalls.length, store.dishes.length], (
 .post-moderation-meta, .post-target-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.625rem; }
 .post-moderation-meta span:not(.status-pill), .post-target-line { color: var(--muted); font-size: 0.8125rem; }
 .post-moderation-actions { width: 7rem; display: grid; gap: 0.5rem; }
-.post-moderation-actions button { width: 100%; }
+.post-moderation-actions button { width: 100%; min-height: 2.75rem; }
 
 .entry-workspace-header { margin-bottom: 1rem; }
 .entry-task-tabs, .ai-page-tabs { display: grid; gap: 0.25rem; padding: 0.25rem; border: 1px solid rgba(31, 122, 77, .16); border-radius: 0.5rem; background: #eef5eb; }
@@ -2457,7 +2537,11 @@ watch(() => [store.canteens.length, store.stalls.length, store.dishes.length], (
   .entry-task-tabs, .ai-page-tabs, .ai-page-tabs:has(button:nth-child(2):last-child), .entry-context-grid, .nutrition-entry-grid, .ai-monitor-metrics { width: 100%; grid-template-columns: 1fr; }
   .moderation-filters, .post-filters { grid-template-columns: 1fr; }
   .moderation-refresh { width: 100%; }
+  .bulk-moderation-bar { align-items: stretch; }
+  .bulk-moderation-bar span { width: 100%; margin-right: 0; }
+  .bulk-moderation-bar button { flex: 1 1 8rem; }
   .post-moderation-row { grid-template-columns: 1fr; }
+  .post-selection { min-height: 2.75rem; justify-content: start; }
   .post-admin-thumb, .post-image-placeholder { width: 100%; height: auto; aspect-ratio: 16 / 9; }
   .post-moderation-actions { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .moderation-table,
