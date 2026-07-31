@@ -27,9 +27,11 @@ export function validateLoginForm({ identifier, username, password }) {
   return '';
 }
 
-export function validateRegisterForm({ phone, verificationCode, nickname, password, confirmPassword, agreementAccepted }) {
+export function validateRegisterForm({ phone, invitationCode, verificationCode, nickname, password, confirmPassword, agreementAccepted }) {
   if (!phonePattern.test(String(phone || '').trim())) return '请输入有效的中国大陆手机号。';
-  if (!/^\d{6}$/.test(String(verificationCode || '').trim())) return '请输入 6 位验证码。';
+  const invite = String(invitationCode || '').trim();
+  if (invite && !/^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$/.test(invite)) return '请输入有效的邀请码。';
+  if (!invite && !/^\d{6}$/.test(String(verificationCode || '').trim())) return '请输入 6 位验证码，或填写注册码。';
   const nick = String(nickname || '').trim();
   if (nick && (nick.length < 2 || nick.length > 32)) return '昵称长度需要在 2-32 个字符之间。';
   if (!password || password.length < 8 || password.length > 72 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) return '密码需为 8-72 位，且同时包含字母和数字。';

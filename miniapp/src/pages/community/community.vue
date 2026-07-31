@@ -1,5 +1,12 @@
 <template>
   <sc-page-shell title="社区" subtitle="真实用餐体验与校园评价" tone="community" tab-id="community">
+    <view class="community-heading">
+      <view>
+        <text class="eyebrow">校园真实体验</text>
+        <text class="heading-copy">看看同学怎么吃，也分享你的这一餐</text>
+      </view>
+      <sc-icon name="message" :size="24" tone="accent" />
+    </view>
     <sc-segmented-control v-model="section" :options="sectionOptions" block />
 
     <template v-if="section==='posts'">
@@ -7,26 +14,57 @@
         <view class="post-filter"><sc-segmented-control v-model="postType" :options="postTypeOptions" density="compact" block /></view>
         <button class="publish-button" aria-label="发布帖子" @tap="openPublish"><view class="publish-visual"><sc-icon name="plus" :size="16" tone="inverted" /><text>发布</text></view></button>
       </view>
-      <view class="keyword-search"><sc-icon name="search-line" :size="16" tone="muted" /><input v-model="postQuery" confirm-type="search" placeholder="搜索帖子内容、菜品或食堂" /><button v-if="postQuery" type="button" @tap="postQuery=''">清除</button></view>
+
+      <view class="keyword-search">
+        <sc-icon name="search-line" :size="16" tone="muted" />
+        <input v-model="postQuery" confirm-type="search" placeholder="搜索帖子内容、菜品或食堂" />
+        <button v-if="postQuery" type="button" @tap="postQuery=''">清除</button>
+      </view>
+
       <view class="post-target-filters">
-        <input v-model="postDishQuery" class="post-dish-search" placeholder="输入菜品名称缩小范围" />
+        <view class="filter-heading"><text>关联目标</text><text>按食堂或菜品缩小帖子范围</text></view>
+        <input v-model="postDishQuery" class="post-dish-search" placeholder="输入菜品名称" />
         <view class="picker-grid">
-          <picker class="picker-touch" :range="postCanteenOptions" range-key="name" :value="postCanteenIndex" @change="selectPostCanteen"><view class="picker-box"><text class="picker-label">{{ selectedPostCanteen?.name||'全部食堂' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker>
-          <picker class="picker-touch" :range="postDishOptions" range-key="displayName" :value="postDishIndex" @change="selectPostDish"><view class="picker-box"><text class="picker-label">{{ selectedPostDish?.name||'全部菜品' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker>
+          <picker class="picker-touch" :range="postCanteenOptions" range-key="name" :value="postCanteenIndex" @change="selectPostCanteen">
+            <view class="picker-box"><text class="picker-label">{{ selectedPostCanteen?.name||'全部食堂' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view>
+          </picker>
+          <picker class="picker-touch" :range="postDishOptions" range-key="displayName" :value="postDishIndex" @change="selectPostDish">
+            <view class="picker-box"><text class="picker-label">{{ selectedPostDish?.name||'全部菜品' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view>
+          </picker>
         </view>
         <button v-if="postCanteenId||postDishId||postDishQuery" class="clear-post-targets" type="button" @tap="clearPostTargets">清空食堂与菜品筛选</button>
       </view>
+
       <sc-state-card v-if="loading" type="loading" title="正在加载校园动态" />
       <sc-state-card v-else-if="error" type="error" title="动态加载失败" :desc="error" action-text="重试" @action="loadPosts(true)" />
       <view v-else-if="posts.length" class="post-list">
         <view v-for="(post,index) in posts" :key="post.id" class="post-card" :style="entryStyle(index)">
-          <view class="post-head"><view class="avatar">{{ String(post.user||'同').slice(0,1) }}</view><view class="author"><text class="ui-strong">{{ post.user||'校园同学' }}</text><text>{{ formatDate(post.createdAt) }}</text></view><text v-if="post.isOwn" class="status" :class="post.status">{{ statusLabel(post.status) }}</text></view>
+          <view class="post-head">
+            <view class="avatar">{{ String(post.user||'同').slice(0,1) }}</view>
+            <view class="author"><text class="ui-strong">{{ post.user||'校园同学' }}</text><text>{{ formatDate(post.createdAt) }}</text></view>
+            <text v-if="post.isOwn" class="status" :class="post.status">{{ statusLabel(post.status) }}</text>
+          </view>
           <text class="post-content">{{ post.content }}</text>
           <image v-if="post.imageUrl" class="post-image" :src="post.imageUrl" mode="aspectFill" lazy-load />
-          <button class="post-target" @tap="openPostTarget(post)"><text>{{ post.targetType==='dish'?'菜品':'食堂' }}</text><view><text class="ui-strong">{{ post.dish?.name||post.canteen?.name||'校园食堂' }}</text><text class="ui-small">{{ [post.canteen?.name,post.stall?.name].filter(Boolean).join(' · ') }}</text></view><sc-icon name="arrow-right" :size="16" tone="muted" /></button>
+          <button class="post-target" @tap="openPostTarget(post)">
+            <text>{{ post.targetType==='dish'?'菜品':'食堂' }}</text>
+            <view><text class="ui-strong">{{ post.dish?.name||post.canteen?.name||'校园食堂' }}</text><text class="ui-small">{{ [post.canteen?.name,post.stall?.name].filter(Boolean).join(' · ') }}</text></view>
+            <sc-icon name="arrow-right" :size="16" tone="muted" />
+          </button>
           <view v-if="post.rating" class="post-rating"><text>菜品评分</text><text class="ui-strong">{{ post.rating }}.0</text></view>
-          <view class="engagement-row"><button :class="{active:post.viewerReaction==='like'}" :disabled="post.status!=='approved'" @tap="react('post',post,'like')">赞 {{ post.engagement?.likes||0 }}</button><button :class="{active:post.viewerReaction==='dislike'}" :disabled="post.status!=='approved'" @tap="react('post',post,'dislike')">踩 {{ post.engagement?.dislikes||0 }}</button><button :disabled="post.status!=='approved'" @tap="toggleComments(post)">评论 {{ post.engagement?.comments||0 }}</button><button v-if="!post.isOwn" :disabled="post.viewerReported||post.status!=='approved'" @tap="report('post',post)">{{ post.viewerReported?'已举报':'举报' }}</button><button v-if="post.canEdit" @tap="editContent('post',post)">修改</button><button v-if="post.canDelete" class="danger" @tap="removeContent('post',post)">删除</button></view>
-          <view v-if="openCommentsId===post.id" class="comment-panel"><text v-if="commentsLoading" class="ui-small">正在加载评论…</text><view v-for="comment in commentsByPost[post.id]||[]" :key="comment.id" class="comment-row"><text class="ui-strong">{{ comment.user }}</text><text>{{ comment.content }}</text></view><view class="comment-input"><input v-model="commentDrafts[post.id]" maxlength="300" placeholder="写评论" /><button @tap="submitComment(post)">发布</button></view></view>
+          <view class="engagement-row">
+            <button :class="{active:post.viewerReaction==='like'}" :disabled="post.status!=='approved'" @tap="react('post',post,'like')">赞 {{ post.engagement?.likes||0 }}</button>
+            <button :class="{active:post.viewerReaction==='dislike'}" :disabled="post.status!=='approved'" @tap="react('post',post,'dislike')">踩 {{ post.engagement?.dislikes||0 }}</button>
+            <button :disabled="post.status!=='approved'" @tap="toggleComments(post)">评论 {{ post.engagement?.comments||0 }}</button>
+            <button v-if="!post.isOwn" :disabled="post.viewerReported||post.status!=='approved'" @tap="report('post',post)">{{ post.viewerReported?'已举报':'举报' }}</button>
+            <button v-if="post.canEdit" @tap="editContent('post',post)">修改</button>
+            <button v-if="post.canDelete" class="danger" @tap="removeContent('post',post)">删除</button>
+          </view>
+          <view v-if="openCommentsId===post.id" class="comment-panel">
+            <text v-if="commentsLoading" class="ui-small">正在加载评论…</text>
+            <view v-for="comment in commentsByPost[post.id]||[]" :key="comment.id" class="comment-row"><text class="ui-strong">{{ comment.user }}</text><text>{{ comment.content }}</text></view>
+            <view class="comment-input"><input v-model="commentDrafts[post.id]" maxlength="300" placeholder="写评论" /><button @tap="submitComment(post)">发布</button></view>
+          </view>
         </view>
         <button v-if="posts.length<postTotal" class="load-more" :disabled="loadingMore" @tap="loadMorePosts"><view>{{ loadingMore ? '加载中…' : '加载更多' }}</view></button>
       </view>
@@ -34,18 +72,57 @@
     </template>
 
     <template v-else>
-      <view class="keyword-search"><sc-icon name="search-line" :size="16" tone="muted" /><input v-model="reviewQuery" confirm-type="search" placeholder="搜索评价内容、菜品或食堂" /><button v-if="reviewQuery" type="button" @tap="reviewQuery=''">清除</button></view>
+      <view class="keyword-search">
+        <sc-icon name="search-line" :size="16" tone="muted" />
+        <input v-model="reviewQuery" confirm-type="search" placeholder="搜索评价内容、菜品或食堂" />
+        <button v-if="reviewQuery" type="button" @tap="reviewQuery=''">清除</button>
+      </view>
+      <view class="review-intro"><text class="section-label">校园评价</text><text>从真实评价里找到下一顿饭</text></view>
       <view class="community-workspace">
         <view class="review-sidebar">
           <sc-responsive-panel v-model="filtersOpen" title="评价筛选" :active-count="reviewFilterCount">
-            <view class="review-controls"><sc-segmented-control v-model="reviewFilters.targetType" :options="reviewTypeOptions" block density="compact" /><view class="filter-searches"><input v-model="canteenFilterQuery" placeholder="输入食堂名称" /><input v-if="reviewFilters.targetType==='dish'" v-model="stallFilterQuery" placeholder="输入档口名称" /><input v-if="reviewFilters.targetType==='dish'" v-model="dishFilterQuery" placeholder="输入菜品名称" /></view><view class="picker-grid"><picker class="picker-touch" :range="canteenOptions" range-key="name" :value="canteenIndex" @change="selectCanteen"><view class="picker-box"><text class="picker-label">{{ selectedCanteen?.name||'全部食堂' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker><picker v-if="reviewFilters.targetType==='dish'" class="picker-touch" :range="stallOptions" range-key="displayName" :value="stallIndex" @change="selectStall"><view class="picker-box"><text class="picker-label">{{ selectedStall?.displayName||'全部档口' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker><picker v-if="reviewFilters.targetType==='dish'" class="picker-touch" :range="dishOptions" range-key="displayName" :value="dishIndex" @change="selectDish"><view class="picker-box"><text class="picker-label">{{ selectedDish?.name||'全部菜品' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker><picker class="picker-touch" :range="sortOptions" range-key="label" :value="sortIndex" @change="selectSort"><view class="picker-box"><text class="picker-label">{{ selectedSort.label }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker></view></view>
+            <view class="review-controls">
+              <sc-segmented-control v-model="reviewFilters.targetType" :options="reviewTypeOptions" block density="compact" />
+              <view class="filter-searches">
+                <input v-model="canteenFilterQuery" placeholder="输入食堂名称" />
+                <input v-if="reviewFilters.targetType==='dish'" v-model="stallFilterQuery" placeholder="输入档口名称" />
+                <input v-if="reviewFilters.targetType==='dish'" v-model="dishFilterQuery" placeholder="输入菜品名称" />
+              </view>
+              <view class="picker-grid">
+                <picker class="picker-touch" :range="canteenOptions" range-key="name" :value="canteenIndex" @change="selectCanteen"><view class="picker-box"><text class="picker-label">{{ selectedCanteen?.name||'全部食堂' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker>
+                <picker v-if="reviewFilters.targetType==='dish'" class="picker-touch" :range="stallOptions" range-key="displayName" :value="stallIndex" @change="selectStall"><view class="picker-box"><text class="picker-label">{{ selectedStall?.displayName||'全部档口' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker>
+                <picker v-if="reviewFilters.targetType==='dish'" class="picker-touch" :range="dishOptions" range-key="displayName" :value="dishIndex" @change="selectDish"><view class="picker-box"><text class="picker-label">{{ selectedDish?.name||'全部菜品' }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker>
+                <picker class="picker-touch" :range="sortOptions" range-key="label" :value="sortIndex" @change="selectSort"><view class="picker-box"><text class="picker-label">{{ selectedSort.label }}</text><sc-icon name="arrow-down" :size="16" tone="muted" /></view></picker>
+              </view>
+            </view>
           </sc-responsive-panel>
-          <view class="review-summary"><view><text class="ui-strong">{{ reviewSummary.averageRating||'-' }}</text><text>平均评分</text></view><view><text class="ui-strong">{{ reviewTotal }}</text><text>当前评价</text></view><view><text class="ui-strong">{{ reviewSummary.dishReviews||0 }}</text><text>菜品评价</text></view><view><text class="ui-strong">{{ reviewSummary.canteenReviews||0 }}</text><text>食堂评价</text></view></view>
+          <view class="review-summary">
+            <view><text class="ui-strong">{{ reviewSummary.averageRating||'-' }}</text><text>平均评分</text></view>
+            <view><text class="ui-strong">{{ reviewTotal }}</text><text>当前评价</text></view>
+            <view><text class="ui-strong">{{ reviewSummary.dishReviews||0 }}</text><text>菜品评价</text></view>
+            <view><text class="ui-strong">{{ reviewSummary.canteenReviews||0 }}</text><text>食堂评价</text></view>
+          </view>
         </view>
         <view class="review-main">
           <sc-state-card v-if="loading" type="loading" title="正在加载评价" />
           <sc-state-card v-else-if="error" type="error" title="评价加载失败" :desc="error" action-text="重试" @action="loadReviews(true)" />
-          <view v-else-if="reviews.length" class="review-list"><view v-for="(review,index) in reviews" :key="review.id" class="review-entry"><button class="review-card" :style="entryStyle(index)" @tap="openReviewTarget(review)"><view class="review-score"><text class="ui-strong">{{ review.rating }}</text><text>分</text></view><view class="review-copy"><view><text class="ui-strong">{{ review.dish?.name||review.canteen?.name||'校园评价' }}</text><text>{{ review.targetType==='dish'?'菜品':'食堂' }}</text></view><text class="ui-small">{{ [review.canteen?.name,review.stall?.name].filter(Boolean).join(' · ') }}</text><text class="ui-paragraph">{{ review.content }}</text><view class="ui-footer"><text>{{ review.user }}</text><text>{{ formatDate(review.createdAt) }}</text></view></view><sc-icon name="arrow-right" :size="16" tone="muted" /></button><view class="engagement-row review-engagement"><button :class="{active:review.viewerReaction==='like'}" :disabled="review.status!=='approved'" @tap="react('review',review,'like')">赞 {{ review.engagement?.likes||0 }}</button><button :class="{active:review.viewerReaction==='dislike'}" :disabled="review.status!=='approved'" @tap="react('review',review,'dislike')">踩 {{ review.engagement?.dislikes||0 }}</button><button v-if="!review.isOwn" :disabled="review.viewerReported||review.status!=='approved'" @tap="report('review',review)">{{ review.viewerReported?'已举报':'举报' }}</button><button v-if="review.canEdit" @tap="editContent('review',review)">修改</button><button v-if="review.canDelete" class="danger" @tap="removeContent('review',review)">删除</button></view></view><button v-if="reviews.length<reviewTotal" class="load-more" :disabled="loadingMore" @tap="loadMoreReviews"><view>{{ loadingMore ? '加载中…' : '加载更多' }}</view></button></view>
+          <view v-else-if="reviews.length" class="review-list">
+            <view v-for="(review,index) in reviews" :key="review.id" class="review-entry">
+              <button class="review-card" :style="entryStyle(index)" @tap="openReviewTarget(review)">
+                <view class="review-score"><text class="ui-strong">{{ review.rating }}</text><text>分</text></view>
+                <view class="review-copy"><view><text class="ui-strong">{{ review.dish?.name||review.canteen?.name||'校园评价' }}</text><text>{{ review.targetType==='dish'?'菜品':'食堂' }}</text></view><text class="ui-small">{{ [review.canteen?.name,review.stall?.name].filter(Boolean).join(' · ') }}</text><text class="ui-paragraph">{{ review.content }}</text><view class="ui-footer"><text>{{ review.user }}</text><text>{{ formatDate(review.createdAt) }}</text></view></view>
+                <sc-icon name="arrow-right" :size="16" tone="muted" />
+              </button>
+              <view class="engagement-row review-engagement">
+                <button :class="{active:review.viewerReaction==='like'}" :disabled="review.status!=='approved'" @tap="react('review',review,'like')">赞 {{ review.engagement?.likes||0 }}</button>
+                <button :class="{active:review.viewerReaction==='dislike'}" :disabled="review.status!=='approved'" @tap="react('review',review,'dislike')">踩 {{ review.engagement?.dislikes||0 }}</button>
+                <button v-if="!review.isOwn" :disabled="review.viewerReported||review.status!=='approved'" @tap="report('review',review)">{{ review.viewerReported?'已举报':'举报' }}</button>
+                <button v-if="review.canEdit" @tap="editContent('review',review)">修改</button>
+                <button v-if="review.canDelete" class="danger" @tap="removeContent('review',review)">删除</button>
+              </view>
+            </view>
+            <button v-if="reviews.length<reviewTotal" class="load-more" :disabled="loadingMore" @tap="loadMoreReviews"><view>{{ loadingMore ? '加载中…' : '加载更多' }}</view></button>
+          </view>
           <sc-state-card v-else type="empty" title="没有符合条件的评价" desc="调整筛选条件后再试。" />
         </view>
       </view>
@@ -91,12 +168,16 @@ async function submitComment(post){const content=String(commentDrafts[post.id]||
 </script>
 
 <style scoped>
+.community-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 14px; padding:2px 2px 0; }
+.community-heading>view { min-width:0; }
+.eyebrow { display:block; color:var(--module-dark); font-size:12px; font-weight:600; }
+.heading-copy { display:block; margin-top:4px; color:var(--ink-2); font-size:14px; line-height:1.45; }
 .community-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:12px 0; }
 .post-filter { flex:1; min-width:0; }
 .keyword-search { display:flex; min-height:44px; align-items:center; gap:8px; margin-bottom:12px; padding:0 12px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
 .keyword-search input { flex:1; min-width:0; height:42px; color:var(--ink); font-size:14px; }
 .keyword-search button { flex:0 0 auto; min-height:32px; padding:0 7px; border-radius:6px; color:var(--ink-2); background:var(--surface-soft); font-size:12px; }
-.post-target-filters { margin-bottom:12px; padding:10px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); }.post-dish-search { width:100%; min-height:40px; padding:0 10px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface-soft); font-size:12px; box-sizing:border-box; }.post-target-filters .picker-grid { margin-top:8px; }.clear-post-targets { display:flex; width:100%; min-height:40px; align-items:center; justify-content:center; margin-top:8px; color:var(--ink-2); border-top:1px solid var(--line); font-size:12px; }
+.post-target-filters { margin-bottom:12px; padding:12px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); }.filter-heading { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:8px; }.filter-heading text:first-child { color:var(--ink); font-size:14px; font-weight:600; }.filter-heading text:last-child { color:var(--muted); font-size:12px; }.post-dish-search { width:100%; min-height:40px; padding:0 10px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface-soft); font-size:12px; box-sizing:border-box; }.post-target-filters .picker-grid { margin-top:8px; }.clear-post-targets { display:flex; width:100%; min-height:40px; align-items:center; justify-content:center; margin-top:8px; color:var(--ink-2); border-top:1px solid var(--line); font-size:12px; }
 .publish-button { display:flex; min-height:44px; flex:0 0 auto; align-items:center; justify-content:center; }
 .publish-visual { display:flex; height:36px; align-items:center; justify-content:center; gap:6px; padding:0 12px; border-radius:var(--radius); color:#fff; background:var(--module-accent); font-size:12px; font-weight:600; }
 .publish-button:active .publish-visual { transform:translateY(1px); opacity:.82; }
@@ -126,6 +207,7 @@ async function submitComment(post){const content=String(commentDrafts[post.id]||
 .load-more>view { display:flex; min-width:112px; height:36px; align-items:center; justify-content:center; padding:0 12px; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface); font-size:12px; font-weight:500; }
 .load-more:active>view { transform:translateY(1px); background:var(--surface-soft); }
 .community-workspace,.review-sidebar,.review-main { min-width:0; }
+.review-intro { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:0 0 12px; }.review-intro .section-label { color:var(--ink); font-size:16px; font-weight:600; }.review-intro>text:last-child { color:var(--muted); font-size:12px; }
 .review-controls { padding:2px 0; }
 .filter-searches { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin-top:10px; }.filter-searches input { min-width:0; min-height:38px; padding:0 8px; border:1px solid var(--line); border-radius:6px; background:var(--surface-soft); font-size:12px; box-sizing:border-box; }
 .picker-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
@@ -138,8 +220,8 @@ async function submitComment(post){const content=String(commentDrafts[post.id]||
 .review-summary .ui-strong,.review-summary text { display:block; }
 .review-summary .ui-strong { color:var(--ink); font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; }
 .review-summary text { margin-top:2px; color:var(--muted); font-size:12px; }
-.review-card { display:grid; grid-template-columns:36px minmax(0,1fr) 20px; width:100%; align-items:start; gap:10px; padding:16px; border-bottom:1px solid var(--line); background:transparent; text-align:left; animation:list-in var(--motion-base) var(--ease-standard) both; }.review-card:last-of-type { border-bottom:0; }
-.review-entry { border-bottom:1px solid var(--line); }.review-entry .review-card { border-bottom:0; }.review-engagement { padding:0 16px 12px; margin-top:0; }
+.review-list { gap:12px; background:transparent; }
+.review-entry { overflow:hidden; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }.review-card { display:grid; grid-template-columns:36px minmax(0,1fr) 20px; width:100%; align-items:start; gap:10px; padding:16px; border:0; background:transparent; text-align:left; animation:list-in var(--motion-base) var(--ease-standard) both; }.review-engagement { padding:0 16px 12px; margin-top:0; }
 .review-score { display:flex; width:36px; height:36px; flex-direction:column; align-items:center; justify-content:center; border-radius:8px; color:var(--module-dark); background:var(--module-soft); }
 .review-score .ui-strong { font-size:14px; font-weight:600; line-height:1; }.review-score text { font-size:12px; }
 .review-copy { min-width:0; }.review-copy>view { display:flex; align-items:center; gap:6px; }
@@ -149,5 +231,5 @@ async function submitComment(post){const content=String(commentDrafts[post.id]||
 .review-copy .ui-footer { display:flex; flex-wrap:wrap; gap:10px; color:var(--muted); font-size:12px; }
 @keyframes list-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 @media (max-width:359px) { .review-summary { grid-template-columns:repeat(2,1fr); }.review-summary view:nth-child(3)::before { display:none; }.review-summary view:nth-child(n+3) { border-top:1px solid var(--line); } }
-@media (min-width:768px) { .community-workspace { display:grid; grid-template-columns:280px minmax(0,1fr); gap:28px; align-items:start; }.review-sidebar { position:sticky; top:72px; }.review-summary { grid-template-columns:repeat(2,1fr); }.review-summary view:nth-child(3)::before { display:none; }.review-summary view:nth-child(n+3) { border-top:1px solid var(--line); }.post-card { padding:20px; } }
+@media (min-width:768px) { .community-heading { max-width:980px; margin-right:auto; margin-left:auto; }.community-toolbar,.keyword-search,.post-target-filters { max-width:980px; margin-right:auto; margin-left:auto; }.community-workspace { display:grid; grid-template-columns:280px minmax(0,1fr); gap:28px; align-items:start; }.review-sidebar { position:sticky; top:72px; }.review-summary { grid-template-columns:repeat(2,1fr); }.review-summary view:nth-child(3)::before { display:none; }.review-summary view:nth-child(n+3) { border-top:1px solid var(--line); }.post-card { padding:20px; } }
 </style>

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
+import { invitationCodeHash } from '../server/invitationCodes.js';
 import { phoneLookupHash } from '../server/security.js';
 
 let baseUrl;
@@ -10,6 +11,8 @@ let db;
 let server;
 let originalNodeEnv;
 let originalSmsTestCode;
+let originalPilotMode;
+let originalRegistrationMode;
 
 async function request(path, { method = 'POST', body, token, ip = '203.0.113.1' } = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -56,8 +59,12 @@ describe('student phone authentication and onboarding', { concurrency: false }, 
   before(() => {
     originalNodeEnv = process.env.NODE_ENV;
     originalSmsTestCode = process.env.SMS_TEST_CODE;
+    originalPilotMode = process.env.PILOT_MODE;
+    originalRegistrationMode = process.env.PILOT_REGISTRATION_MODE;
     process.env.NODE_ENV = 'test';
     process.env.SMS_TEST_CODE = '246810';
+    process.env.PILOT_MODE = 'open';
+    process.env.PILOT_REGISTRATION_MODE = 'sms';
     db = openDatabase(':memory:');
     server = createServer(createApp({ db }).handler);
     server.listen(0);
@@ -70,6 +77,10 @@ describe('student phone authentication and onboarding', { concurrency: false }, 
     else process.env.NODE_ENV = originalNodeEnv;
     if (originalSmsTestCode === undefined) delete process.env.SMS_TEST_CODE;
     else process.env.SMS_TEST_CODE = originalSmsTestCode;
+    if (originalPilotMode === undefined) delete process.env.PILOT_MODE;
+    else process.env.PILOT_MODE = originalPilotMode;
+    if (originalRegistrationMode === undefined) delete process.env.PILOT_REGISTRATION_MODE;
+    else process.env.PILOT_REGISTRATION_MODE = originalRegistrationMode;
   });
 
   it('registers a masked phone student with a pending neutral profile', async () => {
@@ -102,6 +113,90 @@ describe('student phone authentication and onboarding', { concurrency: false }, 
     });
     assert.equal(duplicate.status, 409);
     assert.equal(duplicate.data.code, 'PHONE_ALREADY_REGISTERED');
+  });
+
+  it('supports invitation registration without marking the phone as verified', async () => {
+    const invitationCode = 'CANTEEN-TEST-2026';
+    process.env.PILOT_REGISTRATION_MODE = 'invitation';
+    const timestamp = new Date().toISOString();
+    await db.prepare(`INSERT INTO pilot_invitations
+      (id, tenant_id, code_hash, code_hint, status, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'active', ?, ?, ?)`)
+      .run('invite-test-1', 'default', invitationCodeHash(invitationCode), invitationCode.slice(-4), new Date(Date.now() + 60_000).toISOString(), timestamp, timestamp);
+    try {
+      const capabilities = await request('/api/auth/capabilities', { method: 'GET' });
+      assert.equal(capabilities.status, 200);
+      assert.deepEqual(capabilities.data, {
+        registrationMode: 'invitation',
+        invitationConfigured: true,
+        wechatLoginConfigured: false
+      });
+
+    const codeRequest = await request('/api/auth/verification-codes', {
+      body: { phone: '13800138201', purpose: 'register' },
+      ip: '203.0.113.201'
+    });
+    assert.equal(codeRequest.status, 400);
+    assert.equal(codeRequest.data.code, 'VERIFICATION_CODE_NOT_NEEDED');
+
+    const invalid = await request('/api/auth/register', {
+      body: { phone: '13800138201', invitationCode: 'WRONG-CODE-2026', password: 'Student123', agreementVersion: '2026-07' },
+      ip: '203.0.113.201'
+    });
+    assert.equal(invalid.status, 403);
+    assert.equal(invalid.data.code, 'INVALID_INVITATION_CODE');
+
+    const created = await request('/api/auth/register', {
+      body: { phone: '13800138201', invitationCode, password: 'Student123', agreementVersion: '2026-07' },
+      ip: '203.0.113.201'
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.user.phoneVerified, false);
+    const row = await db.prepare('SELECT phone_verified_at FROM users WHERE phone_hash = ?').get(phoneLookupHash('13800138201'));
+      assert.equal(row.phone_verified_at, null);
+    const consumed = await db.prepare('SELECT status, used_user_id FROM pilot_invitations WHERE id = ?').get('invite-test-1');
+    assert.equal(consumed.status, 'consumed');
+    assert.equal(consumed.used_user_id, created.data.user.id);
+    const reused = await request('/api/auth/register', {
+      body: { phone: '13800138202', invitationCode, password: 'Student123', agreementVersion: '2026-07' },
+      ip: '203.0.113.202'
+    });
+    assert.equal(reused.status, 403);
+    assert.equal(reused.data.code, 'INVALID_INVITATION_CODE');
+    } finally {
+      process.env.PILOT_REGISTRATION_MODE = 'sms';
+    }
+  });
+
+  it('supports optional registration with either a valid code or SMS verification', async () => {
+    process.env.PILOT_REGISTRATION_MODE = 'optional';
+    const invitationCode = 'OPTIONAL-TEST-2026';
+    const timestamp = new Date().toISOString();
+    await db.prepare(`INSERT INTO pilot_invitations
+      (id, tenant_id, code_hash, code_hint, status, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'active', ?, ?, ?)`)
+      .run('invite-optional-1', 'default', invitationCodeHash(invitationCode), invitationCode.slice(-4), new Date(Date.now() + 3 * 86400000).toISOString(), timestamp, timestamp);
+
+    const invitationCreated = await request('/api/auth/register', {
+      body: { phone: '13800138211', invitationCode, password: 'Student123', agreementVersion: '2026-07' }
+    });
+    assert.equal(invitationCreated.status, 201);
+    const consumed = await db.prepare('SELECT status FROM pilot_invitations WHERE id = ?').get('invite-optional-1');
+    assert.equal(consumed.status, 'consumed');
+
+    const smsPhone = '13800138212';
+    const verificationCode = await issueCode(smsPhone, 'register', '203.0.113.212');
+    const smsCreated = await request('/api/auth/register', {
+      body: { phone: smsPhone, verificationCode, password: 'Student123', agreementVersion: '2026-07' }
+    });
+    assert.equal(smsCreated.status, 201);
+
+    const noCode = await request('/api/auth/register', {
+      body: { phone: '13800138213', password: 'Student123', agreementVersion: '2026-07' }
+    });
+    assert.equal(noCode.status, 400);
+    assert.equal(noCode.data.code, 'VERIFICATION_CODE_REQUIRED');
+    process.env.PILOT_REGISTRATION_MODE = 'sms';
   });
 
   it('expires codes, enforces resend delay, and stops after five failed checks', async () => {

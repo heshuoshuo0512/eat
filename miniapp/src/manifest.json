@@ -8,6 +8,7 @@
     "appid": "wx40f3e65bbcafc6d8",
     "libVersion": "3.7.0",
     "__usePrivacyCheck__": true,
+    "lazyCodeLoading": "requiredComponents",
     "setting": {
       "urlCheck": true,
       "es6": true,

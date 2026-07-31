@@ -145,6 +145,9 @@ export const apiClient = {
   login(payload) {
     return authenticate('/api/auth/login', payload);
   },
+  authCapabilities() {
+    return request('/api/auth/capabilities', { timeoutMs: 10000 });
+  },
   register(payload) {
     return authenticate('/api/auth/register', payload);
   },

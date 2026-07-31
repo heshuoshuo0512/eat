@@ -54,8 +54,8 @@ const navStyle = computed(() => ({ paddingRight: `${capsule?.width ? Math.max(16
 const reducedMotion = computed(() => store.motionReduced.value);
 const TONES = {
   neutral: { accent:'#181a1f', dark:'#000000', soft:'#f2f3f5', line:'#e6e8ec' },
-  meal: { accent:'#e23d4a', dark:'#c9323e', soft:'#fff1f2', line:'#f4c3c7' },
-  discover: { accent:'#356ae6', dark:'#2855c2', soft:'#eef4ff', line:'#c9d8ff' },
+  meal: { accent:'#d44240', dark:'#b93635', soft:'#fff1f2', line:'#f4c3c7' },
+  discover: { accent:'#3d82c0', dark:'#2d679a', soft:'#eef6fc', line:'#c5dced' },
   community: { accent:'#7656d6', dark:'#6042bb', soft:'#f5f1ff', line:'#d9cdf8' },
   records: { accent:'#238460', dark:'#19694b', soft:'#eef8f3', line:'#c4e4d4' },
   health: { accent:'#238460', dark:'#19694b', soft:'#eef8f3', line:'#c4e4d4' },

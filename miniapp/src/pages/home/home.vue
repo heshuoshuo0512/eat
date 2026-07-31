@@ -13,24 +13,26 @@
     <sc-state-card v-else-if="store.error.value && !store.loaded.value" type="error" title="数据同步失败" :desc="store.error.value" action-text="重试" @action="reload" />
 
     <view class="home-layout">
-      <view class="home-primary">
-        <view class="home-section core-section">
-          <view class="section-heading"><view><text>开始用餐</text><text>从真实校园目录找到这一餐</text></view><text>{{ store.state.value.catalogStats?.dishes??store.catalogPage.value.total }} 道菜</text></view>
-          <view class="core-actions">
-            <button v-for="(entry, index) in coreEntries" :key="entry.id" class="core-action" :class="`core-${index}`" @tap="openEntry(entry)">
-              <view class="core-icon"><sc-icon :name="entry.iconName" :size="20" /></view>
-              <view class="entry-copy"><text class="ui-strong">{{ entry.label }}</text><text>{{ entry.description }}</text></view><sc-icon class="core-arrow" name="arrow-right" :size="16" tone="muted" />
-            </button>
-          </view>
+      <view class="home-section core-section">
+        <text class="section-label">开始用餐</text>
+        <view class="core-actions">
+          <button v-for="entry in coreEntries" :key="entry.id" class="core-action" @tap="openEntry(entry)">
+            <view class="core-icon"><sc-icon :name="entry.iconName" :size="20" tone="current" /></view>
+            <text class="core-label">{{ coreLabel(entry) }}</text>
+            <text class="core-sub">{{ coreDescription(entry) }}</text>
+          </button>
         </view>
       </view>
 
-      <view class="home-secondary">
-        <view class="home-section explore-section">
-          <view class="section-heading"><view><text>校园服务</text><text>食堂、排行与个人档案</text></view></view>
-          <view class="list-group explore-grid">
-            <sc-list-row v-for="entry in utilityEntries" :key="entry.id" :icon-name="entry.iconName" :title="entry.label" :description="entry.description" :meta="exploreDescription(entry)" :tone="entry.tone" @tap="openEntry(entry)" />
-          </view>
+      <view class="home-section explore-section">
+        <text class="section-label">更多探索</text>
+        <view class="explore-list explore-grid">
+          <button v-for="entry in utilityEntries" :key="entry.id" class="explore-row" @tap="openEntry(entry)">
+            <view class="explore-icon"><sc-icon :name="entry.iconName" :size="18" tone="current" /></view>
+            <view class="explore-copy"><text class="explore-title">{{ entry.label }}</text><text class="explore-description">{{ utilityDescription(entry) }}</text></view>
+            <text class="explore-meta">{{ exploreDescription(entry) }}</text>
+            <sc-icon name="arrow-right" :size="16" tone="muted" />
+          </button>
         </view>
       </view>
     </view>
@@ -51,7 +53,7 @@ const revealState = reactive(resetRevealState());
 const onboardingPromptHandled = ref(false);
 const onboardingPromptOpen = ref(false);
 const drawnThisVisit = new Set();
-const coreEntries = getStudentEntries(CORE_ENTRY_IDS);
+const coreEntries = getStudentEntries([...CORE_ENTRY_IDS.slice(0, 2), 'vision']);
 const exploreEntries = getStudentEntries(EXPLORE_ENTRY_IDS);
 const utilityEntries = [...exploreEntries, { id:'health-profile', label:'健康档案', description:'管理过敏原、忌口和饮食目标', iconName:'safe', tone:'health', route:'/pages/health-profile/health-profile', navigationType:'navigateTo' }];
 const revealDishes = computed(() => {
@@ -62,7 +64,7 @@ const revealDishes = computed(() => {
 });
 const revealDish = computed(() => revealDishes.value[revealState.index] || revealDishes.value[0] || null);
 const mealContext = computed(() => ({ breakfast:'早餐', lunch:'午餐', dinner:'晚餐' }[store.profile.value.mealType] || '今日餐次'));
-const greeting = computed(() => { const hour = new Date().getHours(); return hour < 11 ? '早上好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好'; });
+const greeting = computed(() => '智慧食堂');
 
 onShow(async () => {
   try {
@@ -94,6 +96,15 @@ function exploreDescription(entry) {
   if (entry.id === 'health-profile') return store.profile.value.onboardingStatus === 'completed' ? '已同步' : '待完善';
   return '六种风味';
 }
+function coreDescription(entry) {
+  return ({ dishes:'筛选菜品', recommend:'生成建议', vision:'识别营养' })[entry.id] || entry.description;
+}
+function coreLabel(entry) {
+  return ({ dishes:'找菜', recommend:'智能推荐', vision:'拍照识餐' })[entry.id] || entry.label;
+}
+function utilityDescription(entry) {
+  return ({ canteens:'查找食堂、楼层与档口', rankings:'查看真实评分与校园热度', regions:'从地区风味发现下一餐', 'health-profile':'管理忌口与饮食目标' })[entry.id] || entry.description;
+}
 function openEntry(entry) {
   if (!entry) return;
   if (entry.discoveryMode) store.openDiscoveryMode(entry.discoveryMode);
@@ -119,44 +130,27 @@ function promptHealthProfile() {
 </script>
 
 <style scoped>
-.home-hero-inner { width:100%; max-width:1120px; margin:0 auto; padding:18px var(--page-gutter) 20px; background:transparent; box-sizing:border-box; }
-.home-layout,.home-primary,.home-secondary { min-width:0; }
-.home-section { margin-top:4px; }
-.section-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:12px; }
-.section-heading view text { display:block; color:var(--ink); font-size:16px; font-weight:600; }
-.section-heading view text+text { margin-top:3px; color:var(--muted); font-size:12px; font-weight:400; }
-.section-heading>text { flex:0 0 auto; color:var(--brand-dark); font-size:12px; font-weight:600; }
-.core-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.core-action { display:grid; grid-template-columns:36px minmax(0,1fr) 20px; min-width:0; min-height:68px; align-items:center; gap:10px; padding:12px 14px; border:1px solid var(--brand-line); border-radius:var(--radius-large); background:var(--brand-soft); text-align:left; transition:background-color var(--motion-base) var(--ease-standard),transform var(--motion-fast) var(--ease-standard); }
-.core-action.core-1 { border-color:var(--info-line); background:var(--info-soft); }
-.core-icon { display:flex; width:36px; height:36px; align-items:center; justify-content:center; border-radius:8px; color:var(--brand-dark); background:#fff; }
-.core-1 .core-icon { color:var(--info); }
-.entry-copy { min-width:0; }
-.entry-copy .ui-strong,.entry-copy text { display:block; overflow:hidden; }
-.entry-copy .ui-strong { color:var(--ink); font-size:14px; font-weight:600; white-space:nowrap; text-overflow:ellipsis; }
-.entry-copy text { display:-webkit-box; margin-top:3px; overflow:hidden; color:var(--muted); font-size:12px; line-height:1.4; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
-.core-action:active { transform:translateY(1px); background:#ffe5e7; }.core-action.core-1:active { background:#e3e9ff; }
-.explore-grid { margin-bottom:0; background:var(--surface); }
-@media (max-width:359px) {
-  .core-action { grid-template-columns:32px minmax(0,1fr); gap:8px; padding:12px; }
-  .core-icon { width:32px; height:32px; }
-  .core-arrow { display:none; }
-}
-@media (max-width:479px) { .core-actions { grid-template-columns:1fr; }.core-action { min-height:68px; }.entry-copy text { -webkit-line-clamp:1; } }
-@media (min-width:360px) and (max-width:479px) and (max-height:900px) {
-  .home-hero-inner { padding-top:12px; padding-bottom:14px; }
-  .section-heading { margin-bottom:8px; }
-  .core-actions { gap:8px; }
-  .core-action { min-height:64px; }
-}
-@media (min-width:480px) and (max-width:767px) { .core-action { min-height:82px; } }
-@media (min-width:768px) {
-  .home-hero-inner { padding-top:24px; padding-bottom:28px; }
-  .home-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,1fr); gap:28px; align-items:start; }
-  .home-section { margin-top:0; }
-  .core-actions { grid-template-columns:1fr; }
-  .core-action { min-height:68px; }
-}
-@media (min-width:1024px) { .core-actions { grid-template-columns:1fr 1fr; }.core-action { min-height:92px; } }
-@media (min-width:768px) and (max-height:700px) { .home-hero-inner { padding-top:12px; padding-bottom:14px; }.home-layout { gap:20px; } }
+.home-hero-inner { width:100%; max-width:680px; margin:0 auto; padding:16px var(--page-gutter) 0; box-sizing:border-box; }
+.home-layout,.home-section { min-width:0; }
+.home-section { margin-top:18px; }
+.section-label { display:block; margin:0 4px 8px; color:var(--module-dark); font-size:12px; font-weight:600; }
+.core-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.core-action { display:flex; min-width:0; min-height:104px; flex-direction:column; align-items:center; justify-content:center; padding:13px 6px; border:1px solid var(--module-line); border-radius:14px; color:var(--module-dark); background:var(--module-soft); text-align:center; transition:background-color var(--motion-fast) var(--ease-standard),transform var(--motion-fast) var(--ease-standard); }
+.core-action:active { transform:translateY(1px); background:#ffe5e7; }
+.core-icon { display:flex; width:38px; height:38px; align-items:center; justify-content:center; margin-bottom:8px; border-radius:10px; background:#fff; }
+.core-label,.core-sub { display:block; max-width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.core-label { color:var(--ink); font-size:14px; font-weight:600; }
+.core-sub { margin-top:2px; color:var(--muted); font-size:12px; }
+.explore-list { display:flex; flex-direction:column; gap:10px; }
+.explore-row { display:flex; width:100%; min-height:60px; align-items:center; gap:12px; padding:10px 14px; border:1px solid var(--line); border-radius:14px; background:var(--surface); text-align:left; }
+.explore-row:active { transform:translateY(1px); background:var(--module-soft); }
+.explore-icon { display:flex; width:34px; height:34px; flex:0 0 34px; align-items:center; justify-content:center; border-radius:9px; color:var(--module-dark); background:var(--module-soft); }
+.explore-copy { flex:1; min-width:0; }
+.explore-title,.explore-description { display:block; overflow:hidden; text-overflow:ellipsis; }
+.explore-title { color:var(--ink); font-size:14px; font-weight:500; white-space:nowrap; }
+.explore-description { margin-top:3px; color:var(--muted); font-size:12px; line-height:1.4; }
+.explore-meta { flex:0 0 auto; max-width:88px; overflow:hidden; color:var(--module-dark); font-size:12px; white-space:nowrap; text-overflow:ellipsis; }
+@media (max-width:359px) { .core-actions { gap:7px; }.core-action { min-height:96px; padding-right:3px; padding-left:3px; }.core-label { font-size:12px; }.explore-meta { display:none; } }
+@media (min-width:768px) { .home-hero-inner { padding-top:24px; }.home-layout { display:grid; grid-template-columns:minmax(0,.8fr) minmax(360px,1.2fr); gap:28px; align-items:start; }.home-section { margin-top:24px; }.core-actions { grid-template-columns:1fr; }.core-action { min-height:92px; }.explore-row { min-height:64px; } }
+@media (min-width:1024px) { .home-layout { grid-template-columns:minmax(300px,.7fr) minmax(480px,1.3fr); } }
 </style>

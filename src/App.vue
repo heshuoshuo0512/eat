@@ -59,9 +59,10 @@
           <p class="form-subtitle">创建新账号进入系统</p>
           <div class="input-group">
             <input v-model.trim="registerForm.phone" inputmode="numeric" maxlength="11" placeholder="手机号" autocomplete="tel">
+            <input v-model.trim="registerForm.invitationCode" maxlength="64" placeholder="注册码（可选，填写后无需短信验证码）" autocomplete="one-time-code">
             <div class="code-row">
               <input v-model.trim="registerForm.verificationCode" inputmode="numeric" maxlength="6" placeholder="验证码">
-              <button type="button" :disabled="codeSending" @click="sendCode('register')">{{ codeSending ? '发送中' : '获取验证码' }}</button>
+              <button type="button" :disabled="codeSending || registerForm.invitationCode.trim().length > 0" @click="sendCode('register')">{{ codeSending ? '发送中' : '获取验证码' }}</button>
             </div>
             <input v-model.trim="registerForm.nickname" maxlength="32" placeholder="昵称（可选）">
             <input v-model="registerForm.password" type="password" placeholder="密码（8-72位，含字母和数字）" autocomplete="new-password">
@@ -174,9 +175,9 @@ const roleFeatures = {
   canteen_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'agent']),
   auditor: new Set(['data_manage']),
   finance: new Set(),
-  tenant_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent']),
-  admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent']),
-  super_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent'])
+  tenant_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent', 'invitations']),
+  admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent', 'invitations']),
+  super_admin: new Set(['data_input', 'data_manage', 'reviews', 'environment', 'ai_config', 'agent', 'invitations'])
 };
 const navItems = [
   { to: '/', label: '学生首页', feature: 'student', group: '首页' },
@@ -194,6 +195,7 @@ const navItems = [
   { to: '/admin?panel=reviews&tab=reviews', label: '内容审核', feature: 'reviews', group: '数据中心' },
   { to: '/admin/catalog', label: '数据管理', feature: 'data_manage', group: '数据中心' },
   { to: '/admin/input', label: '数据录入', feature: 'data_input', group: '数据中心' },
+  { to: '/admin/invitations', label: '邀请码管理', feature: 'invitations', group: '数据中心' },
   { to: '/agent', label: '运营智能体', feature: 'agent', group: '智能与配置' },
   { to: '/admin/ai', label: 'AI 配置', feature: 'ai_config', group: '智能与配置' }
 ];
@@ -231,7 +233,7 @@ function isNavActive(item) {
 }
 const currentView = ref('login');   // 'login' | 'register' | 'forgot'
 const loginForm = reactive({ identifier: '', password: '' });
-const registerForm = reactive({ phone: '', verificationCode: '', nickname: '', password: '', confirmPassword: '', agreementAccepted: false });
+const registerForm = reactive({ phone: '', invitationCode: '', verificationCode: '', nickname: '', password: '', confirmPassword: '', agreementAccepted: false });
 const resetForm = reactive({ phone: '', verificationCode: '', password: '', confirmPassword: '' });
 const authError = ref('');
 const codeSending = ref(false);
@@ -280,6 +282,7 @@ async function handleLogin() {
 
 async function sendCode(purpose) {
   const phone = purpose === 'register' ? registerForm.phone : resetForm.phone;
+  if (purpose === 'register' && registerForm.invitationCode.trim()) { authError.value = '已填写注册码，无需短信验证码。'; return; }
   if (!/^1[3-9]\d{9}$/.test(phone)) { authError.value = '请输入有效的中国大陆手机号。'; return; }
   codeSending.value = true;
   authError.value = '';
@@ -292,7 +295,7 @@ async function handleRegister() {
   authError.value = validateRegisterForm(registerForm);
   if (authError.value) return;
   try {
-    const payload = { phone: registerForm.phone, verificationCode: registerForm.verificationCode, password: registerForm.password, nickname: registerForm.nickname || undefined, agreementVersion: '2026-07' };
+    const payload = { phone: registerForm.phone, verificationCode: registerForm.verificationCode || undefined, invitationCode: registerForm.invitationCode || undefined, password: registerForm.password, nickname: registerForm.nickname || undefined, agreementVersion: '2026-07' };
     await store.register(payload);
     onboardingPromptDismissed.value = false;
     await router.push('/');

@@ -3,7 +3,7 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { buildHealthPlan, calculateRanking, normalizeProfile } from '../src/domain/recommendation.js';
 import { isServingTierCatalogName, openDatabase, parseJson, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToEnvironment, rowToMenu, rowToMenuItem, rowToPost, rowToPreference, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
 import { assignableRoles, hasPermission, requirePermission } from './rbac.js';
-import { decryptSecret, encryptPhone, encryptSecret, hashPassword, normalizePhone, phoneLookupHash, publicUser, verifyPassword, verifySignedUploadUrl, verifyToken } from './security.js';
+import { decryptSecret, encryptPhone, encryptSecret, hashPassword, maskedPhone, normalizePhone, phoneLookupHash, publicUser, verifyPassword, verifySignedUploadUrl, verifyToken } from './security.js';
 import { deleteStoredUpload, readStoredUpload, storeUpload } from './storage.js';
 import { generateAgentToolCalls, generateDishSearchFilterSupplement, generateGroundedAgentAnswer, getAiProviderStatus, identifyDishFromImage, testAiProviderConnection, withAiRuntimeConfig } from './aiProvider.js';
 import { createCache, rankingCacheKey } from './cache.js';
@@ -35,6 +35,7 @@ import { CAMPUS_KNOWLEDGE_SOURCE_TYPE, GLOBAL_KNOWLEDGE_TENANT_ID } from './camp
 import { CAMPUS_POLICY_SOURCE_TYPE } from './knowledgeGovernance.js';
 import { loadFoodCompositionReferences } from './healthKnowledgeBase.js';
 import { FACT_STATUSES, SAFETY_STATUSES, normalizeSafetyDeclarations } from './diningFacts.js';
+import { generateInvitationCode, invitationCodeHash, isValidInvitationCode, normalizeInvitationCode } from './invitationCodes.js';
 import { businessDate, businessDayUtcRange } from './time.js';
 import { enqueueOutboxEvent, outboxBacklog } from './outbox.js';
 import { createRuntimeMetrics } from './metrics.js';
@@ -531,6 +532,396 @@ function verificationTestCode() {
   return String(process.env.SMS_TEST_CODE || '246810').trim();
 }
 
+function invitationRegistrationConfig(env = process.env) {
+  const configuredMode = String(env.PILOT_REGISTRATION_MODE || '').trim().toLowerCase();
+  return { mode: ['invitation', 'optional', 'sms'].includes(configuredMode) ? configuredMode : 'sms' };
+}
+
+function assertInvitationCode(value) {
+  const config = invitationRegistrationConfig();
+  if (!['invitation', 'optional'].includes(config.mode)) {
+    throw Object.assign(new Error('当前未启用邀请码注册'), { status: 400, code: 'INVITATION_REGISTRATION_DISABLED' });
+  }
+  const code = normalizeInvitationCode(value);
+  if (!isValidInvitationCode(code)) throw Object.assign(new Error('邀请码无效或已失效'), { status: 403, code: 'INVALID_INVITATION_CODE' });
+  return code;
+}
+
+async function authCapabilities(db, tenantId = 'default') {
+  const invitation = invitationRegistrationConfig();
+  const row = ['invitation', 'optional'].includes(invitation.mode)
+    ? await db.prepare(`SELECT COUNT(*) AS count FROM pilot_invitations
+        WHERE tenant_id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM pilot_invitation_claims c
+            WHERE c.invitation_id = pilot_invitations.id
+              AND (c.reclaimed_at IS NOT NULL OR c.claim_expires_at <= ?)
+          )`)
+      .get(tenantId, now(), now())
+    : { count: 0 };
+  return {
+    registrationMode: invitation.mode,
+    invitationConfigured: Number(row?.count || 0) > 0,
+    wechatLoginConfigured: Boolean(String(process.env.WECHAT_MINIAPP_APPID || '').trim() && String(process.env.WECHAT_MINIAPP_SECRET || '').trim())
+  };
+}
+
+function invitationExpiry(value) {
+  const raw = String(value || '').trim();
+  const candidate = raw ? new Date(raw) : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(candidate.getTime()) || candidate.getTime() <= Date.now()) {
+    throw Object.assign(new Error('邀请码有效期必须是未来时间'), { status: 400, code: 'INVALID_INVITATION_EXPIRY' });
+  }
+  return candidate.toISOString();
+}
+
+const MAX_DAILY_INVITATION_QUOTA = 5000;
+const DEFAULT_INVITATION_SETTINGS = Object.freeze({
+  dailyQuota: 0,
+  autoIssue: true,
+  expiresAfterDays: 3,
+  claimTtlHours: 24,
+  issueTime: '09:00',
+  timeZone: 'Asia/Shanghai'
+});
+
+function normalizeInvitationDate(value) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw Object.assign(new Error('邀请码批次日期格式必须是 YYYY-MM-DD'), { status: 400, code: 'INVALID_INVITATION_DATE' });
+  }
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw Object.assign(new Error('邀请码批次日期无效'), { status: 400, code: 'INVALID_INVITATION_DATE' });
+  }
+  return date;
+}
+
+function normalizeInvitationTime(value) {
+  const time = String(value || '').trim();
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    throw Object.assign(new Error('邀请码发放时间必须是 HH:mm 格式'), { status: 400, code: 'INVALID_INVITATION_ISSUE_TIME' });
+  }
+  return time;
+}
+
+function currentTimeInZone(timeZone) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(new Date()).replace('.', ':');
+}
+
+function normalizeInvitationSettings(row = {}) {
+  return {
+    dailyQuota: Number(row.daily_quota ?? DEFAULT_INVITATION_SETTINGS.dailyQuota),
+    autoIssue: Number(row.auto_issue ?? (DEFAULT_INVITATION_SETTINGS.autoIssue ? 1 : 0)) === 1,
+    expiresAfterDays: Number(row.expires_after_days ?? DEFAULT_INVITATION_SETTINGS.expiresAfterDays),
+    claimTtlHours: Number(row.claim_ttl_hours ?? DEFAULT_INVITATION_SETTINGS.claimTtlHours),
+    issueTime: String(row.issue_time || DEFAULT_INVITATION_SETTINGS.issueTime),
+    timeZone: String(row.time_zone || DEFAULT_INVITATION_SETTINGS.timeZone)
+  };
+}
+
+function invitationBatchId(tenantId, date) {
+  return `invite-batch-${createHash('sha256').update(`${tenantId}:${date}`).digest('hex').slice(0, 24)}`;
+}
+
+function invitationStatus(row, timestamp = Date.now()) {
+  if (row.status !== 'active') return row.status;
+  if (row.expires_at && new Date(row.expires_at).getTime() <= timestamp) return 'expired';
+  if (row.reclaimed_at) return 'expired';
+  if (row.claimed_at && row.claim_expires_at && new Date(row.claim_expires_at).getTime() <= timestamp) return 'expired';
+  if (row.claimed_at) return 'claimed';
+  return 'active';
+}
+
+function invitationBatchView(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    businessDate: row.business_date,
+    dailyQuota: Number(row.daily_quota || 0),
+    issuedCount: Number(row.issued_count || 0),
+    remainingQuota: Math.max(0, Number(row.daily_quota || 0) - Number(row.issued_count || 0)),
+    status: row.status,
+    expiresAt: row.expires_at,
+    autoIssued: Number(row.auto_issued || 0) === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+async function ensureInvitationSettings(db, tenantId) {
+  const existing = await db.prepare('SELECT * FROM pilot_invitation_settings WHERE tenant_id = ?').get(tenantId);
+  if (existing) return existing;
+  const timestamp = now();
+  await db.prepare(`INSERT INTO pilot_invitation_settings
+    (tenant_id, daily_quota, auto_issue, expires_after_days, claim_ttl_hours, issue_time, time_zone, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(tenant_id) DO NOTHING`)
+    .run(tenantId, DEFAULT_INVITATION_SETTINGS.dailyQuota, DEFAULT_INVITATION_SETTINGS.autoIssue ? 1 : 0,
+      DEFAULT_INVITATION_SETTINGS.expiresAfterDays, DEFAULT_INVITATION_SETTINGS.claimTtlHours,
+      DEFAULT_INVITATION_SETTINGS.issueTime, DEFAULT_INVITATION_SETTINGS.timeZone, timestamp, timestamp);
+  return db.prepare('SELECT * FROM pilot_invitation_settings WHERE tenant_id = ?').get(tenantId);
+}
+
+async function ensureInvitationBatch(db, tenantId, date, { force = false, createdBy = null } = {}) {
+  const settingsRow = await ensureInvitationSettings(db, tenantId);
+  const settings = normalizeInvitationSettings(settingsRow);
+  const batchId = invitationBatchId(tenantId, date);
+  const existing = await db.prepare('SELECT * FROM pilot_invitation_batches WHERE tenant_id = ? AND business_date = ?').get(tenantId, date);
+  if (existing) {
+    const nextDailyQuota = Math.max(settings.dailyQuota, Number(existing.issued_count || 0));
+    if (existing.status === 'active' && Number(existing.daily_quota) !== nextDailyQuota) {
+      await db.prepare(`UPDATE pilot_invitation_batches SET daily_quota = ?, updated_at = ?
+        WHERE tenant_id = ? AND business_date = ?`)
+        .run(nextDailyQuota, now(), tenantId, date);
+    }
+    return db.prepare('SELECT * FROM pilot_invitation_batches WHERE tenant_id = ? AND business_date = ?').get(tenantId, date);
+  }
+  if (!force && !settings.autoIssue) return null;
+  if (!force && process.env.NODE_ENV !== 'test'
+    && date === businessDate(new Date(), settings.timeZone)
+    && currentTimeInZone(settings.timeZone) < settings.issueTime) return null;
+  if (!existing) {
+    const timestamp = now();
+    const expiresAt = new Date(Date.now() + settings.expiresAfterDays * 24 * 60 * 60 * 1000).toISOString();
+    await db.prepare(`INSERT INTO pilot_invitation_batches
+      (id, tenant_id, business_date, daily_quota, issued_count, status, expires_at, created_by, auto_issued, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 0, 'active', ?, ?, ?, ?, ?)
+      ON CONFLICT(tenant_id, business_date) DO NOTHING`)
+      .run(batchId, tenantId, date, settings.dailyQuota, expiresAt, createdBy, force ? 0 : 1, timestamp, timestamp);
+  }
+  return db.prepare('SELECT * FROM pilot_invitation_batches WHERE tenant_id = ? AND business_date = ?').get(tenantId, date);
+}
+
+async function reserveInvitationBatchSlot(tx, batchId) {
+  const updated = await tx.prepare(`UPDATE pilot_invitation_batches
+    SET issued_count = issued_count + 1, updated_at = ?
+    WHERE id = ? AND status = 'active' AND issued_count < daily_quota`).run(now(), batchId);
+  if (Number(updated?.changes || 0) !== 1) {
+    throw Object.assign(new Error('今日邀请码额度已用完，请调整配额或等待下一批次'), { status: 409, code: 'INVITATION_DAILY_QUOTA_EXHAUSTED' });
+  }
+}
+
+async function insertInvitationRow(tx, { tenantId, createdBy, expiresAt, batchId = null, claim = null }) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = generateInvitationCode();
+    const hash = invitationCodeHash(code);
+    const duplicate = await tx.prepare('SELECT id FROM pilot_invitations WHERE tenant_id = ? AND code_hash = ?').get(tenantId, hash);
+    if (duplicate) continue;
+    const id = `invite-${randomUUID()}`;
+    const timestamp = now();
+    await tx.prepare(`INSERT INTO pilot_invitations
+      (id, tenant_id, code_hash, code_hint, status, created_by, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`)
+      .run(id, tenantId, hash, code.slice(-4), createdBy || null, expiresAt, timestamp, timestamp);
+    if (batchId) {
+      await tx.prepare(`INSERT INTO pilot_invitation_batch_items
+        (tenant_id, batch_id, invitation_id, created_at) VALUES (?, ?, ?, ?)`)
+        .run(tenantId, batchId, id, timestamp);
+    }
+    if (claim) {
+      await tx.prepare(`INSERT INTO pilot_invitation_claims
+        (invitation_id, tenant_id, claimed_by, claimed_at, claim_expires_at, revealed_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, tenantId, claim.claimedBy, timestamp, claim.claimExpiresAt, timestamp, timestamp);
+    }
+    return { id, code, codeHint: code.slice(-4), status: claim ? 'claimed' : 'active', expiresAt, batchId };
+  }
+  throw Object.assign(new Error('邀请码生成失败，请稍后重试'), { status: 503, code: 'INVITATION_GENERATION_FAILED' });
+}
+
+async function reclaimExpiredInvitationClaimsInTransaction(tx, { tenantId, batchId = null } = {}) {
+  const timestamp = now();
+  const candidates = await tx.prepare(`SELECT p.id, bi.batch_id
+    FROM pilot_invitations p
+    JOIN pilot_invitation_claims c ON c.invitation_id = p.id AND c.tenant_id = p.tenant_id
+    JOIN pilot_invitation_batch_items bi ON bi.invitation_id = p.id AND bi.tenant_id = p.tenant_id
+    WHERE p.tenant_id = ? AND p.status = 'active'
+      AND c.reclaimed_at IS NULL AND c.claim_expires_at <= ?
+      AND (p.expires_at IS NULL OR p.expires_at > ?)
+      AND (? IS NULL OR bi.batch_id = ?)
+    ORDER BY c.claim_expires_at ASC, p.id ASC`).all(tenantId, timestamp, timestamp, batchId, batchId);
+  const reclaimed = [];
+  for (const candidate of candidates) {
+    // Lock the invitation row on PostgreSQL so an expired claim cannot race
+    // with registration while its batch slot is being returned.
+    const current = tx.isPostgres
+      ? await tx.prepare(`SELECT id, status, expires_at FROM pilot_invitations
+          WHERE tenant_id = ? AND id = ? FOR UPDATE`).get(tenantId, candidate.id)
+      : await tx.prepare('SELECT id, status, expires_at FROM pilot_invitations WHERE tenant_id = ? AND id = ?').get(tenantId, candidate.id);
+    if (!current || current.status !== 'active' || (current.expires_at && current.expires_at <= timestamp)) continue;
+    const updated = await tx.prepare(`UPDATE pilot_invitation_claims
+      SET reclaimed_at = ?, updated_at = ?
+      WHERE tenant_id = ? AND invitation_id = ? AND reclaimed_at IS NULL AND claim_expires_at <= ?`).run(
+      timestamp, timestamp, tenantId, candidate.id, timestamp
+    );
+    if (Number(updated?.changes || 0) !== 1) continue;
+    await tx.prepare(`UPDATE pilot_invitation_batches
+      SET issued_count = CASE WHEN issued_count > 0 THEN issued_count - 1 ELSE 0 END, updated_at = ?
+      WHERE tenant_id = ? AND id = ? AND issued_count > 0`).run(timestamp, tenantId, candidate.batch_id);
+    reclaimed.push({ invitationId: candidate.id, batchId: candidate.batch_id });
+  }
+  return reclaimed;
+}
+
+async function reclaimExpiredInvitationClaims(db, options) {
+  return withTransaction(db, (tx) => reclaimExpiredInvitationClaimsInTransaction(tx, options));
+}
+
+async function auditReclaimedInvitationClaims(db, user, reclaimed = []) {
+  for (const item of reclaimed) {
+    await audit(db, user, 'EXPIRE', 'pilot_invitation', item.invitationId, { batchId: item.batchId });
+  }
+}
+
+async function consumeInvitationCode(db, tenantId, value, phoneHash) {
+  const code = assertInvitationCode(value);
+  const hash = invitationCodeHash(code);
+  const updated = await db.prepare(`UPDATE pilot_invitations
+    SET status = 'consumed', used_phone_hash = ?, used_at = ?, updated_at = ?
+    WHERE tenant_id = ? AND code_hash = ? AND status = 'active'
+      AND (expires_at IS NULL OR expires_at > ?)
+      AND NOT EXISTS (
+        SELECT 1 FROM pilot_invitation_claims c
+        WHERE c.invitation_id = pilot_invitations.id
+          AND (c.reclaimed_at IS NOT NULL OR c.claim_expires_at <= ?)
+      )`)
+    .run(phoneHash, now(), now(), tenantId, hash, now(), now());
+  if (Number(updated?.changes || 0) !== 1) {
+    throw Object.assign(new Error('邀请码无效、已使用或已过期'), { status: 403, code: 'INVALID_INVITATION_CODE' });
+  }
+  return { code, hash };
+}
+
+async function generateInvitationRows(db, { tenantId, count, expiresAt, createdBy, batchId = null }) {
+  return withTransaction(db, async (tx) => {
+    const rows = [];
+    for (let index = 0; index < count; index += 1) {
+      if (batchId) await reserveInvitationBatchSlot(tx, batchId);
+      rows.push(await insertInvitationRow(tx, { tenantId, createdBy, expiresAt, batchId }));
+    }
+    return rows;
+  });
+}
+
+async function claimInvitationSlot(db, { tenantId, batchId, claimedBy }) {
+  const settings = normalizeInvitationSettings(await ensureInvitationSettings(db, tenantId));
+  return withTransaction(db, async (tx) => {
+    const reclaimedInvitationIds = await reclaimExpiredInvitationClaimsInTransaction(tx, { tenantId, batchId });
+    const batch = await tx.prepare('SELECT * FROM pilot_invitation_batches WHERE tenant_id = ? AND id = ?').get(tenantId, batchId);
+    if (!batch) throw Object.assign(new Error('邀请码批次不存在或不属于当前租户'), { status: 404, code: 'INVITATION_BATCH_NOT_FOUND' });
+    if (batch.status !== 'active') throw Object.assign(new Error('邀请码批次已停止发放'), { status: 409, code: 'INVITATION_BATCH_NOT_ACTIVE' });
+    await reserveInvitationBatchSlot(tx, batch.id);
+    const claimExpiresAt = new Date(Date.now() + settings.claimTtlHours * 60 * 60 * 1000).toISOString();
+    const invitation = await insertInvitationRow(tx, {
+      tenantId,
+      createdBy: claimedBy,
+      expiresAt: batch.expires_at,
+      batchId: batch.id,
+      claim: { claimedBy, claimExpiresAt }
+    });
+    return { invitation, reclaimedInvitationIds };
+  });
+}
+
+function invitationRowView(row) {
+  return {
+    id: row.id,
+    batchId: row.batch_id || null,
+    businessDate: row.business_date || null,
+    codeHint: row.code_hint,
+    status: invitationStatus(row),
+    expiresAt: row.expires_at,
+    claimedBy: row.claimed_by || null,
+    claimedAt: row.claimed_at || null,
+    claimExpiresAt: row.claim_expires_at || null,
+    reclaimedAt: row.reclaimed_at || null,
+    usedAt: row.used_at,
+    usedUserId: row.used_user_id,
+    usedPhone: row.phone_encrypted ? maskedPhone(decryptSecret(row.phone_encrypted)) : null,
+    usedPhoneVerified: Boolean(row.phone_verified_at),
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+async function invitationSummary(db, tenantId, date) {
+  const settingsRow = await ensureInvitationSettings(db, tenantId);
+  const settings = normalizeInvitationSettings(settingsRow);
+  const batch = await ensureInvitationBatch(db, tenantId, date, { createdBy: null });
+  const rows = batch
+    ? await db.prepare(`SELECT p.status, p.expires_at, c.claimed_at, c.claim_expires_at
+        FROM pilot_invitation_batch_items bi
+        JOIN pilot_invitations p ON p.id = bi.invitation_id AND p.tenant_id = bi.tenant_id
+        LEFT JOIN pilot_invitation_claims c ON c.invitation_id = p.id AND c.tenant_id = p.tenant_id
+        WHERE bi.tenant_id = ? AND bi.batch_id = ?`).all(tenantId, batch.id)
+    : [];
+  const counts = { active: 0, claimed: 0, consumed: 0, revoked: 0, expired: 0 };
+  for (const row of rows) counts[invitationStatus(row)] = (counts[invitationStatus(row)] || 0) + 1;
+  const registrations = batch
+    ? await db.prepare(`SELECT p.id AS invitation_id, p.code_hint, p.used_at, p.used_user_id,
+          u.phone_encrypted, u.phone_verified_at
+        FROM pilot_invitation_batch_items bi
+        JOIN pilot_invitations p ON p.id = bi.invitation_id AND p.tenant_id = bi.tenant_id
+        LEFT JOIN users u ON u.id = p.used_user_id AND u.tenant_id = p.tenant_id
+        WHERE bi.tenant_id = ? AND bi.batch_id = ? AND p.status = 'consumed'
+        ORDER BY p.used_at DESC, p.id DESC`).all(tenantId, batch.id)
+      : [];
+  return {
+    settings,
+    batch: invitationBatchView(batch),
+    counts: {
+      ...counts,
+      generated: Number(batch?.issued_count || 0),
+      available: Number(counts.active || 0),
+      remainingQuota: Math.max(0, Number(batch?.daily_quota || settings.dailyQuota) - Number(batch?.issued_count || 0))
+    },
+    registrations: {
+      count: registrations.length,
+      items: registrations.map((row) => ({
+        invitationId: row.invitation_id,
+        codeHint: row.code_hint,
+        phone: row.phone_encrypted ? maskedPhone(decryptSecret(row.phone_encrypted)) : '未提供',
+        phoneVerified: Boolean(row.phone_verified_at),
+        registeredAt: row.used_at,
+        userId: row.used_user_id || null
+      }))
+    },
+    businessDate: date,
+    serverTime: now()
+  };
+}
+
+function startInvitationBatchScheduler(db) {
+  if (process.env.NODE_ENV === 'test') return null;
+  const run = async () => {
+    let settings = [];
+    try {
+      const listSettings = () => db.prepare('SELECT tenant_id, time_zone FROM pilot_invitation_settings WHERE auto_issue = 1').all();
+      settings = typeof db.runWithContext === 'function'
+        ? await db.runWithContext({ tenantId: '*', userId: '', role: 'super_admin', requestId: 'invitation-scheduler-list' }, listSettings)
+        : await listSettings();
+    }
+    catch { return; }
+    for (const setting of settings) {
+      const operation = () => ensureInvitationBatch(db, setting.tenant_id, businessDate(new Date(), setting.time_zone), { createdBy: null });
+      await (typeof db.runWithContext === 'function'
+        ? db.runWithContext({ tenantId: setting.tenant_id, userId: '', role: 'authenticator' }, operation)
+        : operation()).catch(() => {});
+    }
+  };
+  const timer = setInterval(() => { void run(); }, 60_000);
+  timer.unref?.();
+  void run();
+  return timer;
+}
+
 function pilotRuntimeConfig(env = process.env) {
   const configuredMode = String(env.PILOT_MODE || '').trim().toLowerCase();
   const mode = ['team', 'invite', 'open'].includes(configuredMode)
@@ -549,7 +940,7 @@ function pilotRuntimeConfig(env = process.env) {
   return { mode, disabled, allowedPhoneHashes };
 }
 
-function assertNewRegistrationAllowed(phone) {
+function assertNewRegistrationAllowed(phone, { invitation = false } = {}) {
   const pilot = pilotRuntimeConfig();
   if (pilot.mode === 'open') return;
   if (pilot.mode === 'team') {
@@ -558,6 +949,7 @@ function assertNewRegistrationAllowed(phone) {
       code: 'PILOT_REGISTRATION_CLOSED'
     });
   }
+  if (pilot.mode === 'invite' && invitation) return;
   if (!pilot.allowedPhoneHashes.has(phoneLookupHash(phone))) {
     throw Object.assign(new Error('当前仅向受邀用户开放注册'), {
       status: 403,
@@ -587,6 +979,9 @@ async function issueVerificationCode(db, req, body = {}) {
   const purpose = String(body.purpose || '').trim();
   if (!phone) throw Object.assign(new Error('请输入有效的中国大陆手机号'), { status: 400, code: 'INVALID_PHONE' });
   if (!AUTH_CODE_PURPOSES.has(purpose)) throw Object.assign(new Error('验证码用途不合法'), { status: 400, code: 'INVALID_CODE_PURPOSE' });
+  if (purpose === 'register' && invitationRegistrationConfig().mode === 'invitation') {
+    throw Object.assign(new Error('当前注册模式使用邀请码，不需要短信验证码'), { status: 400, code: 'VERIFICATION_CODE_NOT_NEEDED' });
+  }
   const smsStatus = getSmsProviderStatus();
   if (!smsStatus.ready) {
     const missing = smsStatus.missing?.length ? `（缺少 ${smsStatus.missing.join('、')}）` : '';
@@ -3324,6 +3719,8 @@ async function clearAiSettings(db, user = null) {
   await db.prepare('DELETE FROM app_settings WHERE key = ?').run(scopedSettingKey(user, 'ai_provider'));
 }
 export function createApp({ db = openDatabase(), cache = createCache(), metrics = createRuntimeMetrics() } = {}) {
+  const invitationScheduler = startInvitationBatchScheduler(db);
+
   async function rankings(tenantId = 'default', date = businessDate(), mealType = 'all') {
     const key = rankingCacheKey({ tenantId, date, mealType });
     const cached = await cache.get(key);
@@ -3396,6 +3793,10 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
       }
       if (method === 'GET' && url.pathname === '/api/bootstrap') return send(res, 200, await clientBootstrapSnapshot(db, user), { 'X-Request-Id': requestId });
 
+      if (method === 'GET' && url.pathname === '/api/auth/capabilities') {
+        return send(res, 200, await authCapabilities(db), { 'X-Request-Id': requestId });
+      }
+
       if (await handleAuthSessionRoute({
         method,
         pathname: url.pathname,
@@ -3427,24 +3828,53 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
           const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
           return send(res, 201, await authenticatedSessionResponse(db, req, created, { isNewUser: true }));
         }
-        requireFields(body, ['phone', 'verificationCode', 'password', 'agreementVersion']);
+        requireFields(body, ['phone', 'password', 'agreementVersion']);
         const phone = normalizePhone(body.phone);
         if (!phone) throw Object.assign(new Error('请输入有效的中国大陆手机号'), { status: 400, code: 'INVALID_PHONE' });
         const password = assertStudentPassword(body.password);
         const agreement = assertAgreementVersion(body.agreementVersion);
+        const registrationMode = invitationRegistrationConfig().mode;
+        const hasInvitationCode = Boolean(String(body.invitationCode || '').trim());
+        const invitationRegistration = registrationMode === 'invitation' || (registrationMode === 'optional' && hasInvitationCode);
+        if (registrationMode === 'invitation') {
+          requireFields({ invitationCode: body.invitationCode }, ['invitationCode']);
+          assertInvitationCode(body.invitationCode);
+          if (body.verificationCode) throw Object.assign(new Error('当前注册模式不需要短信验证码'), { status: 400, code: 'VERIFICATION_CODE_NOT_ALLOWED' });
+        } else if (invitationRegistration) {
+          assertInvitationCode(body.invitationCode);
+        }
         const hash = phoneLookupHash(phone);
-        const existing = await db.prepare('SELECT id FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', hash);
-        if (existing) throw Object.assign(new Error('该手机号已注册'), { status: 409, code: 'PHONE_ALREADY_REGISTERED' });
-        assertNewRegistrationAllowed(phone);
-        await consumeVerificationCode(db, phone, 'register', body.verificationCode);
+        assertNewRegistrationAllowed(phone, { invitation: invitationRegistration });
         const id = `u-${randomUUID()}`;
         const timestamp = now();
         const username = `student_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
         const nickname = String(body.nickname || `同学${phone.slice(-4)}`).trim().slice(0, 32) || `同学${phone.slice(-4)}`;
-        await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, phone_hash, phone_encrypted, phone_verified_at, token_version, agreement_version, agreement_accepted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, 'default', username, hashPassword(password), nickname, 'student', hash, encryptPhone(phone), timestamp, 0, agreement, timestamp, timestamp, timestamp);
-        await createPendingHealthProfile(db, id, 'default');
-        const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+        let consumedInvitationHash = '';
+        const createStudent = async (tx) => {
+          const existing = await tx.prepare('SELECT id FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', hash);
+          if (existing) throw Object.assign(new Error('该手机号已注册'), { status: 409, code: 'PHONE_ALREADY_REGISTERED' });
+          if (invitationRegistration) {
+            consumedInvitationHash = (await consumeInvitationCode(tx, 'default', body.invitationCode, hash)).hash;
+          }
+          await tx.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, phone_hash, phone_encrypted, phone_verified_at, token_version, agreement_version, agreement_accepted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, 'default', username, hashPassword(password), nickname, 'student', hash, encryptPhone(phone), invitationRegistration ? null : timestamp, 0, agreement, timestamp, timestamp, timestamp);
+          if (consumedInvitationHash) {
+            await tx.prepare('UPDATE pilot_invitations SET used_user_id = ?, updated_at = ? WHERE tenant_id = ? AND code_hash = ?')
+              .run(id, now(), 'default', consumedInvitationHash);
+          }
+          await createPendingHealthProfile(tx, id, 'default');
+          return tx.prepare('SELECT * FROM users WHERE id = ?').get(id);
+        };
+        if (!invitationRegistration) {
+          if (!body.verificationCode) throw Object.assign(new Error('请输入短信验证码'), { status: 400, code: 'VERIFICATION_CODE_REQUIRED' });
+          const existing = await db.prepare('SELECT id FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', hash);
+          if (existing) throw Object.assign(new Error('该手机号已注册'), { status: 409, code: 'PHONE_ALREADY_REGISTERED' });
+          await consumeVerificationCode(db, phone, 'register', body.verificationCode);
+        }
+        const created = await withTransaction(db, createStudent);
+        if (consumedInvitationHash) {
+          await audit(db, { ...created, tenant_id: 'default' }, 'CONSUME', 'pilot_invitation', consumedInvitationHash.slice(0, 16), { userId: created.id });
+        }
         return send(res, 201, await authenticatedSessionResponse(db, req, created, { isNewUser: true }));
       }
 
@@ -3587,6 +4017,235 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
       if (method === 'GET' && url.pathname === '/api/admin/orders') {
         const activeUser = await requireCapability(db, req, 'dish:write');
         return send(res, 200, { orders: await listTenantOrders(db, tenantIdFor(activeUser), { status: url.searchParams.get('status') || '', limit: url.searchParams.get('limit'), offset: url.searchParams.get('offset') }) });
+      }
+
+      if (method === 'GET' && url.pathname === '/api/admin/invitations/summary') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const tenantId = tenantIdFor(activeUser);
+        const settings = normalizeInvitationSettings(await ensureInvitationSettings(db, tenantId));
+        const date = normalizeInvitationDate(url.searchParams.get('date') || businessDate(new Date(), settings.timeZone));
+        const batch = await ensureInvitationBatch(db, tenantId, date, { createdBy: null });
+        const reclaimed = await reclaimExpiredInvitationClaims(db, { tenantId, batchId: batch?.id || null });
+        await auditReclaimedInvitationClaims(db, activeUser, reclaimed);
+        return send(res, 200, await invitationSummary(db, tenantId, date));
+      }
+
+      if (method === 'PUT' && url.pathname === '/api/admin/invitations/settings') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const tenantId = tenantIdFor(activeUser);
+        const current = normalizeInvitationSettings(await ensureInvitationSettings(db, tenantId));
+        const body = await readBody(req);
+        const dailyQuota = Number(body.dailyQuota ?? current.dailyQuota);
+        const expiresAfterDays = Number(body.expiresAfterDays ?? current.expiresAfterDays);
+        const claimTtlHours = Number(body.claimTtlHours ?? current.claimTtlHours);
+        const issueTime = normalizeInvitationTime(body.issueTime ?? current.issueTime);
+        const autoIssue = body.autoIssue === undefined ? current.autoIssue : Boolean(body.autoIssue);
+        const timeZone = String(body.timeZone ?? current.timeZone).trim() || current.timeZone;
+        if (!Number.isInteger(dailyQuota) || dailyQuota < 0 || dailyQuota > MAX_DAILY_INVITATION_QUOTA) {
+          throw Object.assign(new Error('每日邀请码数量必须是 0-5000 的整数'), { status: 400, code: 'INVALID_INVITATION_DAILY_QUOTA' });
+        }
+        if (!Number.isInteger(expiresAfterDays) || expiresAfterDays < 1 || expiresAfterDays > 365) {
+          throw Object.assign(new Error('邀请码有效期必须是 1-365 天'), { status: 400, code: 'INVALID_INVITATION_EXPIRY_DAYS' });
+        }
+        if (!Number.isInteger(claimTtlHours) || claimTtlHours < 1 || claimTtlHours > 168) {
+          throw Object.assign(new Error('领取锁定时间必须是 1-168 小时'), { status: 400, code: 'INVALID_INVITATION_CLAIM_TTL' });
+        }
+        try { new Intl.DateTimeFormat('en-US', { timeZone }).format(); }
+        catch { throw Object.assign(new Error('邀请码时区无效'), { status: 400, code: 'INVALID_INVITATION_TIME_ZONE' }); }
+        const timestamp = now();
+        await db.prepare(`UPDATE pilot_invitation_settings SET daily_quota = ?, auto_issue = ?, expires_after_days = ?,
+          claim_ttl_hours = ?, issue_time = ?, time_zone = ?, updated_by = ?, updated_at = ? WHERE tenant_id = ?`)
+          .run(dailyQuota, autoIssue ? 1 : 0, expiresAfterDays, claimTtlHours, issueTime, timeZone, activeUser.id, timestamp, tenantId);
+        await audit(db, activeUser, 'UPDATE_SETTINGS', 'pilot_invitation', tenantId, { dailyQuota, autoIssue, expiresAfterDays, claimTtlHours, issueTime, timeZone });
+        const date = normalizeInvitationDate(body.businessDate || businessDate(new Date(), timeZone));
+        const batch = await ensureInvitationBatch(db, tenantId, date, { createdBy: activeUser.id });
+        const reclaimed = await reclaimExpiredInvitationClaims(db, { tenantId, batchId: batch?.id || null });
+        await auditReclaimedInvitationClaims(db, activeUser, reclaimed);
+        return send(res, 200, await invitationSummary(db, tenantId, date));
+      }
+
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'invitations'
+        && pathParts[3] === 'batches' && pathParts[4] && pathParts[5] === 'issue') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const tenantId = tenantIdFor(activeUser);
+        const date = normalizeInvitationDate(decodeURIComponent(pathParts[4]));
+        let batch = await ensureInvitationBatch(db, tenantId, date, { force: true, createdBy: activeUser.id });
+        const reclaimed = await reclaimExpiredInvitationClaims(db, { tenantId, batchId: batch.id });
+        await auditReclaimedInvitationClaims(db, activeUser, reclaimed);
+        batch = await db.prepare('SELECT * FROM pilot_invitation_batches WHERE tenant_id = ? AND id = ?').get(tenantId, batch.id);
+        if (batch.status !== 'active') {
+          throw Object.assign(new Error('邀请码批次已停止发放'), { status: 409, code: 'INVITATION_BATCH_NOT_ACTIVE' });
+        }
+        const body = await readBody(req);
+        const requestedCount = Number(body.count ?? 1);
+        const remaining = Math.max(0, Number(batch.daily_quota || 0) - Number(batch.issued_count || 0));
+        if (!Number.isInteger(requestedCount) || requestedCount < 1 || requestedCount > 500) {
+          throw Object.assign(new Error('每次补发数量必须是 1-500 的整数'), { status: 400, code: 'INVALID_INVITATION_COUNT' });
+        }
+        if (requestedCount > remaining) {
+          throw Object.assign(new Error(`当天只剩 ${remaining} 个邀请码额度`), { status: 409, code: 'INVITATION_DAILY_QUOTA_EXHAUSTED' });
+        }
+        const invitations = await generateInvitationRows(db, {
+          tenantId,
+          count: requestedCount,
+          expiresAt: batch.expires_at,
+          createdBy: activeUser.id,
+          batchId: batch.id
+        });
+        await audit(db, activeUser, 'ISSUE', 'pilot_invitation_batch', batch.id, { count: requestedCount, businessDate: date });
+        return send(res, 201, { batch: invitationBatchView(await db.prepare('SELECT * FROM pilot_invitation_batches WHERE id = ?').get(batch.id)), invitations, plaintextShownOnce: true });
+      }
+
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'invitations'
+        && pathParts[3] === 'batches' && pathParts[4] && pathParts[5] === 'close') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const tenantId = tenantIdFor(activeUser);
+        const batchId = decodeURIComponent(pathParts[4]);
+        const closed = await withTransaction(db, async (tx) => {
+          const updated = await tx.prepare(`UPDATE pilot_invitation_batches
+            SET status = 'closed', updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND status = 'active'`).run(now(), tenantId, batchId);
+          if (Number(updated?.changes || 0) !== 1) {
+            throw Object.assign(new Error('批次不存在或已经停止发放'), { status: 409, code: 'INVITATION_BATCH_NOT_ACTIVE' });
+          }
+          return tx.prepare('SELECT * FROM pilot_invitation_batches WHERE tenant_id = ? AND id = ?').get(tenantId, batchId);
+        });
+        await audit(db, activeUser, 'CLOSE', 'pilot_invitation_batch', batchId, { issuedCount: closed.issued_count });
+        return send(res, 200, { batch: invitationBatchView(closed), stoppedAt: now() });
+      }
+
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'invitations'
+        && pathParts[3] && pathParts[4] === 'claim') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const tenantId = tenantIdFor(activeUser);
+        const batchId = decodeURIComponent(pathParts[3]);
+        const result = await claimInvitationSlot(db, { tenantId, batchId, claimedBy: activeUser.id });
+        await auditReclaimedInvitationClaims(db, activeUser, result.reclaimedInvitationIds);
+        await audit(db, activeUser, 'CLAIM', 'pilot_invitation', result.invitation.id, { batchId });
+        return send(res, 201, { invitation: result.invitation, plaintextShownOnce: true });
+      }
+
+      if (method === 'GET' && url.pathname === '/api/admin/invitations') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const tenantId = tenantIdFor(activeUser);
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
+        const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+        const date = url.searchParams.get('date') ? normalizeInvitationDate(url.searchParams.get('date')) : '';
+        const batchFilter = String(url.searchParams.get('batchId') || url.searchParams.get('batch') || '').trim();
+        const requestedStatus = String(url.searchParams.get('status') || '').trim();
+        if (requestedStatus && !['active', 'claimed', 'consumed', 'revoked', 'expired'].includes(requestedStatus)) {
+          throw Object.assign(new Error('邀请码状态无效'), { status: 400, code: 'INVALID_INVITATION_STATUS' });
+        }
+        const clauses = ['p.tenant_id = ?'];
+        const params = [tenantId];
+        if (date) { clauses.push('b.business_date = ?'); params.push(date); }
+        if (batchFilter) { clauses.push('bi.batch_id = ?'); params.push(batchFilter); }
+        const rows = await db.prepare(`SELECT p.id, p.code_hint, p.status, p.expires_at, p.used_at, p.used_user_id, p.created_by, p.created_at, p.updated_at,
+            bi.batch_id, b.business_date, c.claimed_by, c.claimed_at, c.claim_expires_at, c.reclaimed_at,
+            u.phone_encrypted, u.phone_verified_at
+          FROM pilot_invitations p
+          LEFT JOIN pilot_invitation_batch_items bi ON bi.invitation_id = p.id AND bi.tenant_id = p.tenant_id
+          LEFT JOIN pilot_invitation_batches b ON b.id = bi.batch_id AND b.tenant_id = p.tenant_id
+          LEFT JOIN pilot_invitation_claims c ON c.invitation_id = p.id AND c.tenant_id = p.tenant_id
+          LEFT JOIN users u ON u.id = p.used_user_id AND u.tenant_id = p.tenant_id
+          WHERE ${clauses.join(' AND ')} ORDER BY p.created_at DESC, p.id DESC`).all(...params);
+        const mapped = rows.map(invitationRowView).filter((row) => !requestedStatus || row.status === requestedStatus);
+        return send(res, 200, { invitations: mapped.slice(offset, offset + limit), page: { limit, offset, total: mapped.length } });
+      }
+
+      if (method === 'POST' && url.pathname === '/api/admin/invitations/generate') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const body = await readBody(req);
+        const count = Number(body.count ?? 1);
+        if (!Number.isInteger(count) || count < 1 || count > 500) {
+          throw Object.assign(new Error('一次只能生成 1-500 个邀请码'), { status: 400, code: 'INVALID_INVITATION_COUNT' });
+        }
+        const tenantId = tenantIdFor(activeUser);
+        let batchId = null;
+        let expiresAt = invitationExpiry(body.expiresAt);
+        if (body.batchId) {
+          const batch = await db.prepare('SELECT id, expires_at, status FROM pilot_invitation_batches WHERE tenant_id = ? AND id = ?').get(tenantId, String(body.batchId));
+          if (!batch) throw Object.assign(new Error('邀请码批次不存在或不属于当前租户'), { status: 404, code: 'INVITATION_BATCH_NOT_FOUND' });
+          if (batch.status !== 'active') throw Object.assign(new Error('邀请码批次已暂停或关闭'), { status: 409, code: 'INVITATION_BATCH_NOT_ACTIVE' });
+          batchId = batch.id;
+          expiresAt = batch.expires_at || expiresAt;
+        } else if (body.businessDate) {
+          const date = normalizeInvitationDate(body.businessDate);
+          const batch = await ensureInvitationBatch(db, tenantId, date, { force: true, createdBy: activeUser.id });
+          batchId = batch.id;
+          expiresAt = batch.expires_at || expiresAt;
+        }
+        if (batchId) {
+          const reclaimed = await reclaimExpiredInvitationClaims(db, { tenantId, batchId });
+          await auditReclaimedInvitationClaims(db, activeUser, reclaimed);
+        }
+        const invitations = await generateInvitationRows(db, {
+          tenantId,
+          count,
+          expiresAt,
+          createdBy: activeUser.id,
+          batchId
+        });
+        await audit(db, activeUser, 'GENERATE', 'pilot_invitation', batchId || `batch-${randomUUID()}`, { count, expiresAt, batchId });
+        return send(res, 201, { invitations, plaintextShownOnce: true, batchId });
+      }
+
+      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'invitations' && pathParts[3] && !pathParts[4]) {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const invitationId = decodeURIComponent(pathParts[3]);
+        const body = await readBody(req);
+        if (!body.expiresAt) {
+          throw Object.assign(new Error('请提供新的邀请码有效期'), { status: 400, code: 'INVITATION_EXPIRY_REQUIRED' });
+        }
+        const expiresAt = invitationExpiry(body.expiresAt);
+        const tenantId = tenantIdFor(activeUser);
+        const updated = await withTransaction(db, async (tx) => {
+          const row = await tx.prepare(`SELECT p.id, p.status, p.expires_at, c.claimed_at, c.claim_expires_at, c.reclaimed_at
+            FROM pilot_invitations p
+            LEFT JOIN pilot_invitation_claims c ON c.invitation_id = p.id AND c.tenant_id = p.tenant_id
+            WHERE p.tenant_id = ? AND p.id = ?`).get(tenantId, invitationId);
+          if (!row || !['active', 'claimed'].includes(invitationStatus(row))) {
+            throw Object.assign(new Error('只有未使用的邀请码可以修改'), { status: 409, code: 'INVITATION_NOT_EDITABLE' });
+          }
+          const result = await tx.prepare(`UPDATE pilot_invitations SET expires_at = ?, updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND status = 'active'`).run(expiresAt, now(), tenantId, invitationId);
+          if (Number(result?.changes || 0) !== 1) {
+            throw Object.assign(new Error('邀请码已被其他操作更新'), { status: 409, code: 'INVITATION_NOT_EDITABLE' });
+          }
+          return { id: invitationId, expiresAt };
+        });
+        await audit(db, activeUser, 'UPDATE_EXPIRY', 'pilot_invitation', invitationId, { expiresAt });
+        return send(res, 200, { invitation: updated });
+      }
+
+      if ((method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'invitations' && pathParts[3] && pathParts[4] === 'revoke')
+        || (method === 'DELETE' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'invitations' && pathParts[3] && !pathParts[4])) {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const invitationId = decodeURIComponent(pathParts[3]);
+        const tenantId = tenantIdFor(activeUser);
+        const revoked = await withTransaction(db, async (tx) => {
+          const row = await tx.prepare(`SELECT p.id, p.status, p.expires_at, c.claimed_at, c.claim_expires_at, c.reclaimed_at, bi.batch_id
+            FROM pilot_invitations p
+            LEFT JOIN pilot_invitation_claims c ON c.invitation_id = p.id AND c.tenant_id = p.tenant_id
+            LEFT JOIN pilot_invitation_batch_items bi ON bi.invitation_id = p.id AND bi.tenant_id = p.tenant_id
+            WHERE p.tenant_id = ? AND p.id = ?`).get(tenantId, invitationId);
+          if (!row || !['active', 'claimed'].includes(invitationStatus(row))) {
+            throw Object.assign(new Error('邀请码不存在或已不能撤销'), { status: 409, code: 'INVITATION_NOT_ACTIVE' });
+          }
+          const updated = await tx.prepare(`UPDATE pilot_invitations SET status = 'revoked', updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND status = 'active'`).run(now(), tenantId, invitationId);
+          if (Number(updated?.changes || 0) !== 1) {
+            throw Object.assign(new Error('邀请码不存在或已不能撤销'), { status: 409, code: 'INVITATION_NOT_ACTIVE' });
+          }
+          if (row.batch_id) {
+            await tx.prepare(`UPDATE pilot_invitation_batches
+              SET issued_count = CASE WHEN issued_count > 0 THEN issued_count - 1 ELSE 0 END, updated_at = ?
+              WHERE tenant_id = ? AND id = ? AND issued_count > 0`).run(now(), tenantId, row.batch_id);
+          }
+          return { id: invitationId, batchId: row.batch_id || null };
+        });
+        await audit(db, activeUser, 'REVOKE', 'pilot_invitation', invitationId);
+        return send(res, 200, { revoked: true, ...revoked });
       }
 
       if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'orders' && pathParts[3] && pathParts[4] === 'status') {
@@ -5283,12 +5942,21 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
       : operation();
   }
 
-  return { handler, db, cache, metrics };
+  return {
+    handler,
+    db,
+    cache,
+    metrics,
+    close() {
+      if (invitationScheduler) clearInterval(invitationScheduler);
+    }
+  };
 }
 
 export function createHttpServer(options) {
   const app = createApp(options);
   const server = createServer(app.handler);
+  server.once('close', () => app.close?.());
   server.smartCanteen = app;
   return server;
 }
