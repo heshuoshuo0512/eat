@@ -65,8 +65,19 @@ if (options.vectorMode) process.env.RETRIEVAL_VECTOR_MODE = options.vectorMode;
 
 const { createDatabase } = await import('../server/database.js');
 const db = await createDatabase();
+const workerRequestId = `retrieval-reindex-${Date.now()}`;
+
+async function runAsWorker(tenantId, operation) {
+  if (typeof db.runWithContext !== 'function') return operation();
+  return db.runWithContext({
+    tenantId,
+    userId: 'retrieval-worker',
+    role: 'worker',
+    requestId: workerRequestId,
+  }, operation);
+}
+
 try {
-  const scopeCleanup = await pruneInvalidKnowledgeScopes(db);
   const requestedSourceTypes = options.sourceTypes || null;
   const globalTypes = new Set(['health_knowledge', 'campus_dining_knowledge']);
   const tenantSourceTypes = (requestedSourceTypes || ['dish', 'stall', CAMPUS_POLICY_SOURCE_TYPE])
@@ -76,21 +87,34 @@ try {
   const tenantIds = options.tenantId && options.tenantId !== GLOBAL_KNOWLEDGE_TENANT_ID
     ? [options.tenantId]
     : (options.tenantId === GLOBAL_KNOWLEDGE_TENANT_ID ? [] : await listRetrievalTenantIds(db));
+  const cleanupScopes = db.pool
+    ? [...new Set([...tenantIds, GLOBAL_KNOWLEDGE_TENANT_ID])]
+    : ['default'];
+  let deletedScopeDocumentCount = 0;
+  for (const tenantId of cleanupScopes) {
+    const cleanup = await runAsWorker(tenantId, () => pruneInvalidKnowledgeScopes(db));
+    deletedScopeDocumentCount += Number(cleanup.deletedCount || 0);
+  }
+  const scopeCleanup = { deletedCount: deletedScopeDocumentCount, scopes: cleanupScopes };
   const results = [];
   for (const tenantId of tenantIds) {
     if (!tenantSourceTypes.length) continue;
-    const rebuilt = await reindexRetrieval(db, { ...options, tenantId, sourceTypes: tenantSourceTypes });
-    const status = await getRetrievalIndexStatus(db, { tenantId });
+    const { rebuilt, status } = await runAsWorker(tenantId, async () => ({
+      rebuilt: await reindexRetrieval(db, { ...options, tenantId, sourceTypes: tenantSourceTypes }),
+      status: await getRetrievalIndexStatus(db, { tenantId }),
+    }));
     const { documents, ...summary } = rebuilt;
     results.push({ rebuilt: summary, status });
   }
   if (globalSourceTypes.length) {
-    const rebuilt = await reindexRetrieval(db, {
-      ...options,
-      tenantId: GLOBAL_KNOWLEDGE_TENANT_ID,
-      sourceTypes: globalSourceTypes,
-    });
-    const status = await getRetrievalIndexStatus(db, { tenantId: GLOBAL_KNOWLEDGE_TENANT_ID });
+    const { rebuilt, status } = await runAsWorker(GLOBAL_KNOWLEDGE_TENANT_ID, async () => ({
+      rebuilt: await reindexRetrieval(db, {
+        ...options,
+        tenantId: GLOBAL_KNOWLEDGE_TENANT_ID,
+        sourceTypes: globalSourceTypes,
+      }),
+      status: await getRetrievalIndexStatus(db, { tenantId: GLOBAL_KNOWLEDGE_TENANT_ID }),
+    }));
     const { documents, ...summary } = rebuilt;
     results.push({ rebuilt: summary, status });
   }

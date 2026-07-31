@@ -464,4 +464,12 @@ describe('PostgreSQL retrieval migration', () => {
     const script = readFileSync(resolve(ROOT, 'scripts/reindex-retrieval.mjs'), 'utf8');
     assert.doesNotMatch(script, /--embedding-model/);
   });
+
+  it('runs PostgreSQL reindex writes inside tenant-scoped Worker contexts', () => {
+    const script = readFileSync(resolve(ROOT, 'scripts/reindex-retrieval.mjs'), 'utf8');
+    assert.match(script, /db\.runWithContext/);
+    assert.match(script, /role:\s*'worker'/);
+    assert.match(script, /runAsWorker\(tenantId/);
+    assert.match(script, /runAsWorker\(GLOBAL_KNOWLEDGE_TENANT_ID/);
+  });
 });
