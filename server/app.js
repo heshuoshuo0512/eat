@@ -1935,7 +1935,7 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   const effectiveItemType = publicItemTypes.has(requestedItemType) ? requestedItemType : 'meal';
   const partitionInferred = !requestedItemType || requestedItemType === 'all';
   const clauses = ["d.tenant_id = ?", "d.status = 'active'", "d.review_status = 'approved'", "d.retrieval_eligible = 1",
-    "s.review_status = 'approved'", "s.retrieval_eligible = 1", "s.open = TRUE",
+    "s.review_status = 'approved'", "s.retrieval_eligible = 1", "s.open = 1",
     "c.review_status = 'approved'", "c.retrieval_eligible = 1", "c.operating_status = 'open'",
     "(parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))",
     "TRIM(d.name) NOT LIKE '_人份'", "TRIM(d.name) NOT LIKE '_-_人份'", "TRIM(d.name) NOT LIKE '_~_人份'", "TRIM(d.name) NOT LIKE '_至_人份'",
@@ -2049,7 +2049,7 @@ async function listCatalogCategories(db, tenantId, params) {
     LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
     WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
       AND d.catalog_item_type = ?
-      AND s.review_status = 'approved' AND s.retrieval_eligible = 1 AND s.open = TRUE
+      AND s.review_status = 'approved' AND s.retrieval_eligible = 1 AND s.open = 1
       AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
       AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
     GROUP BY d.catalog_category

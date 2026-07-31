@@ -461,7 +461,7 @@ async function loadCandidatesFromDatabase(db, tenantId, { date, mealType }) {
       LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
       WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'
         AND d.retrieval_eligible = 1
-        AND s.review_status = 'approved' AND s.retrieval_eligible = 1 AND s.open = TRUE
+        AND s.review_status = 'approved' AND s.retrieval_eligible = 1 AND s.open = 1
         AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
         AND (c.parent_id IS NULL OR (
           parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'

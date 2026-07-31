@@ -1,6 +1,8 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { resolve } from 'node:path';
 import { classifyCatalogItem } from '../server/catalogClassification.js';
 
 let db;
@@ -20,6 +22,14 @@ async function request(path, { method = 'GET', body } = {}) {
 }
 
 describe('catalog item type boundaries', () => {
+  it('keeps integer stall availability predicates portable to PostgreSQL', () => {
+    const appSource = readFileSync(resolve('server/app.js'), 'utf8');
+    const retrievalSource = readFileSync(resolve('server/retrievalService.js'), 'utf8');
+    assert.doesNotMatch(`${appSource}\n${retrievalSource}`, /s\.open\s*=\s*TRUE/i);
+    assert.match(appSource, /s\.open\s*=\s*1/);
+    assert.match(retrievalSource, /s\.open\s*=\s*1/);
+  });
+
   before(async () => {
     const previousDemoSeed = process.env.ENABLE_DEMO_SEED;
     process.env.ENABLE_DEMO_SEED = '1';
