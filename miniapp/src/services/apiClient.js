@@ -130,6 +130,9 @@ export const apiClient = {
   catalogStalls(params = {}) {
     return request(`/api/catalog/stalls${queryString({ page: params.page || 1, pageSize: params.pageSize || 100, venueId: params.venueId || '' })}`);
   },
+  catalogCategories(itemType = 'meal') {
+    return request(`/api/catalog/categories${queryString({ itemType })}`);
+  },
   catalogRankings(params = {}) {
     return request(`/api/catalog/rankings${queryString({ type: params.type || 'dishes', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
   },

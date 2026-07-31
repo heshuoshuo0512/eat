@@ -37,6 +37,16 @@ describe('dual retrieval frontend contracts', () => {
     assert.doesNotMatch(mountedBlock, /runPrompt\(/);
   });
 
+  it('uses student-visible catalog partitions and server-provided categories', () => {
+    assert.match(apiClient, /catalogCategories\(itemType = 'meal'\)[\s\S]*\/api\/catalog\/categories/);
+    assert.match(store, /loadCatalogCategories\(itemType = 'meal'/);
+    assert.match(dishesView, /value: 'meal',[\s\S]*value: 'snack',[\s\S]*value: 'beverage'/);
+    assert.doesNotMatch(dishesView, /value: 'addon'|label: '全部目录'/);
+    assert.match(dishesView, /catalogCategoryOptions/);
+    assert.match(dishesView, /itemType: catalogItemType\.value/);
+    assert.match(dishesView, /catalogCategory: catalogCategory\.value \|\| undefined/);
+  });
+
   it('connects retrieval observability and index administration', () => {
     assert.match(apiClient, /getRetrievalIndexStatus\(\)[\s\S]*request\('\/api\/admin\/retrieval\/status'\)/);
     assert.match(apiClient, /rebuildRetrievalIndex\(payload = \{\}\)[\s\S]*request\('\/api\/admin\/retrieval\/reindex',[\s\S]*method:\s*'POST'/);

@@ -21,6 +21,7 @@
         </view>
         <view class="result-column">
           <sc-segmented-control v-if="!searchResult" :model-value="catalogItemType" :options="catalogItemTypeOptions" block density="compact" class="catalog-type-control" @update:model-value="selectCatalogItemType" />
+          <scroll-view v-if="!searchResult" class="catalog-category-track" scroll-x enable-flex show-scrollbar="false"><view class="catalog-category-row"><button v-for="option in catalogCategoryOptions" :key="option.value||'all'" :class="{ active:catalogCategory===option.value }" :disabled="catalogLoadingMore" @tap="selectCatalogCategory(option.value)"><text>{{ option.label }}</text><text v-if="option.count!=null" class="category-count">{{ option.count }}</text></button></view></scroll-view>
           <view class="result-head"><view><text class="result-eyebrow">{{ searchResult ? '检索结果' : catalogItemTypeTitle }}</text><text class="result-title">{{ resultCountLabel }}</text></view><sc-segmented-control v-model="sortDirection" :options="sortOptions" density="compact" /></view>
           <sc-state-card v-if="store.loading.value&&!store.loaded.value" type="loading" title="正在加载菜品" />
           <view v-else class="dish-list"><sc-dish-card v-for="dish in visibleDishes" :key="dish.id" :dish="dish" :location="dishLocation(dish)" :supply-status="supplyState(dish).label" :unavailable="!supplyState(dish).canOrder" variant="compact" media="none" @tap="openDish(dish.id)" /><sc-state-card v-if="!sortedDishes.length" type="empty" illustration="empty-search" title="没有匹配菜品" desc="调整描述后重新搜索。" action-text="查看全部" @action="clearSearch" /><button v-if="searchResult && sortedDishes.length > 1" class="result-toggle" type="button" @tap="resultsExpanded = !resultsExpanded">{{ resultsExpanded ? '收起排名菜品' : `查看本页 ${sortedDishes.length} 道菜` }}</button><button v-if="searchResult?.page?.hasMore" class="result-toggle load-more-search" type="button" :disabled="searchLoadingMore" @tap="loadMoreSearch">{{ searchLoadingMore ? '加载中…' : `继续加载（${sortedDishes.length} / ${searchTotal}）` }}</button><text v-if="!searchResult&&store.catalogPage.value.hasMore" class="catalog-progress">{{ catalogLoadingMore?'正在加载更多':`已加载 ${store.dishes.value.length} / ${store.catalogPage.value.total}，继续上拉` }}</text></view>
@@ -65,10 +66,11 @@ const store=useCanteenStore();
 const exploreEntries=getStudentEntries(EXPLORE_ENTRY_IDS);
 const modeOptions=[{value:'search',label:'菜品检索'},{value:'recommend',label:'智能推荐'}];
 const sortOptions=[{value:'desc',label:'高分优先'},{value:'asc',label:'低分优先'}];
-const catalogItemTypeOptions=[{value:'meal',label:'餐食'},{value:'snack',label:'小吃'},{value:'beverage',label:'饮品'},{value:'addon',label:'加购'},{value:'all',label:'全部'}];
+const catalogItemTypeOptions=[{value:'meal',label:'餐食'},{value:'snack',label:'小吃'},{value:'beverage',label:'饮品'}];
 const mode=ref(store.discoveryMode.value || 'search');
 const query=ref(''); const searching=ref(false); const searchResult=ref(null); const sortDirection=ref('desc'); const message=ref(''); const isError=ref(false); const citationsExpanded=ref(false); const resultsExpanded=ref(false);
 const catalogItemType=ref('meal');
+const catalogCategory=ref('');
 const catalogLoadingMore=ref(false); const searchLoadingMore=ref(false); const searchPageSize=20;
 const question=ref(''); const recommendLoading=ref(false); const recommendationResult=ref(null); const conversation=ref([]); const recommendCitations=ref([]); const pendingActions=ref([]); const sessionId=ref(''); const recommendMessage=ref(''); const recommendError=ref(false); const recommendSort=ref('desc'); const recommendCitationsExpanded=ref(false); const recommendExpanded=ref(false); let recommendationLoaded=false;
 const memoryOpen=ref(false); const memoryDraft=ref(''); const memoryPreferences=ref({}); const memorySaving=ref(false); let memoryLoaded=false;
@@ -79,23 +81,26 @@ const sourceDishes=computed(()=>searchResult.value?.items || store.dishes.value.
 const sortedDishes=computed(()=>sortDishesByRating(sourceDishes.value,ratingMap.value,sortDirection.value));
 const visibleDishes=computed(()=>!searchResult.value || resultsExpanded.value ? sortedDishes.value : sortedDishes.value.slice(0,1));
 const searchTotal=computed(()=>Number(searchResult.value?.page?.total??searchResult.value?.availability?.totalCount??searchResult.value?.items?.length??0));
-const catalogItemTypeTitle=computed(()=>({meal:'全部餐食',snack:'全部小吃',beverage:'全部饮品',addon:'全部加购项',all:'全部目录商品'})[catalogItemType.value]||'全部目录商品');
+const catalogItemTypeTitle=computed(()=>({meal:'全部餐食',snack:'全部小吃',beverage:'全部饮品'})[catalogItemType.value]||'全部餐食');
+const catalogCategoryOptions=computed(()=>{const items=store.catalogCategories.value[catalogItemType.value]||[];return[{value:'',label:'全部',count:items.reduce((sum,item)=>sum+Number(item.count||0),0)},...items];});
 const resultCountLabel=computed(()=>searchResult.value?`已显示 ${sortedDishes.value.length} / ${searchTotal.value} 道菜`:`已显示 ${sortedDishes.value.length} / ${store.catalogPage.value.total} 项`);
 const resultSummary=computed(()=>{ const result=searchResult.value;if(!result)return'';const total=searchTotal.value;const orderable=Number(result.availability?.orderableCount??result.items?.filter((dish)=>dish.availability?.orderable).length??0);return total?`共匹配 ${total} 道真实菜品，已显示 ${result.items?.length||0} 道，本页 ${orderable} 道当前可预约。20 元以内属于宽范围，可继续加载或增加口味、位置、餐次条件。`:'没有满足全部条件的真实菜品，可参考放宽建议。'; });
 const mealPicks=computed(()=>{const raw=recommendationResult.value?.recommendations||recommendationResult.value?.mealPlan?.dishes||recommendationResult.value?.mealPlan?.picks||recommendationResult.value?.ranked||[];const catalog=new Map(store.dishes.value.map((dish)=>[String(dish.id),dish]));const hydrated=raw.map((pick)=>{const id=pick.id||pick.dishId;return{...(catalog.get(String(id))||{}),...pick,id};}).filter((dish)=>dish.id);return sortDishesByRating(hydrated,ratingMap.value,recommendSort.value);});
 const visibleMealPicks=computed(()=>recommendExpanded.value ? mealPicks.value : mealPicks.value.slice(0,1));
 
-onShow(async()=>{ try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}mode.value=store.discoveryMode.value||mode.value;if(!memoryLoaded){memoryLoaded=true;await loadMemory();}if(mode.value==='recommend'&&!recommendationLoaded)await loadInitialRecommendation();}catch{} });
-onPullDownRefresh(async()=>{try{await store.load(true);if(mode.value==='search'&&catalogItemType.value!=='meal')await store.loadCatalogDishes({page:1,pageSize:50,sort:'rating_desc',itemType:catalogItemType.value});if(mode.value==='recommend'){recommendationLoaded=false;await loadInitialRecommendation();}}catch{}finally{uni.stopPullDownRefresh();}});
-onReachBottom(async()=>{if(mode.value!=='search')return;if(searchResult.value?.page?.hasMore){await loadMoreSearch();return;}if(searchResult.value||catalogLoadingMore.value||!store.catalogPage.value.hasMore)return;catalogLoadingMore.value=true;try{await store.loadMoreCatalog({sort:'rating_desc',itemType:catalogItemType.value});}catch(error){message.value=error.message||'加载更多失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}});
+onShow(async()=>{ try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}await store.loadCatalogCategories(catalogItemType.value);mode.value=store.discoveryMode.value||mode.value;if(!memoryLoaded){memoryLoaded=true;await loadMemory();}if(mode.value==='recommend'&&!recommendationLoaded)await loadInitialRecommendation();}catch{} });
+onPullDownRefresh(async()=>{try{await store.load(true);await Promise.all([store.loadCatalogCategories(catalogItemType.value,{force:true}),store.loadCatalogDishes({page:1,pageSize:50,...catalogBrowseFilters()})]);if(mode.value==='recommend'){recommendationLoaded=false;await loadInitialRecommendation();}}catch{}finally{uni.stopPullDownRefresh();}});
+onReachBottom(async()=>{if(mode.value!=='search')return;if(searchResult.value?.page?.hasMore){await loadMoreSearch();return;}if(searchResult.value||catalogLoadingMore.value||!store.catalogPage.value.hasMore)return;catalogLoadingMore.value=true;try{await store.loadMoreCatalog(catalogBrowseFilters());}catch(error){message.value=error.message||'加载更多失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}});
 
 function changeMode(value){mode.value=value==='recommend'?'recommend':'search';store.openDiscoveryMode(mode.value);if(mode.value==='recommend'&&!recommendationLoaded)loadInitialRecommendation();}
 function openVision(){uni.navigateTo({url:'/pages/vision/vision'});}
 function openProfile(){uni.navigateTo({url:'/pages/health-profile/health-profile'});}
 function openExplore(entry){uni.navigateTo({url:entry.route});}
 function runSearchPrompt(text){query.value=text;submitSearch();}
-async function selectCatalogItemType(value){if(catalogLoadingMore.value)return;catalogLoadingMore.value=true;catalogItemType.value=value;message.value='';isError.value=false;try{await store.loadCatalogDishes({page:1,pageSize:50,sort:'rating_desc',itemType:value});}catch(error){message.value=error.message||'目录分类加载失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}}
-function searchPayload(offset=0){return{query:query.value.trim(),filters:{halalOnly:store.profile.value.halalOnly,avoidIngredients:[...(store.profile.value.allergies||[]),...(store.profile.value.avoid||[])]},sort:'relevance',limit:searchPageSize,offset};}
+function catalogBrowseFilters(){return{sort:'rating_desc',itemType:catalogItemType.value,catalogCategory:catalogCategory.value||undefined};}
+async function selectCatalogItemType(value){if(catalogLoadingMore.value)return;catalogLoadingMore.value=true;catalogItemType.value=value;catalogCategory.value='';message.value='';isError.value=false;try{await Promise.all([store.loadCatalogCategories(value),store.loadCatalogDishes({page:1,pageSize:50,...catalogBrowseFilters()})]);}catch(error){message.value=error.message||'目录分类加载失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}}
+async function selectCatalogCategory(value){if(catalogLoadingMore.value||catalogCategory.value===value)return;catalogLoadingMore.value=true;catalogCategory.value=value;message.value='';isError.value=false;try{await store.loadCatalogDishes({page:1,pageSize:50,...catalogBrowseFilters()});}catch(error){message.value=error.message||'菜品分类加载失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}}
+function searchPayload(offset=0){return{query:query.value.trim(),filters:{itemType:catalogItemType.value,catalogCategory:catalogCategory.value||undefined,halalOnly:store.profile.value.halalOnly,avoidIngredients:[...(store.profile.value.allergies||[]),...(store.profile.value.avoid||[])]},sort:'relevance',limit:searchPageSize,offset};}
 async function submitSearch(){const text=query.value.trim();if(!text)return;searching.value=true;message.value='';isError.value=false;citationsExpanded.value=false;resultsExpanded.value=false;try{searchResult.value=await store.searchDishes(searchPayload(0));}catch(error){isError.value=true;message.value=error.message||'检索失败，请稍后重试。';}finally{searching.value=false;}}
 async function loadMoreSearch(){if(searchLoadingMore.value||!searchResult.value?.page?.hasMore)return;searchLoadingMore.value=true;try{const next=await store.searchDishes(searchPayload(searchResult.value.items?.length||0));const merged=new Map((searchResult.value.items||[]).map((dish)=>[String(dish.id),dish]));for(const dish of next.items||[])merged.set(String(dish.id),dish);searchResult.value={...next,items:[...merged.values()]};resultsExpanded.value=true;}catch(error){message.value=error.message||'加载更多失败。';isError.value=true;}finally{searchLoadingMore.value=false;}}
 function clearSearch(){searchResult.value=null;query.value='';citationsExpanded.value=false;resultsExpanded.value=false;message.value='';}
@@ -141,6 +146,11 @@ async function rejectAction(action){try{await store.rejectAgentAction(action.id)
 .page-message.error,.notice.error { color:var(--danger); }
 .result-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 12px; }
 .catalog-type-control { margin:0 0 12px; }
+.catalog-category-track { width:100%; margin:-2px 0 12px; white-space:nowrap; }
+.catalog-category-row { display:flex; width:max-content; gap:7px; padding-right:12px; }
+.catalog-category-row button { display:flex; min-height:34px; align-items:center; gap:5px; padding:0 11px; border:1px solid var(--line); border-radius:8px; color:var(--ink-2); background:var(--surface); font-size:12px; }
+.catalog-category-row button.active { color:#fff; border-color:var(--module-accent); background:var(--module-accent); }
+.category-count { opacity:.72; }
 .result-eyebrow,.result-title { display:block; }
 .result-eyebrow { color:var(--muted); font-size:12px; font-weight:600; }
 .result-title { margin-top:3px; color:var(--ink); font-size:16px; font-weight:600; }

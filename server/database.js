@@ -1124,6 +1124,7 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_canteens_tenant_operating_status ON canteens(tenant_id, operating_status, id);
     CREATE INDEX IF NOT EXISTS idx_stalls_catalog_reservations ON stalls(tenant_id, canteen_id, reservation_enabled, id);
     CREATE INDEX IF NOT EXISTS idx_dishes_catalog_reservations ON dishes(tenant_id, stall_id, status, reservation_enabled, id);
+    CREATE INDEX IF NOT EXISTS idx_dishes_catalog_search_partition ON dishes(tenant_id, review_status, retrieval_eligible, catalog_item_type, catalog_category, status);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_tenant_user_idempotency ON orders(tenant_id, user_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
     CREATE INDEX IF NOT EXISTS idx_orders_tenant_stall_created ON orders(tenant_id, stall_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_payments_tenant_order ON payments(tenant_id, order_id);

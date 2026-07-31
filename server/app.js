@@ -1738,7 +1738,7 @@ function recommendationGoalLabel(goal) {
   return ({ fatLoss: '减脂控卡', muscleGain: '增肌高蛋白', maintain: '均衡维持', healthy: '健康均衡' })[goal] || '健康均衡';
 }
 
-async function retrievalIndexQuery(db, user, { query, tenantId, limit, candidateIds, sourceType, sourceTypes }) {
+async function retrievalIndexQuery(db, user, { query, tenantId, limit, candidateIds, itemType, catalogCategories, sourceType, sourceTypes }) {
   await getAiSettings(db, user).catch(() => {});
   const quota = await aiQuotaStatus(db, tenantId);
   const quotaExhausted = quota.quota > 0 && quota.remaining <= 0;
@@ -1753,13 +1753,20 @@ async function retrievalIndexQuery(db, user, { query, tenantId, limit, candidate
   const activeTenantId = tenantId || tenantIdFor(user);
   const globalKnowledgeTypes = (normalizedTypes || ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE])
     .filter((type) => ['health_knowledge', CAMPUS_KNOWLEDGE_SOURCE_TYPE].includes(type));
-  const searchOptions = { limit, ...(quotaExhausted ? { embeddingProvider: null } : {}) };
+  const searchOptions = {
+    limit,
+    candidateIds,
+    itemType,
+    catalogCategories,
+    ...(quotaExhausted ? { embeddingProvider: null } : {}),
+  };
   const searches = [searchRetrievalIndex(db, query, { tenantId: activeTenantId, sourceTypes: normalizedTypes, ...searchOptions })];
   if (globalKnowledgeTypes.length && activeTenantId !== GLOBAL_KNOWLEDGE_TENANT_ID) {
     searches.push(searchRetrievalIndex(db, query, {
       tenantId: GLOBAL_KNOWLEDGE_TENANT_ID,
       sourceTypes: globalKnowledgeTypes,
-      ...searchOptions,
+      limit,
+      ...(quotaExhausted ? { embeddingProvider: null } : {}),
     }));
   }
   const responses = await Promise.all(searches);
@@ -1920,24 +1927,38 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   const budgetOnlyQuery = /^\s*(?:预算|价格)?\s*(?:不超过|不高于|最多|低于|少于)?\s*[¥￥]?\s*\d+(?:\.\d+)?\s*元?\s*(?:以内|以下|内)?\s*$/u.test(rawQuery);
   const keyword = (budgetOnlyQuery ? '' : rawQuery).toLocaleLowerCase();
   const requestedItemType = String(body.itemType || filters.itemType || '').trim().toLowerCase();
-  const allowedItemTypes = new Set(['meal', 'beverage', 'snack', 'addon', 'fee', 'all']);
+  const allowedItemTypes = new Set(['meal', 'beverage', 'snack', 'addon', 'fee', 'variant', 'section', 'all']);
+  const publicItemTypes = new Set(['meal', 'beverage', 'snack']);
   if (requestedItemType && !allowedItemTypes.has(requestedItemType)) {
     throw Object.assign(new Error('目录商品类型不合法'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
   }
-  const clauses = ["d.tenant_id = ?", "d.status = 'active'", "d.review_status = 'approved'", "s.review_status = 'approved'", "c.review_status = 'approved'", "(parent.id IS NULL OR parent.review_status = 'approved')", "c.operating_status = 'open'", "(parent.id IS NULL OR parent.operating_status = 'open')",
+  const effectiveItemType = publicItemTypes.has(requestedItemType) ? requestedItemType : 'meal';
+  const partitionInferred = !requestedItemType || requestedItemType === 'all';
+  const clauses = ["d.tenant_id = ?", "d.status = 'active'", "d.review_status = 'approved'", "d.retrieval_eligible = 1",
+    "s.review_status = 'approved'", "s.retrieval_eligible = 1", "s.open = TRUE",
+    "c.review_status = 'approved'", "c.retrieval_eligible = 1", "c.operating_status = 'open'",
+    "(parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))",
     "TRIM(d.name) NOT LIKE '_人份'", "TRIM(d.name) NOT LIKE '_-_人份'", "TRIM(d.name) NOT LIKE '_~_人份'", "TRIM(d.name) NOT LIKE '_至_人份'",
     "TRIM(d.name) NOT LIKE '_._-_人份'", "TRIM(d.name) NOT LIKE '_、_-_人份'"];
   const values = [tenantId];
-  if (requestedItemType && requestedItemType !== 'all') {
-    clauses.push('d.catalog_item_type = ?');
-    values.push(requestedItemType);
-  } else if (!requestedItemType && !keyword) {
-    clauses.push("d.catalog_item_type = 'meal'");
-  } else if (!requestedItemType) {
-    clauses.push("d.catalog_item_type NOT IN ('addon', 'fee', 'variant', 'section')");
+  clauses.push('d.catalog_item_type = ?');
+  values.push(effectiveItemType);
+  if (requestedItemType && !publicItemTypes.has(requestedItemType) && requestedItemType !== 'all') clauses.push('1 = 0');
+  const catalogCategories = [...new Set([
+    body.catalogCategory,
+    filters.catalogCategory,
+    ...[].concat(body.catalogCategories || filters.catalogCategories || []),
+  ].flatMap((value) => String(value || '').split(/[，,、;；]/u)).map((value) => value.trim()).filter(Boolean))].slice(0, 30);
+  if (catalogCategories.length) {
+    clauses.push(`d.catalog_category IN (${catalogCategories.map(() => '?').join(', ')})`);
+    values.push(...catalogCategories);
   }
   if (keyword) {
-    clauses.push("LOWER(d.name || ' ' || d.cuisine || ' ' || d.taste || ' ' || d.tags_json || ' ' || d.description) LIKE ?");
+    clauses.push(`LOWER(
+      d.name || ' ' || d.aliases_json || ' ' || d.catalog_category || ' ' || d.cuisine || ' ' || d.taste || ' ' ||
+      d.ingredients_json || ' ' || d.tags_json || ' ' || d.semantic_labels_json || ' ' || d.description || ' ' ||
+      s.name || ' ' || c.name || ' ' || COALESCE(parent.name, '')
+    ) LIKE ?`);
     values.push(`%${keyword}%`);
   }
   const stallIds = [...new Set([
@@ -1966,11 +1987,33 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   const from = `FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id`;
   const total = Number((await db.prepare(`SELECT COUNT(*) AS count ${from} WHERE ${where}`).get(...values))?.count || 0);
   const sort = String(body.sort || 'name');
-  const orderBy = sort === 'price_asc' ? 'd.price ASC, d.name' : sort === 'rating_desc' ? 'd.rating DESC, d.review_count DESC, d.name' : 'd.name';
+  const relevanceSql = keyword ? `CASE
+      WHEN LOWER(d.name) = ? THEN 100
+      WHEN LOWER(d.aliases_json) LIKE ? THEN 90
+      WHEN LOWER(d.name) LIKE ? THEN 80
+      WHEN LOWER(d.catalog_category || ' ' || s.name || ' ' || c.name || ' ' || COALESCE(parent.name, '')) LIKE ? THEN 50
+      WHEN LOWER(d.ingredients_json || ' ' || d.tags_json) LIKE ? THEN 25
+      WHEN LOWER(d.description || ' ' || d.semantic_labels_json) LIKE ? THEN 10
+      ELSE 0 END` : '0';
+  const relevanceValues = keyword ? [keyword, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`] : [];
+  const orderBy = sort === 'price_asc'
+    ? 'd.price ASC, d.name'
+    : sort === 'rating_desc'
+      ? 'd.rating DESC, d.review_count DESC, d.name'
+      : keyword
+        ? 'relevance_score DESC, d.rating DESC, d.name'
+        : 'd.name';
   const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
-      c.name AS canteen_name, c.venue_kind ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
-    .all(...values, pageSize, offset);
+      c.name AS canteen_name, c.venue_kind, ${relevanceSql} AS relevance_score ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
+    .all(...relevanceValues, ...values, pageSize, offset);
   const items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map(catalogDishPresentation));
+  const suggestedRelaxations = total || !keyword ? [] : [...publicItemTypes]
+    .filter((itemType) => itemType !== effectiveItemType)
+    .map((itemType) => ({
+      filter: 'itemType',
+      value: itemType,
+      message: `可切换到${itemType === 'snack' ? '小吃' : itemType === 'beverage' ? '饮品' : '餐食'}分区继续查找`,
+    }));
   return {
     query: keyword,
     interpreted: parsedQuery.interpreted,
@@ -1979,7 +2022,41 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
     availability: { orderableCount: items.filter((item) => item.availability.orderable).length, totalCount: total },
     page: { page: Math.floor(offset / pageSize) + 1, pageSize, limit: pageSize, offset, total, hasMore: offset + items.length < total },
     warnings: [],
-    meta: { source: 'stable_catalog', vectorSearchMode: 'shadow', itemType: requestedItemType || (keyword ? 'searchable' : 'meal') },
+    suggestedRelaxations,
+    meta: {
+      source: 'stable_catalog',
+      vectorSearchMode: 'shadow',
+      itemType: effectiveItemType,
+      partition: {
+        itemType: effectiveItemType,
+        categories: catalogCategories,
+        inferred: partitionInferred,
+        relaxableItemTypes: suggestedRelaxations.map((item) => item.value),
+      },
+    },
+  };
+}
+
+async function listCatalogCategories(db, tenantId, params) {
+  const itemType = String(params.get('itemType') || 'meal').trim().toLowerCase();
+  if (!['meal', 'snack', 'beverage'].includes(itemType)) {
+    throw Object.assign(new Error('学生目录只支持餐食、小吃和饮品分区'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
+  }
+  const rows = await db.prepare(`SELECT d.catalog_category AS value, COUNT(*) AS count
+    FROM dishes d
+    JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+      AND d.catalog_item_type = ?
+      AND s.review_status = 'approved' AND s.retrieval_eligible = 1 AND s.open = TRUE
+      AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+      AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
+    GROUP BY d.catalog_category
+    ORDER BY COUNT(*) DESC, d.catalog_category ASC`).all(tenantId, itemType);
+  return {
+    itemType,
+    categories: rows.map((row) => ({ value: row.value, label: row.value, count: Number(row.count || 0) })),
   };
 }
 
@@ -3438,6 +3515,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
       if (method === 'GET' && url.pathname === '/api/stalls') return send(res, 200, await listStalls(db, tenantIdFor(user)));
       if (method === 'GET' && url.pathname === '/api/catalog/venues') return send(res, 200, await listCatalogVenues(db, tenantIdFor(user)));
       if (method === 'GET' && url.pathname === '/api/catalog/stalls') return send(res, 200, await listCatalogStalls(db, tenantIdFor(user), url.searchParams));
+      if (method === 'GET' && url.pathname === '/api/catalog/categories') return send(res, 200, await listCatalogCategories(db, tenantIdFor(user), url.searchParams));
       if (method === 'GET' && url.pathname === '/api/catalog/rankings') return send(res, 200, await listCatalogRankings(db, tenantIdFor(user), url.searchParams));
       if (method === 'GET' && url.pathname === '/api/catalog/saved') {
         const activeUser = await requireUser(db, req);

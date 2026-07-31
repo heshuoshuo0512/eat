@@ -44,7 +44,7 @@
     <button class="text-link" type="button" @click="clearStallFilter">查看全部</button>
   </p>
 
-  <div v-if="!searchResultActive" class="catalog-type-bar" role="group" aria-label="目录商品分类">
+  <div v-if="!searchResultActive" class="catalog-type-bar" role="group" aria-label="菜品一级分类">
     <button
       v-for="option in catalogItemTypes"
       :key="option.value"
@@ -54,6 +54,17 @@
       :disabled="catalogLoadingMore"
       @click="selectCatalogItemType(option.value)"
     >{{ option.label }}</button>
+  </div>
+  <div v-if="!searchResultActive" class="catalog-category-bar" role="group" aria-label="菜品二级分类">
+    <button
+      v-for="option in catalogCategoryOptions"
+      :key="option.value || 'all'"
+      class="pill"
+      :class="{ active: catalogCategory === option.value }"
+      type="button"
+      :disabled="catalogLoadingMore"
+      @click="selectCatalogCategory(option.value)"
+    >{{ option.label }}<small v-if="option.count != null">{{ option.count }}</small></button>
   </div>
 
   <div class="result-toolbar">
@@ -111,9 +122,12 @@ const catalogItemTypes = [
   { value: 'meal', label: '餐食' },
   { value: 'snack', label: '小吃' },
   { value: 'beverage', label: '饮品' },
-  { value: 'addon', label: '加购' },
-  { value: 'all', label: '全部目录' },
 ];
+const catalogCategory = ref('');
+const catalogCategoryOptions = computed(() => [
+  { value: '', label: '全部', count: store.catalogCategories[catalogItemType.value]?.reduce((sum, item) => sum + Number(item.count || 0), 0) || 0 },
+  ...(store.catalogCategories[catalogItemType.value] || []),
+]);
 
 const stallFilterName = computed(() => store.stalls.find((s) => s.id === stallFilter.value)?.name || '');
 const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) => [dish.id, dish])));
@@ -151,14 +165,36 @@ watch(() => route.query.dish, (val) => {
 async function loadMoreCatalog() {
   if (catalogLoadingMore.value || !store.catalogPage.hasMore) return;
   catalogLoadingMore.value = true;
-  try { await store.loadMoreCatalog({ sort: 'rating_desc', itemType: catalogItemType.value }); } finally { catalogLoadingMore.value = false; }
+  try { await store.loadMoreCatalog(catalogBrowseFilters()); } finally { catalogLoadingMore.value = false; }
 }
 
 async function selectCatalogItemType(itemType) {
   if (catalogLoadingMore.value || catalogItemType.value === itemType) return;
   catalogLoadingMore.value = true;
   catalogItemType.value = itemType;
-  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, sort: 'rating_desc', itemType }); }
+  catalogCategory.value = '';
+  try {
+    await Promise.all([
+      store.loadCatalogCategories(itemType),
+      store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }),
+    ]);
+  }
+  finally { catalogLoadingMore.value = false; }
+}
+
+function catalogBrowseFilters() {
+  return {
+    sort: 'rating_desc',
+    itemType: catalogItemType.value,
+    catalogCategory: catalogCategory.value || undefined,
+  };
+}
+
+async function selectCatalogCategory(value) {
+  if (catalogLoadingMore.value || catalogCategory.value === value) return;
+  catalogLoadingMore.value = true;
+  catalogCategory.value = value;
+  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }); }
   finally { catalogLoadingMore.value = false; }
 }
 
@@ -216,6 +252,8 @@ function buildSearchPayload(query, offset) {
   return {
       query,
       filters: {
+        itemType: catalogItemType.value,
+        catalogCategory: catalogCategory.value || undefined,
         halalOnly: store.profile.halalOnly,
         stallId: stallFilter.value || undefined,
         avoidIngredients: [...(store.profile.allergies || []), ...(store.profile.avoid || [])]
@@ -304,7 +342,7 @@ function dishLocation(dish) {
 }
 
 onMounted(async () => {
-  await loadMemory();
+  await Promise.all([loadMemory(), store.loadCatalogCategories(catalogItemType.value)]);
   if (route.query.dish) await router.replace({ name: 'dish-detail', params: { id: String(route.query.dish) } });
 });
 </script>
@@ -389,6 +427,10 @@ onMounted(async () => {
 .result-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 28px 0 14px; }.result-toolbar h2 { margin: 0; font-size: 20px; }
 .catalog-type-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0; }
 .catalog-type-bar .pill.active { color: #fff; background: #176b45; border-color: #176b45; }
+.catalog-category-bar { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.catalog-category-bar .pill { display: inline-flex; align-items: center; gap: 6px; }
+.catalog-category-bar .pill small { color: inherit; opacity: .68; }
+.catalog-category-bar .pill.active { color: #fff; background: #176b45; border-color: #176b45; }
 
 .stall-banner { display: flex; align-items: center; gap: 10px; padding: 12px 18px; margin-bottom: 14px; border-radius: 18px; background: linear-gradient(135deg, rgba(31,122,77,.1), rgba(255,255,255,.68)); border: 1px solid rgba(31,122,77,.14); font-size: 14px; }
 .sort-bar { display: flex; gap: 8px; margin: 0; }

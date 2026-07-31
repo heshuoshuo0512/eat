@@ -660,6 +660,9 @@ components:
         budgetMin: { type: number, minimum: 0 }
         budgetMax: { type: number, minimum: 0 }
         mealType: { type: string, enum: [breakfast, lunch, dinner] }
+        itemType: { type: string, enum: [meal, snack, beverage], default: meal }
+        catalogCategory: { type: string }
+        catalogCategories: { type: array, maxItems: 30, items: { type: string } }
         primaryCanteenId: { type: string }
         canteenId: { type: string }
         canteenName: { type: string }
@@ -693,7 +696,9 @@ components:
       type: object
       properties:
         query: { type: string, maxLength: 500, description: Natural-language dish query. Rule extraction runs before optional semantic retrieval. }
-        itemType: { type: string, enum: [meal, snack, beverage, addon, fee, all], description: Empty browse defaults to meal; keyword search includes meals, snacks and beverages. }
+        itemType: { type: string, enum: [meal, snack, beverage], default: meal, description: Student search defaults to complete meals. Snacks and beverages require explicit selection. }
+        catalogCategory: { type: string, description: Compatibility shorthand for a single second-level category. }
+        catalogCategories: { type: array, maxItems: 30, items: { type: string } }
         filters: { $ref: '#/components/schemas/DishSearchFilters' }
         sort: { type: string, enum: [relevance, price_asc, price_desc, rating, sales], default: relevance }
         limit: { type: integer, minimum: 1, maximum: 50, default: 20 }
@@ -1380,6 +1385,32 @@ paths:
     get:
       security: []
       responses: { '200': { description: Tenant-scoped stall list } }
+  /catalog/categories:
+    get:
+      security: []
+      description: Returns published second-level categories and counts for one student-visible catalog partition.
+      parameters:
+        - { name: itemType, in: query, schema: { type: string, enum: [meal, snack, beverage], default: meal } }
+      responses:
+        '200':
+          description: Tenant-scoped categories under a fully published and open catalog hierarchy.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [itemType, categories]
+                properties:
+                  itemType: { type: string, enum: [meal, snack, beverage] }
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      required: [value, label, count]
+                      properties:
+                        value: { type: string }
+                        label: { type: string }
+                        count: { type: integer, minimum: 0 }
+        '400': { description: Invalid student catalog partition }
   /dishes:
     get:
       security: []

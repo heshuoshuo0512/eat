@@ -28,6 +28,14 @@ describe('miniapp discovery and community search UI contracts', () => {
     assert.match(dishes, /查看全部 .*道排名菜品/);
   });
 
+  it('keeps catalog search inside explicit student partitions', () => {
+    assert.match(dishes, /value:'meal',[\s\S]*value:'snack',[\s\S]*value:'beverage'/);
+    assert.doesNotMatch(dishes, /value:'addon'|label:'全部目录'/);
+    assert.match(dishes, /loadCatalogCategories\(catalogItemType\.value\)/);
+    assert.match(dishes, /itemType:catalogItemType\.value/);
+    assert.match(dishes, /catalogCategory:catalogCategory\.value\|\|undefined/);
+  });
+
   it('provides debounced keyword fields for posts and reviews', () => {
     assert.match(community, /v-model="postQuery"/);
     assert.match(community, /v-model="reviewQuery"/);

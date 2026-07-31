@@ -112,6 +112,9 @@ export const apiClient = {
     if (venueId) query.set('venueId', venueId);
     return request(`/api/catalog/stalls?${query}`);
   },
+  async catalogCategories(itemType = 'meal') {
+    return request(`/api/catalog/categories?${new URLSearchParams({ itemType })}`);
+  },
   async catalogRankings({ type = 'dishes', page = 1, pageSize = 20 } = {}) {
     return request(`/api/catalog/rankings?${new URLSearchParams({ type, page: String(page), pageSize: String(pageSize) })}`);
   },

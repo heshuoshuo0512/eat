@@ -38,6 +38,7 @@ const trustworthyMealVisionVersion = '017_trustworthy_meal_vision';
 const stableCatalogReservationVersion = '018_stable_catalog_reservations';
 const realCatalogVenueHierarchyVersion = '019_real_catalog_venue_hierarchy';
 const campusVenueCatalogVersion = '020_campus_venue_catalog';
+const catalogSearchPartitioningUpgrade = readFileSync(join(root, 'server', 'migrations', '028_catalog_search_partitioning.sql'), 'utf8');
 const postHierarchyMigrationVersions = migrationVersions.filter((version) => version >= campusVenueCatalogVersion);
 const roleBootstrap = readFileSync(join(root, 'scripts', 'create-postgres-roles.sql'), 'utf8');
 const roleProvisioning = readFileSync(join(root, 'scripts', 'provision-postgres-roles.sql'), 'utf8');
@@ -124,6 +125,12 @@ class FakeMigrationDatabase {
 }
 
 describe('PostgreSQL migration runner', () => {
+  it('adds catalog search partition indexes without rewriting audited catalog rows', () => {
+    assert.match(catalogSearchPartitioningUpgrade, /CREATE INDEX IF NOT EXISTS idx_dishes_catalog_search_partition/i);
+    assert.match(catalogSearchPartitioningUpgrade, /review_status[\s\S]*retrieval_eligible[\s\S]*catalog_item_type[\s\S]*catalog_category[\s\S]*status/i);
+    assert.doesNotMatch(catalogSearchPartitioningUpgrade, /\b(?:UPDATE|DELETE|INSERT|TRUNCATE)\b/i);
+  });
+
   it('requires an explicit legacy owner before existing database migrations', () => {
     assert.match(ownerReassignment, /legacy_owner is required/i);
     assert.match(ownerReassignment, /REASSIGN OWNED BY :"legacy_owner" TO smart_canteen_migrator/i);

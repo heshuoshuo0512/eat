@@ -48,6 +48,7 @@ const loaded = ref(false);
 const lastLoadedAt = ref(0);
 const todayMenu = ref(emptyMenu());
 const catalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
+const catalogCategories = ref({ meal: [], snack: [], beverage: [] });
 const reservationCatalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
 const remoteRankings = ref({ dishes: [], stalls: [], canteens: [] });
 const savedCatalog = ref({ favorite: { items: [], page: { page: 0, hasMore: false, total: 0 } }, eaten: { items: [], page: { page: 0, hasMore: false, total: 0 } } });
@@ -284,6 +285,13 @@ async function loadCatalogDishes({ page = 1, pageSize = 50, ...filters } = {}) {
   return result;
 }
 
+async function loadCatalogCategories(itemType = 'meal', { force = false } = {}) {
+  if (!force && catalogCategories.value[itemType]?.length) return catalogCategories.value[itemType];
+  const result = await apiClient.catalogCategories(itemType);
+  catalogCategories.value = { ...catalogCategories.value, [itemType]: result.categories || [] };
+  return catalogCategories.value[itemType];
+}
+
 async function loadMoreCatalog(filters = {}) {
   if (!catalogPage.value.hasMore) return { items: [], page: catalogPage.value };
   return loadCatalogDishes({ ...filters, page: catalogPage.value.page + 1, pageSize: catalogPage.value.pageSize || 50 });
@@ -360,11 +368,11 @@ function setMotionReduced(value) {
 
 export function useCanteenStore() {
   return {
-    state, loading, error, loaded, lastLoadedAt, todayMenu, catalogPage, reservationCatalogPage, remoteRankings, savedCatalog, contextualRecommendation, recommendationLoading,
+    state, loading, error, loaded, lastLoadedAt, todayMenu, catalogPage, catalogCategories, reservationCatalogPage, remoteRankings, savedCatalog, contextualRecommendation, recommendationLoading,
     discoveryMode, communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
     rankings, searchedDishes, recommendation,
     load, ensureLoaded, refreshIfStale, login, register, wechatLogin, logout, getDishDetail, addReview, saveProfile, deferProfileOnboarding,
-    loadTodayMenu, loadMoreTodayMenu, loadCatalogDishes, loadMoreCatalog, loadSavedCatalog, loadCatalogRanking, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
+    loadTodayMenu, loadMoreTodayMenu, loadCatalogDishes, loadMoreCatalog, loadCatalogCategories, loadSavedCatalog, loadCatalogRanking, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
     markDishDrawn, openDiscoveryMode, openCommunitySection, setMotionReduced,
     fetchDishDetail,
     runAgent: apiClient.runAgent,

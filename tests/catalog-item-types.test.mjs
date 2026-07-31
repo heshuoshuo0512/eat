@@ -43,10 +43,10 @@ describe('catalog item type boundaries', () => {
       fee: rows[3].id,
       variant: rows[4].id,
     };
-    db.prepare("UPDATE dishes SET name = '目录分型测试主菜', catalog_item_type = 'meal', pricing_mode = 'variants', price = 25, price_display = '25-55元', pricing_json = ?, reservation_enabled = 1 WHERE id = ?")
+    db.prepare("UPDATE dishes SET name = '目录分型测试鸡蛋主菜', ingredients_json = '[\"鸡蛋\",\"米饭\"]', catalog_item_type = 'meal', catalog_category = '米饭套餐', pricing_mode = 'variants', price = 25, price_display = '25-55元', pricing_json = ?, reservation_enabled = 1 WHERE id = ?")
       .run(JSON.stringify({ mode: 'variants', display: '25-55元', minAmount: 25, maxAmount: 55, budgetComparable: true, variants: [{ label: '1人份', amount: 25 }, { label: '3-4人份', amount: 55 }], modifiers: [] }), fixture.meal);
-    db.prepare("UPDATE dishes SET name = '目录分型测试可乐', catalog_item_type = 'beverage', reservation_enabled = 1 WHERE id = ?").run(fixture.beverage);
-    db.prepare("UPDATE dishes SET name = '目录分型测试加面', catalog_item_type = 'addon', reservation_enabled = 0 WHERE id = ?").run(fixture.addon);
+    db.prepare("UPDATE dishes SET name = '目录分型测试可乐', catalog_item_type = 'beverage', catalog_category = '饮品', reservation_enabled = 1 WHERE id = ?").run(fixture.beverage);
+    db.prepare("UPDATE dishes SET name = '目录分型测试单加鸡蛋', catalog_item_type = 'addon', catalog_category = '面食加购', reservation_enabled = 0 WHERE id = ?").run(fixture.addon);
     db.prepare("UPDATE dishes SET name = '目录分型测试打包费', catalog_item_type = 'fee', reservation_enabled = 0 WHERE id = ?").run(fixture.fee);
     db.prepare("UPDATE dishes SET name = '3-4人份', catalog_item_type = 'variant', parent_dish_id = ?, status = 'inactive', reservation_enabled = 0 WHERE id = ?")
       .run(fixture.meal, fixture.variant);
@@ -62,7 +62,7 @@ describe('catalog item type boundaries', () => {
     db?.close();
   });
 
-  it('defaults browse and rankings to meals while keeping explicit catalog tabs', async () => {
+  it('defaults browse and rankings to meals while exposing only student-visible partitions', async () => {
     const browse = await request('/api/dishes/search', { method: 'POST', body: { pageSize: 100 } });
     assert.equal(browse.status, 200, JSON.stringify(browse.data));
     assert.ok(browse.data.items.length > 0);
@@ -75,27 +75,49 @@ describe('catalog item type boundaries', () => {
 
     const addons = await request('/api/dishes/search', { method: 'POST', body: { itemType: 'addon', pageSize: 100 } });
     assert.equal(addons.status, 200, JSON.stringify(addons.data));
-    assert.deepEqual(addons.data.items.map((dish) => dish.id), [fixture.addon]);
-    assert.equal(addons.data.items[0].availability.orderable, false);
+    assert.deepEqual(addons.data.items, []);
 
     const rankings = await request('/api/catalog/rankings?type=dishes&pageSize=50');
     assert.equal(rankings.status, 200);
     assert.ok(rankings.data.items.every((dish) => dish.catalogItemType === 'meal'));
   });
 
-  it('finds beverages by name but excludes add-ons, fees and variants from generic search', async () => {
-    const beverage = await request('/api/dishes/search', { method: 'POST', body: { query: '目录分型测试可乐', pageSize: 20 } });
+  it('keeps keyword search inside the selected partition', async () => {
+    const beverage = await request('/api/dishes/search', { method: 'POST', body: { query: '目录分型测试可乐', itemType: 'beverage', pageSize: 20 } });
     assert.equal(beverage.status, 200, JSON.stringify(beverage.data));
     assert.equal(beverage.data.items[0].id, fixture.beverage);
+    assert.equal(beverage.data.meta.partition.itemType, 'beverage');
 
     const generic = await request('/api/dishes/search', { method: 'POST', body: { query: '目录分型测试', pageSize: 100 } });
     assert.equal(generic.status, 200, JSON.stringify(generic.data));
     const ids = generic.data.items.map((dish) => dish.id);
     assert.ok(ids.includes(fixture.meal));
-    assert.ok(ids.includes(fixture.beverage));
+    assert.equal(ids.includes(fixture.beverage), false);
     assert.equal(ids.includes(fixture.addon), false);
     assert.equal(ids.includes(fixture.fee), false);
     assert.equal(ids.includes(fixture.variant), false);
+    assert.equal(generic.data.meta.partition.itemType, 'meal');
+    assert.equal(generic.data.meta.partition.inferred, true);
+  });
+
+  it('keeps ingredient search and second-level categories inside the meal partition', async () => {
+    const egg = await request('/api/dishes/search', { method: 'POST', body: { query: '鸡蛋', pageSize: 100 } });
+    assert.ok(egg.data.items.some((dish) => dish.id === fixture.meal));
+    assert.ok(egg.data.items.every((dish) => dish.catalogItemType === 'meal'));
+    assert.equal(egg.data.items.some((dish) => dish.id === fixture.addon), false);
+
+    const categoryList = await request('/api/catalog/categories?itemType=meal');
+    assert.equal(categoryList.status, 200);
+    const riceCategory = categoryList.data.categories.find((item) => item.value === '米饭套餐');
+    assert.ok(riceCategory?.count >= 1);
+
+    const categorySearch = await request('/api/dishes/search', {
+      method: 'POST',
+      body: { itemType: 'meal', catalogCategory: '米饭套餐', pageSize: 100 },
+    });
+    assert.ok(categorySearch.data.items.length > 0);
+    assert.ok(categorySearch.data.items.every((dish) => dish.catalogItemType === 'meal' && dish.catalogCategory === '米饭套餐'));
+    assert.equal(categorySearch.data.page.total, riceCategory.count);
   });
 
   it('resolves an inactive serving tier to its canonical parent dish', async () => {

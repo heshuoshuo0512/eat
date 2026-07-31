@@ -108,6 +108,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const searchFilters = ref({ keyword: '', maxPrice: 25, taste: '不限', halalOnly: false });
   const todayMenu = ref({ date: '', mealType: 'lunch', menus: [], dishes: [], source: 'fallback' });
   const catalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
+  const catalogCategories = ref({ meal: [], snack: [], beverage: [] });
   const reservationCatalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
   const remoteRankings = ref({ dishes: [], stalls: [], canteens: [] });
   const savedCatalog = ref({ favorite: { items: [], page: { page: 0, hasMore: false, total: 0 } }, eaten: { items: [], page: { page: 0, hasMore: false, total: 0 } } });
@@ -260,6 +261,13 @@ export const useCanteenStore = defineStore('canteen', () => {
     mergeDishes(result.items || [], { replace: page === 1 });
     catalogPage.value = result.page || { page, pageSize, total: state.value.dishes.length, hasMore: false };
     return result;
+  }
+
+  async function loadCatalogCategories(itemType = 'meal', { force = false } = {}) {
+    if (!force && catalogCategories.value[itemType]?.length) return catalogCategories.value[itemType];
+    const result = await apiClient.catalogCategories(itemType);
+    catalogCategories.value = { ...catalogCategories.value, [itemType]: result.categories || [] };
+    return catalogCategories.value[itemType];
   }
 
   async function loadMoreCatalog(filters = {}) {
@@ -1021,6 +1029,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadRetrievalIndexStatus,
     rebuildRetrievalIndex,
     searchDishes,
+    catalogCategories,
+    loadCatalogCategories,
     loadCatalogDishes,
     loadMoreCatalog,
     fetchDishDetail,

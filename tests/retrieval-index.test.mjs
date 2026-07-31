@@ -194,6 +194,37 @@ describe('SQLite retrieval fallback', () => {
     }
   });
 
+  it('filters SQLite candidate IDs and catalog partitions before lexical Top-K', async () => {
+    const db = openDatabase(':memory:');
+    try {
+      const noise = Array.from({ length: 30 }, (_, index) => ({
+        ...document('tenant-a', `noise-${index}`, '鸡蛋', '鸡蛋 加购项'),
+        metadata: { tenantId: 'tenant-a', dishId: `noise-${index}`, catalogItemType: 'addon', catalogCategory: '面食加购' },
+      }));
+      const allowed = {
+        ...document('tenant-a', 'meal-allowed', '鸡蛋炒饭', '米饭 鸡蛋 完整餐食'),
+        metadata: { tenantId: 'tenant-a', dishId: 'meal-allowed', catalogItemType: 'meal', catalogCategory: '米饭套餐' },
+      };
+      await upsertRetrievalDocuments(db, [...noise, allowed], { embeddingProvider: null });
+
+      const result = await searchRetrievalIndex(db, '鸡蛋', {
+        tenantId: 'tenant-a',
+        sourceTypes: ['dish'],
+        candidateIds: ['meal-allowed'],
+        itemType: 'meal',
+        catalogCategories: ['米饭套餐'],
+        embeddingProvider: null,
+        limit: 5,
+      });
+
+      assert.deepEqual(result.items.map((item) => item.sourceId), ['meal-allowed']);
+      assert.equal(result.meta.trace.lexicalCandidateCount, 1);
+      assert.deepEqual(result.meta.partition.catalogCategories, ['米饭套餐']);
+    } finally {
+      db.close();
+    }
+  });
+
   it('is idempotent and skips unchanged documents with a current embedding', async () => {
     const db = openDatabase(':memory:');
     let embeddingCalls = 0;
@@ -363,14 +394,23 @@ describe('PostgreSQL retrieval migration', () => {
     const result = await searchRetrievalIndex(db, 'semantic query', {
       tenantId: 'tenant-a',
       sourceTypes: ['dish'],
+      candidateIds: ['dish-allowed'],
+      itemType: 'meal',
+      catalogCategories: ['米饭套餐'],
       embeddingProvider: async () => vector1536(),
       embeddingModel: 'current-model',
     });
 
     const vectorCall = calls.find((call) => call.sql.includes('ORDER BY embedding <=>'));
     assert.ok(vectorCall);
-    assert.match(vectorCall.sql, /embedding_model = \$6/);
-    assert.equal(vectorCall.params[5], 'current-model');
+    assert.match(vectorCall.sql, /source_id = ANY\(\$4::text\[\]\)/);
+    assert.match(vectorCall.sql, /metadata->>'catalogItemType' = \$5/);
+    assert.match(vectorCall.sql, /metadata->>'catalogCategory' = ANY\(\$6::text\[\]\)/);
+    assert.match(vectorCall.sql, /embedding_model = \$8/);
+    assert.deepEqual(vectorCall.params[3], ['dish-allowed']);
+    assert.equal(vectorCall.params[4], 'meal');
+    assert.deepEqual(vectorCall.params[5], ['米饭套餐']);
+    assert.equal(vectorCall.params[7], 'current-model');
     assert.deepEqual(result.meta.retrievalModes, ['lexical', 'vector']);
     assert.equal(result.meta.degraded, false);
   });
