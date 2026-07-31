@@ -737,6 +737,8 @@ async function insertInvitationRow(tx, { tenantId, createdBy, expiresAt, batchId
 
 async function reclaimExpiredInvitationClaimsInTransaction(tx, { tenantId, batchId = null } = {}) {
   const timestamp = now();
+  const batchClause = batchId ? 'AND bi.batch_id = ?' : '';
+  const batchParams = batchId ? [batchId] : [];
   const candidates = await tx.prepare(`SELECT p.id, bi.batch_id
     FROM pilot_invitations p
     JOIN pilot_invitation_claims c ON c.invitation_id = p.id AND c.tenant_id = p.tenant_id
@@ -744,8 +746,8 @@ async function reclaimExpiredInvitationClaimsInTransaction(tx, { tenantId, batch
     WHERE p.tenant_id = ? AND p.status = 'active'
       AND c.reclaimed_at IS NULL AND c.claim_expires_at <= ?
       AND (p.expires_at IS NULL OR p.expires_at > ?)
-      AND (? IS NULL OR bi.batch_id = ?)
-    ORDER BY c.claim_expires_at ASC, p.id ASC`).all(tenantId, timestamp, timestamp, batchId, batchId);
+      ${batchClause}
+    ORDER BY c.claim_expires_at ASC, p.id ASC`).all(tenantId, timestamp, timestamp, ...batchParams);
   const reclaimed = [];
   for (const candidate of candidates) {
     // Lock the invitation row on PostgreSQL so an expired claim cannot race
