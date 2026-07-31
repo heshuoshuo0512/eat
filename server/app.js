@@ -291,7 +291,7 @@ const DATABASE_ENTITIES = {
   users: { label: '用户', table: 'users', capability: 'user:read', writeCapability: 'user:write', key: 'id', columns: ['id', 'username', 'nickname', 'role', 'created_at', 'updated_at'], writable: ['nickname', 'role'], search: ['username', 'nickname', 'role'] },
   canteens: { label: '餐饮场所', table: 'canteens', capability: 'canteen:write', writeCapability: 'canteen:write', deleteCapability: 'canteen:delete', key: 'id', columns: ['id', 'name', 'display_name', 'display_order', 'operating_status', 'location', 'hours', 'crowd_level', 'tags_json', 'description', 'created_at', 'updated_at'], writable: ['name', 'display_name', 'display_order', 'operating_status', 'location', 'hours', 'crowd_level', 'tags_json', 'description'], search: ['name', 'display_name', 'location'] },
   stalls: { label: '档口', table: 'stalls', capability: 'stall:write', writeCapability: 'stall:write', deleteCapability: 'stall:delete', key: 'id', columns: ['id', 'canteen_id', 'parent_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description', 'created_at', 'updated_at'], writable: ['canteen_id', 'floor', 'name', 'category', 'rating', 'avg_price', 'open', 'description'], search: ['name', 'category'] },
-  dishes: { label: '菜品与营养', table: 'dishes', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:delete', key: 'id', columns: ['id', 'stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'seasonings_json', 'additives_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'allergens_json', 'safety_declarations_json', 'nutrition_fact_status', 'recipe_fact_status', 'halal_fact_status', 'dietary_fact_status', 'spice_level', 'spice_fact_status', 'fact_source', 'fact_verified_at', 'fact_expires_at', 'data_version', 'synthetic', 'created_at', 'updated_at'], writable: ['stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'seasonings_json', 'additives_json', 'tags_json', 'halal', 'meal_types_json', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'allergens_json', 'safety_declarations_json', 'nutrition_fact_status', 'recipe_fact_status', 'halal_fact_status', 'dietary_fact_status', 'spice_level', 'spice_fact_status', 'fact_source', 'fact_verified_at', 'fact_expires_at', 'data_version'], search: ['name', 'taste', 'cuisine'] },
+  dishes: { label: '菜品与营养', table: 'dishes', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:delete', key: 'id', columns: ['id', 'stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'seasonings_json', 'additives_json', 'tags_json', 'halal', 'meal_types_json', 'dish_type', 'dish_category', 'meal_period', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'allergens_json', 'safety_declarations_json', 'nutrition_fact_status', 'recipe_fact_status', 'halal_fact_status', 'dietary_fact_status', 'spice_level', 'spice_fact_status', 'fact_source', 'fact_verified_at', 'fact_expires_at', 'data_version', 'synthetic', 'created_at', 'updated_at'], writable: ['stall_id', 'name', 'price', 'taste', 'cuisine', 'ingredients_json', 'seasonings_json', 'additives_json', 'tags_json', 'halal', 'meal_types_json', 'dish_type', 'dish_category', 'meal_period', 'calories', 'protein', 'fat', 'carbs', 'rating', 'review_count', 'sales', 'image', 'image_url', 'description', 'status', 'allergens_json', 'safety_declarations_json', 'nutrition_fact_status', 'recipe_fact_status', 'halal_fact_status', 'dietary_fact_status', 'spice_level', 'spice_fact_status', 'fact_source', 'fact_verified_at', 'fact_expires_at', 'data_version'], search: ['name', 'taste', 'cuisine'] },
   menus: { label: '菜单运营', table: 'menus', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:write', key: 'id', columns: ['id', 'tenant_id', 'canteen_id', 'date', 'meal_type', 'status', 'created_at', 'updated_at'], writable: ['canteen_id', 'date', 'meal_type', 'status'], search: ['date', 'meal_type', 'status'] },
   menu_items: { label: '菜单明细', table: 'menu_items', capability: 'dish:write', writeCapability: 'dish:write', deleteCapability: 'dish:write', key: 'id', columns: ['id', 'tenant_id', 'menu_id', 'dish_id', 'price', 'supply_limit', 'supply_count', 'sold_out', 'serving_start', 'serving_end', 'created_at', 'updated_at'], writable: ['menu_id', 'dish_id', 'price', 'supply_limit', 'supply_count', 'sold_out', 'serving_start', 'serving_end'], search: ['menu_id', 'dish_id', 'sold_out'] },
   reviews: { label: '评价', table: 'reviews', capability: 'review:moderate', writeCapability: 'review:moderate', key: 'id', columns: ['id', 'tenant_id', 'user_id', 'target_type', 'target_id', 'rating', 'content', 'status', 'created_at'], writable: ['status'], search: ['content', 'status', 'target_id'] },
@@ -1272,6 +1272,7 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   const stallId = String(body.stallId || '').trim();
   const conflictingRecord = await db.prepare(`SELECT tenant_id, stall_id, pricing_mode, price_display, pricing_json,
       aliases_json, semantic_labels_json, source_ref_json, catalog_item_type, catalog_category, parent_dish_id,
+      dish_type, dish_category, meal_period,
       rating, review_count, sales, review_status, retrieval_eligible FROM dishes WHERE id = ?`).get(normalizedId);
   if (conflictingRecord && conflictingRecord.tenant_id !== tenantId) {
     throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), {
@@ -1296,6 +1297,15 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
     throw Object.assign(new Error('目录类型仅支持餐食、小吃、饮品、加购项或费用项'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
   }
   const catalogCategory = String(body.catalogCategory || conflictingRecord?.catalog_category || automaticClassification.category).trim().slice(0, 30) || '其他餐食';
+  const dishType = String(body.dishType || conflictingRecord?.dish_type || '餐食').trim();
+  if (!['餐食', '小吃', '饮品', '加购'].includes(dishType)) {
+    throw Object.assign(new Error('菜品类型仅支持餐食、小吃、饮品、加购'), { status: 400, code: 'INVALID_DISH_TYPE' });
+  }
+  const dishCategory = String(body.dishCategory || conflictingRecord?.dish_category || '其他').trim().slice(0, 30) || '其他';
+  const mealPeriod = String(body.mealPeriod || conflictingRecord?.meal_period || '午餐').trim();
+  if (!['早餐', '午餐', '晚餐', '全天', '未知'].includes(mealPeriod)) {
+    throw Object.assign(new Error('餐次仅支持早餐、午餐、晚餐、全天、未知'), { status: 400, code: 'INVALID_MEAL_PERIOD' });
+  }
   const structuralItem = ['addon', 'fee', 'variant', 'section'].includes(catalogItemType);
   const reviewStatus = structuralItem
     ? 'excluded'
@@ -1358,10 +1368,10 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   if (!Number.isInteger(reviewCount) || reviewCount < 0 || !Number.isInteger(sales) || sales < 0) {
     throw Object.assign(new Error('评价数和销量必须是非负整数'), { status: 400, code: 'INVALID_DISH_COUNTER' });
   }
-  await db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, status, allergens_json, dietary_labels_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, dietary_labels_json=excluded.dietary_labels_json, updated_at=excluded.updated_at WHERE dishes.tenant_id=excluded.tenant_id`)
-    .run(normalizedId, tenantId, stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, rating, reviewCount, sales, body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', status, serializeJson(splitList(body.allergens || [])), serializeJson(dietaryLabels), now(), now());
+  await db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, dish_type, dish_category, meal_period, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, status, allergens_json, dietary_labels_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET stall_id=excluded.stall_id, name=excluded.name, price=excluded.price, taste=excluded.taste, cuisine=excluded.cuisine, ingredients_json=excluded.ingredients_json, tags_json=excluded.tags_json, halal=excluded.halal, meal_types_json=excluded.meal_types_json, dish_type=excluded.dish_type, dish_category=excluded.dish_category, meal_period=excluded.meal_period, calories=excluded.calories, protein=excluded.protein, fat=excluded.fat, carbs=excluded.carbs, fiber=excluded.fiber, sodium=excluded.sodium, sugar=excluded.sugar, calcium=excluded.calcium, iron=excluded.iron, rating=excluded.rating, review_count=excluded.review_count, sales=excluded.sales, image=excluded.image, image_url=excluded.image_url, description=excluded.description, status=excluded.status, allergens_json=excluded.allergens_json, dietary_labels_json=excluded.dietary_labels_json, updated_at=excluded.updated_at WHERE dishes.tenant_id=excluded.tenant_id`)
+    .run(normalizedId, tenantId, stallId, body.name, Number(body.price), body.taste, body.cuisine, serializeJson(splitList(body.ingredients)), serializeJson(splitList(body.tags)), body.halal ? 1 : 0, serializeJson(body.mealTypes || ['lunch', 'dinner']), dishType, dishCategory, mealPeriod, Number(nutrition.calories || 0), Number(nutrition.protein || 0), Number(nutrition.fat || 0), Number(nutrition.carbs || 0), fiber, sodium, sugar, calcium, iron, rating, reviewCount, sales, body.image || '🍽️', body.imageUrl || null, body.description || '管理员录入菜品。', status, serializeJson(splitList(body.allergens || [])), serializeJson(dietaryLabels), now(), now());
   const savedRecord = await db.prepare('SELECT tenant_id FROM dishes WHERE id = ?').get(normalizedId);
   if (!savedRecord || savedRecord.tenant_id !== tenantId) {
     throw Object.assign(new Error('该菜品 ID 已被其他租户使用，请更换 ID'), { status: 409, code: 'DISH_ID_TENANT_CONFLICT' });
@@ -1392,6 +1402,7 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
     );
   await db.prepare(`UPDATE dishes SET pricing_mode = ?, price_display = ?, pricing_json = ?, aliases_json = ?,
       semantic_labels_json = ?, source_ref_json = ?, catalog_item_type = ?, catalog_category = ?,
+      dish_type = ?, dish_category = ?, meal_period = ?,
       reservation_enabled = CASE WHEN ? IN ('addon', 'fee') THEN FALSE ELSE reservation_enabled END,
       review_status = ?, retrieval_eligible = ?
       WHERE tenant_id = ? AND id = ?`)
@@ -1404,6 +1415,9 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
       serializeJson(Object.prototype.hasOwnProperty.call(body, 'sourceRef') ? body.sourceRef : parseJsonField(conflictingRecord?.source_ref_json, {})),
       catalogItemType,
       catalogCategory,
+      dishType,
+      dishCategory,
+      mealPeriod,
       catalogItemType,
       reviewStatus,
       retrievalEligible,

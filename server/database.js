@@ -222,6 +222,7 @@ function migrate(db) {
       avg_price REAL NOT NULL DEFAULT 0,
       open INTEGER NOT NULL DEFAULT 1,
       reservation_enabled INTEGER NOT NULL DEFAULT 0,
+      cuisine_type TEXT NOT NULL DEFAULT '',
       description TEXT NOT NULL,
       review_status TEXT NOT NULL DEFAULT 'approved' CHECK(review_status IN ('approved','pending','excluded')),
       retrieval_eligible INTEGER NOT NULL DEFAULT 1 CHECK(retrieval_eligible IN (0,1)),
@@ -245,6 +246,9 @@ function migrate(db) {
       parent_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL,
       halal INTEGER NOT NULL DEFAULT 0,
       meal_types_json TEXT NOT NULL DEFAULT '["lunch","dinner"]',
+      dish_type TEXT NOT NULL DEFAULT '餐食' CHECK(dish_type IN ('餐食','小吃','饮品','加购')),
+      dish_category TEXT NOT NULL DEFAULT '其他',
+      meal_period TEXT NOT NULL DEFAULT '午餐' CHECK(meal_period IN ('早餐','午餐','晚餐','全天','未知')),
       calories REAL NOT NULL DEFAULT 0,
       protein REAL NOT NULL DEFAULT 0,
       fat REAL NOT NULL DEFAULT 0,
@@ -994,11 +998,15 @@ function migrate(db) {
   try { db.exec("ALTER TABLE dishes ADD COLUMN source_ref_json TEXT NOT NULL DEFAULT '{}'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN catalog_item_type TEXT NOT NULL DEFAULT 'meal'"); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN catalog_category TEXT NOT NULL DEFAULT '其他餐食'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN dish_type TEXT NOT NULL DEFAULT '餐食'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN dish_category TEXT NOT NULL DEFAULT '其他'"); } catch {}
+  try { db.exec("ALTER TABLE dishes ADD COLUMN meal_period TEXT NOT NULL DEFAULT '午餐'"); } catch {}
   try { db.exec('ALTER TABLE dishes ADD COLUMN parent_dish_id TEXT REFERENCES dishes(id) ON DELETE SET NULL'); } catch {}
   try { db.exec("ALTER TABLE dishes ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
   try { db.exec('ALTER TABLE dishes ADD COLUMN retrieval_eligible INTEGER NOT NULL DEFAULT 1'); } catch {}
   try { db.exec("ALTER TABLE stalls ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
   try { db.exec('ALTER TABLE stalls ADD COLUMN retrieval_eligible INTEGER NOT NULL DEFAULT 1'); } catch {}
+  try { db.exec("ALTER TABLE stalls ADD COLUMN cuisine_type TEXT NOT NULL DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE canteens ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
   try { db.exec('ALTER TABLE canteens ADD COLUMN retrieval_eligible INTEGER NOT NULL DEFAULT 1'); } catch {}
   db.exec("UPDATE dishes SET review_status = 'excluded', retrieval_eligible = 0 WHERE catalog_item_type IN ('addon', 'fee', 'variant', 'section')");
@@ -1201,11 +1209,11 @@ function seed(db) {
   }
 
   if (db.prepare("SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = 'default'").get().count === 0) {
-    const insert = db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, dietary_labels_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insert = db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, dish_type, dish_category, meal_period, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, dietary_labels_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const item of seedDishes) {
       const en = item.expandedNutrition || {};
-      insert.run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, json(item.dietaryLabels || []), now, now);
+      insert.run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.dishType || '餐食', item.dishCategory || '其他', item.mealPeriod || '午餐', item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, json(item.dietaryLabels || []), now, now);
     }
   } else {
     // Backfill new dishes and expanded nutrition for existing databases
@@ -1213,9 +1221,9 @@ function seed(db) {
       const exists = db.prepare('SELECT id FROM dishes WHERE id = ?').get(item.id);
       if (!exists) {
         const en = item.expandedNutrition || {};
-        db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, dietary_labels_json, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, json(item.dietaryLabels || []), now, now);
+        db.prepare(`INSERT INTO dishes (id, tenant_id, stall_id, name, price, taste, cuisine, ingredients_json, tags_json, halal, meal_types_json, dish_type, dish_category, meal_period, calories, protein, fat, carbs, fiber, sodium, sugar, calcium, iron, rating, review_count, sales, image, image_url, description, dietary_labels_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(item.id, 'default', item.stallId, item.name, item.price, item.taste, item.cuisine, json(item.ingredients), json(item.tags), item.halal ? 1 : 0, json(item.mealTypes), item.dishType || '餐食', item.dishCategory || '其他', item.mealPeriod || '午餐', item.nutrition.calories, item.nutrition.protein, item.nutrition.fat, item.nutrition.carbs, en.fiber || 0, en.sodium || 0, en.sugar || 0, en.calcium || 0, en.iron || 0, item.rating, item.reviewCount, item.sales, item.image, item.imageUrl || null, item.description, json(item.dietaryLabels || []), now, now);
       }
     }
   }
@@ -1334,7 +1342,8 @@ export function rowToStall(row) {
     reservationEnabled: Boolean(row.reservation_enabled),
     description: row.description,
     reviewStatus: row.review_status || 'approved',
-    retrievalEligible: Boolean(row.retrieval_eligible ?? 1)
+    retrievalEligible: Boolean(row.retrieval_eligible ?? 1),
+    cuisineType: row.cuisine_type || ''
   };
 }
 
@@ -1392,6 +1401,9 @@ export function rowToDish(row) {
     catalogItemType: row.catalog_item_type || 'meal',
     parentDishId: row.parent_dish_id || null,
     catalogCategory: row.catalog_category || inferDishCatalogCategory({ name, cuisine: row.cuisine, tags, semanticLabels, catalogItemType: row.catalog_item_type || 'meal' }),
+    dishType: row.dish_type || '餐食',
+    dishCategory: row.dish_category || '其他',
+    mealPeriod: row.meal_period || '午餐',
     reviewStatus: row.review_status || 'approved',
     retrievalEligible: Boolean(row.retrieval_eligible ?? 1),
     sourceRef: parseJson(row.source_ref_json, {}),
