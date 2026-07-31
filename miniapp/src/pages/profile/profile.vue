@@ -18,23 +18,17 @@
       <view class="profile-menus">
         <view class="menu-section">
           <text class="section-label">个人服务</text>
-          <view class="list-group service-card">
+          <view class="list-group">
             <sc-list-row icon-name="safe" title="健康档案" :description="profileSummary" :badge="profileIncomplete?'待完善':''" badge-tone="warning" @tap="open('/pages/health-profile/health-profile')" />
-          </view>
-          <view class="list-group service-card">
             <sc-list-row icon-name="store" title="到店预约" description="同档口预约、预约码与到店支付" @tap="open('/pages/orders/orders')" />
           </view>
         </view>
 
         <view class="menu-section">
           <text class="section-label">设置与协议</text>
-          <view class="list-group settings-group setting-card">
+          <view class="list-group settings-group">
             <view class="menu-row static-row"><sc-icon name="eye-invisible" :size="18" tone="muted" /><view class="row-copy"><text class="ui-strong">减少动画</text><text>保留淡入，关闭爆发与列表位移</text></view><wd-switch :model-value="store.motionReduced.value" size="22px" @update:model-value="toggleMotion" /></view>
-          </view>
-          <view class="list-group setting-card">
             <sc-list-row icon-name="safe" title="隐私保护指引" @tap="open('/pages/privacy/privacy')" />
-          </view>
-          <view class="list-group setting-card">
             <sc-list-row icon-name="file" title="用户服务协议" @tap="open('/pages/terms/terms')" />
           </view>
         </view>
@@ -91,13 +85,13 @@ function logout() {
 
 <style scoped>
 .profile-layout,.profile-summary,.profile-menus { min-width:0; }
-.account-panel { display:flex; min-height:96px; align-items:center; gap:12px; padding:20px 16px; border:1px solid var(--module-line); border-radius:14px; background:var(--module-soft); }
+.account-panel { display:flex; min-height:96px; align-items:center; gap:12px; padding:20px 16px; border:1px solid var(--module-line); border-radius:var(--radius-large); background:var(--module-soft); }
 .avatar { display:flex; width:52px; height:52px; flex:0 0 52px; align-items:center; justify-content:center; border-radius:50%; color:#fff; background:var(--module-accent); font-size:20px; font-weight:600; }
 .account-copy { flex:1; min-width:0; }
 .account-name,.account-meta { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .account-name { color:var(--ink); font-size:16px; font-weight:600; }
 .account-meta { margin-top:4px; color:var(--muted); font-size:12px; }
-.record-grid { display:grid; grid-template-columns:repeat(3,1fr); margin:12px 0 24px; overflow:hidden; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+.record-grid { display:grid; grid-template-columns:repeat(3,1fr); margin:12px 0 24px; border-radius:var(--radius-large); background:var(--surface); }
 .record-grid button { position:relative; min-height:74px; padding:12px 8px; text-align:center; }
 .record-grid button+button::before { position:absolute; top:14px; bottom:14px; left:0; width:1px; background:var(--line); content:''; }
 .record-grid button:active { transform:translateY(1px); background:var(--surface-soft); }
@@ -105,18 +99,13 @@ function logout() {
 .record-grid .favorite-count,.record-grid .record-count { margin-bottom:4px; color:var(--module-dark); font-size:20px; font-weight:600; font-variant-numeric:tabular-nums; }
 .record-grid .favorite-count,.record-grid .record-count { animation:metric-in 360ms var(--ease-spring) both; }
 .menu-section { margin-bottom:18px; }
-.section-label { display:block; margin:0 4px 8px; color:var(--module-dark); font-size:12px; font-weight:600; }
-.service-card,.setting-card { margin-bottom:10px; overflow:hidden; border-radius:14px; }
-.service-card :deep(.list-row),.setting-card :deep(.list-row) { min-height:56px; }
-.service-card :deep(.row-icon),.setting-card :deep(.row-icon) { color:var(--module-accent); }
-.service-card:active,.setting-card:active { background:var(--module-soft); }
 .settings-group { padding-top:0; padding-bottom:0; }
-.menu-row { display:flex; width:100%; min-height:56px; align-items:center; gap:12px; padding:10px 0; }
+.menu-row { display:flex; width:100%; min-height:56px; align-items:center; gap:12px; padding:10px 4px; border-bottom:1px solid var(--line); }
 .row-copy { flex:1; min-width:0; }
 .row-copy .ui-strong,.row-copy text { display:block; }
 .row-copy .ui-strong { color:var(--ink); font-size:14px; font-weight:500; }
 .row-copy text { margin-top:3px; overflow:hidden; color:var(--muted); font-size:12px; white-space:nowrap; text-overflow:ellipsis; }
-.logout-button { display:flex; width:100%; min-height:46px; align-items:center; justify-content:center; gap:7px; border:1px solid var(--danger-line); border-radius:14px; color:var(--danger); background:var(--surface); font-size:14px; font-weight:500; }
+.logout-button { display:flex; width:100%; min-height:44px; align-items:center; justify-content:center; gap:7px; border:1px solid var(--danger-line); border-radius:var(--radius); color:var(--danger); background:var(--surface); font-size:14px; font-weight:500; }
 .logout-button:active { transform:translateY(1px); background:var(--danger-soft); }
 @keyframes metric-in { from { opacity:0; transform:translateY(5px) scale(.94); } to { opacity:1; transform:none; } }
 @media (min-width:768px) { .profile-layout { display:grid; grid-template-columns:320px minmax(0,1fr); gap:28px; align-items:start; }.profile-summary { position:sticky; top:72px; }.record-grid { margin-bottom:0; }.profile-menus { display:grid; grid-template-columns:minmax(0,1fr); gap:20px; }.profile-menus .logout-button { grid-column:1/-1; } }

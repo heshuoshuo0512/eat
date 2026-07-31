@@ -18,7 +18,6 @@ data/imports/real/
 uploads/*
 !uploads/.gitkeep
 .env
-.env.*.local
 .env.rc*
 .env.pg.local
 *.log
@@ -31,8 +30,6 @@ miniapp/unpackage/
 artifacts/miniapp-ui/
 artifacts/collector-ui/
 artifacts/admin-*.png
-artifacts/pilot-invitations-*.json
-artifacts/invitation-management-verification/
 scripts/.tmp-smart-canteen-*
 __pycache__/
 *.py[cod]

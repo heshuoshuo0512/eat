@@ -421,12 +421,6 @@ describe('manifest and production environment', () => {
     assert.ok(url.startsWith('https://'));
     assert.doesNotMatch(url, /localhost|127\.0\.0\.1/);
   });
-
-  it('builds a usable HTTPS API URL even when no production env file is present', () => {
-    const config = readFileSync(join(MINIAPP, 'config.js'), 'utf8');
-    assert.match(config, /import\.meta\.env\.MODE === 'development'[\s\S]*http:\/\/127\.0\.0\.1:8787[\s\S]*https:\/\/stueat\.com/);
-    assert.match(config, /import\.meta\.env\.VITE_API_BASE_URL \|\| DEFAULT_API_BASE_URL/);
-  });
 });
 
 describe('critical templates avoid emoji pictographs', () => {

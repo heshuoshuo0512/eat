@@ -262,39 +262,6 @@ export const apiClient = {
   async orderAnalytics() {
     return request('/api/admin/order-analytics');
   },
-  async listAdminInvitations(params = {}) {
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) if (value !== '' && value != null) query.set(key, value);
-    return request(`/api/admin/invitations?${query}`);
-  },
-  async getAdminInvitationSummary(date = '') {
-    const query = date ? `?date=${encodeURIComponent(date)}` : '';
-    return request(`/api/admin/invitations/summary${query}`);
-  },
-  async saveAdminInvitationSettings(payload = {}) {
-    return request('/api/admin/invitations/settings', { method: 'PUT', body: JSON.stringify(payload) });
-  },
-  async issueAdminInvitationBatch(date, count = 1) {
-    return request(`/api/admin/invitations/batches/${encodeURIComponent(date)}/issue`, { method: 'POST', body: JSON.stringify({ count }) });
-  },
-  async closeAdminInvitationBatch(batchId) {
-    return request(`/api/admin/invitations/batches/${encodeURIComponent(batchId)}/close`, { method: 'POST', body: '{}' });
-  },
-  async claimAdminInvitation(batchId) {
-    return request(`/api/admin/invitations/${encodeURIComponent(batchId)}/claim`, { method: 'POST', body: '{}' });
-  },
-  async generateAdminInvitations(payload = {}) {
-    return request('/api/admin/invitations/generate', { method: 'POST', body: JSON.stringify(payload) });
-  },
-  async revokeAdminInvitation(id) {
-    return request(`/api/admin/invitations/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: '{}' });
-  },
-  async updateAdminInvitation(id, payload = {}) {
-    return request(`/api/admin/invitations/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
-  },
-  async deleteAdminInvitation(id) {
-    return request(`/api/admin/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  },
   async updateOrderStatus(id, status) {
     return request(`/api/admin/orders/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
   },

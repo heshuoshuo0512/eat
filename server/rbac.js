@@ -2,7 +2,7 @@ const studentPermissions = ['review:create', 'profile:write', 'upload:create', '
 const operatorPermissions = [...studentPermissions, 'dish:write', 'dish:bulk_import', 'stall:write'];
 const stallAdminPermissions = [...operatorPermissions, 'dish:delete', 'stall:delete'];
 const canteenAdminPermissions = [...stallAdminPermissions, 'canteen:write', 'audit:read', 'user:read', 'review:moderate', 'post:moderate', 'environment:write', 'catalog:introduction:review'];
-const tenantAdminPermissions = [...canteenAdminPermissions, 'canteen:delete', 'user:write', 'ai:configure', 'catalog:introduction:approve_all', 'invitation:manage'];
+const tenantAdminPermissions = [...canteenAdminPermissions, 'canteen:delete', 'user:write', 'ai:configure', 'catalog:introduction:approve_all'];
 const superAdminPermissions = [...tenantAdminPermissions, 'tenant:manage'];
 
 export const rolePermissions = {

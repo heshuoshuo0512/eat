@@ -398,7 +398,6 @@ export function useCanteenStore() {
     analyzeMealImage: apiClient.analyzeMealImage,
     confirmMealVision: apiClient.confirmMealVision
     ,sendVerificationCode: apiClient.sendVerificationCode
-    ,authCapabilities: apiClient.authCapabilities
     ,resetPassword: apiClient.resetPassword
   };
 }

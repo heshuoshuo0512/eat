@@ -20,7 +20,6 @@ const ReviewsView = () => import('../views/ReviewsView.vue');
 const CommunityView = () => import('../views/CommunityView.vue');
 const ProfileView = () => import('../views/ProfileView.vue');
 const AdminCatalogView = () => import('../views/AdminCatalogView.vue');
-const InvitationManagementView = () => import('../views/InvitationManagementView.vue');
 
 export const router = createRouter({
   history: createWebHashHistory(),
@@ -61,7 +60,6 @@ export const router = createRouter({
         : { path: '/admin', query: { ...to.query, panel: 'reviews', tab: 'reviews' } }
     },
     { path: '/admin/catalog', name: 'admin-catalog', component: AdminCatalogView, meta: { audience: 'admin' } },
-    { path: '/admin/invitations', name: 'admin-invitations', component: InvitationManagementView, meta: { audience: 'admin', invitationManagement: true } },
     { path: '/admin/input', name: 'admin-input', component: AdminView, meta: { audience: 'admin' } },
     { path: '/admin/ai', name: 'admin-ai', component: AdminView, meta: { audience: 'admin' } },
     { path: '/agent', name: 'agent', component: AgentView, meta: { audience: 'admin' } }
@@ -77,7 +75,6 @@ const dataManageRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'au
 const dataInputRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'tenant_admin', 'admin', 'super_admin']);
 const agentRoles = new Set(['operator', 'stall_admin', 'canteen_admin', 'tenant_admin', 'admin', 'super_admin']);
 const aiConfigRoles = new Set(['tenant_admin', 'admin', 'super_admin']);
-const invitationManagementRoles = new Set(['tenant_admin', 'admin', 'super_admin']);
 
 function adminLandingPath(role) {
   if (role === 'operator' || role === 'stall_admin') return '/admin/input';
@@ -90,7 +87,6 @@ function canAccessAdminRoute(to, role) {
   if (to.path === '/admin/input') return dataInputRoles.has(role);
   if (to.path === '/agent') return agentRoles.has(role);
   if (to.path === '/admin/ai') return aiConfigRoles.has(role);
-  if (to.path === '/admin/invitations') return invitationManagementRoles.has(role);
   if (to.path === '/admin' && to.query.panel === 'data') return dataManageRoles.has(role);
   if (to.path === '/admin/catalog') return dataManageRoles.has(role);
   if (to.path === '/admin') return moderationRoles.has(role);

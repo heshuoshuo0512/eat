@@ -711,70 +711,6 @@ function migrate(db) {
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS pilot_invitations (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      code_hash TEXT NOT NULL,
-      code_hint TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'consumed', 'revoked')),
-      used_phone_hash TEXT,
-      used_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-      expires_at TEXT,
-      used_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(tenant_id, code_hash)
-    );
-
-    CREATE TABLE IF NOT EXISTS pilot_invitation_settings (
-      tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-      daily_quota INTEGER NOT NULL DEFAULT 0 CHECK(daily_quota BETWEEN 0 AND 5000),
-      auto_issue INTEGER NOT NULL DEFAULT 1 CHECK(auto_issue IN (0, 1)),
-      expires_after_days INTEGER NOT NULL DEFAULT 3 CHECK(expires_after_days BETWEEN 1 AND 365),
-      claim_ttl_hours INTEGER NOT NULL DEFAULT 24 CHECK(claim_ttl_hours BETWEEN 1 AND 168),
-      issue_time TEXT NOT NULL DEFAULT '09:00',
-      time_zone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
-      updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS pilot_invitation_batches (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      business_date TEXT NOT NULL,
-      daily_quota INTEGER NOT NULL CHECK(daily_quota BETWEEN 0 AND 5000),
-      issued_count INTEGER NOT NULL DEFAULT 0 CHECK(issued_count >= 0),
-      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'closed')),
-      expires_at TEXT,
-      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-      auto_issued INTEGER NOT NULL DEFAULT 0 CHECK(auto_issued IN (0, 1)),
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(tenant_id, business_date)
-    );
-
-    CREATE TABLE IF NOT EXISTS pilot_invitation_batch_items (
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      batch_id TEXT NOT NULL REFERENCES pilot_invitation_batches(id) ON DELETE CASCADE,
-      invitation_id TEXT NOT NULL REFERENCES pilot_invitations(id) ON DELETE CASCADE,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY(batch_id, invitation_id),
-      UNIQUE(invitation_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS pilot_invitation_claims (
-      invitation_id TEXT PRIMARY KEY REFERENCES pilot_invitations(id) ON DELETE CASCADE,
-      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      claimed_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      claimed_at TEXT NOT NULL,
-      claim_expires_at TEXT NOT NULL,
-      revealed_at TEXT NOT NULL,
-      reclaimed_at TEXT,
-      updated_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS menus (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -987,8 +923,6 @@ function migrate(db) {
   try { db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN agreement_version TEXT NOT NULL DEFAULT ''"); } catch {}
   try { db.exec('ALTER TABLE users ADD COLUMN agreement_accepted_at TEXT'); } catch {}
-  try { db.exec("ALTER TABLE pilot_invitation_settings ADD COLUMN issue_time TEXT NOT NULL DEFAULT '09:00'"); } catch {}
-  try { db.exec('UPDATE pilot_invitation_settings SET expires_after_days = 3 WHERE expires_after_days = 30'); } catch {}
   try { db.exec("ALTER TABLE uploads ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'"); } catch {}
   try { db.exec("ALTER TABLE uploads ADD COLUMN storage_provider TEXT NOT NULL DEFAULT 'local'"); } catch {}
   try { db.exec("ALTER TABLE uploads ADD COLUMN object_version TEXT NOT NULL DEFAULT 'v1'"); } catch {}
@@ -1113,8 +1047,6 @@ function migrate(db) {
   // Order payment tracking
   try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'unpaid'"); } catch {}
   try { db.exec("ALTER TABLE orders ADD COLUMN paid_at TEXT"); } catch {}
-  try { db.exec('ALTER TABLE pilot_invitation_claims ADD COLUMN reclaimed_at TEXT'); } catch {}
-  try { db.exec('CREATE INDEX IF NOT EXISTS idx_pilot_invitation_claims_reclaim ON pilot_invitation_claims(tenant_id, claim_expires_at, reclaimed_at)'); } catch {}
 
   // ── Migration 003: contextual recommendation schema ──────────────
   // Canteen hierarchy
@@ -1180,11 +1112,6 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_created ON audit_logs(tenant_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_app_settings_tenant_key ON app_settings(tenant_id, key);
     CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status);
-    CREATE INDEX IF NOT EXISTS idx_pilot_invitations_tenant_status ON pilot_invitations(tenant_id, status, expires_at);
-    CREATE INDEX IF NOT EXISTS idx_pilot_invitation_settings_updated ON pilot_invitation_settings(tenant_id, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_pilot_invitation_batches_tenant_date ON pilot_invitation_batches(tenant_id, business_date, status);
-    CREATE INDEX IF NOT EXISTS idx_pilot_invitation_batch_items_invitation ON pilot_invitation_batch_items(tenant_id, invitation_id);
-    CREATE INDEX IF NOT EXISTS idx_pilot_invitation_claims_tenant_status ON pilot_invitation_claims(tenant_id, claimed_at, claim_expires_at);
     CREATE INDEX IF NOT EXISTS idx_menus_tenant_date ON menus(tenant_id, date, meal_type);
     CREATE INDEX IF NOT EXISTS idx_menu_items_tenant_menu ON menu_items(tenant_id, menu_id);
     CREATE INDEX IF NOT EXISTS idx_ai_usage_tenant_created ON ai_usage_logs(tenant_id, created_at);

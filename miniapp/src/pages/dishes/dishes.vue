@@ -1,5 +1,5 @@
 <template>
-  <sc-page-shell class="dishes-page" title="找菜" subtitle="按校园稳定目录筛选" tone="discover" tab-id="dishes">
+  <sc-page-shell title="找菜" subtitle="按校园稳定目录筛选" tone="discover" tab-id="dishes">
     <view class="mode-row">
       <sc-segmented-control v-model="mode" :options="modeOptions" block @update:model-value="changeMode" />
       <button v-if="mode === 'search'" class="camera-button" aria-label="拍照识餐" @tap="openVision"><sc-icon name="camera" :size="18" /></button>
@@ -125,15 +125,15 @@ async function rejectAction(action){try{await store.rejectAgentAction(action.id)
 
 <style scoped>
 .mode-row { position:sticky; top:48px; z-index:12; display:grid; grid-template-columns:minmax(0,1fr) 44px; gap:8px; margin:0 -4px 16px; padding:8px 4px; background:rgba(247,248,250,.96); }
-.camera-button,.profile-button { display:flex; width:44px; height:44px; align-items:center; justify-content:center; border:1px solid var(--module-line); border-radius:12px; color:var(--module-dark); background:var(--module-soft); }
+.camera-button,.profile-button { display:flex; width:44px; height:44px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
 .camera-button:active,.profile-button:active { transform:translateY(1px); background:var(--surface-soft); }
 .discovery-workspace,.control-column,.result-column { min-width:0; }
 .shortcut-track { width:100%; margin-bottom:18px; white-space:nowrap; }
 .explore-shortcuts { display:flex; gap:8px; width:max-content; padding-right:16px; }
-.explore-shortcuts button { display:flex; min-width:104px; min-height:40px; align-items:center; justify-content:center; gap:7px; padding:0 12px; border:1px solid var(--module-line); border-radius:12px; color:var(--module-dark); background:var(--module-soft); }
-.explore-shortcuts button:active { transform:translateY(1px); opacity:.78; }
+.explore-shortcuts button { display:flex; min-width:104px; min-height:40px; align-items:center; justify-content:center; gap:7px; padding:0 12px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.explore-shortcuts button:active { transform:translateY(1px); background:var(--surface-soft); }
 .explore-shortcuts text { color:var(--ink); font-size:12px; font-weight:500; }
-.search-summary,.conversation-panel,.action-panel { margin-bottom:16px; padding:14px; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+.search-summary,.conversation-panel,.action-panel { margin-bottom:16px; padding:14px; border:1px solid var(--line); border-radius:var(--radius-large); background:var(--surface); }
 .search-summary { border-color:var(--module-line); background:var(--module-soft); }
 .summary-head { display:flex; align-items:center; gap:8px; }
 .summary-head .ui-strong { flex:1; color:var(--ink); font-size:14px; font-weight:600; }
@@ -154,11 +154,11 @@ async function rejectAction(action){try{await store.rejectAgentAction(action.id)
 .result-eyebrow,.result-title { display:block; }
 .result-eyebrow { color:var(--muted); font-size:12px; font-weight:600; }
 .result-title { margin-top:3px; color:var(--ink); font-size:16px; font-weight:600; }
-.dish-list,.recommend-list { display:flex; flex-direction:column; gap:0; margin-bottom:16px; overflow:hidden; padding:0 12px; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+.dish-list,.recommend-list { display:flex; flex-direction:column; gap:0; margin-bottom:16px; padding:0 12px; border-radius:var(--radius-large); background:var(--surface); }
 .dish-list :deep(.dish-card),.recommend-list :deep(.dish-card) { animation:dish-enter var(--motion-base) var(--ease-standard) both; }
 .dish-list :deep(.dish-card:nth-child(2)),.recommend-list :deep(.dish-card:nth-child(2)) { animation-delay:35ms; }.dish-list :deep(.dish-card:nth-child(3)),.recommend-list :deep(.dish-card:nth-child(3)) { animation-delay:70ms; }.dish-list :deep(.dish-card:nth-child(4)),.recommend-list :deep(.dish-card:nth-child(4)) { animation-delay:105ms; }.dish-list :deep(.dish-card:nth-child(5)),.recommend-list :deep(.dish-card:nth-child(5)) { animation-delay:140ms; }.dish-list :deep(.dish-card:nth-child(6)),.recommend-list :deep(.dish-card:nth-child(6)) { animation-delay:175ms; }.dish-list :deep(.dish-card:nth-child(7)),.recommend-list :deep(.dish-card:nth-child(7)) { animation-delay:210ms; }.dish-list :deep(.dish-card:nth-child(8)),.recommend-list :deep(.dish-card:nth-child(8)) { animation-delay:245ms; }
 .recommend-list { gap:10px; padding:14px 12px; }
-.result-toggle { display:flex; width:100%; min-height:42px; align-items:center; justify-content:center; margin:8px 0; border-radius:10px; color:var(--module-dark); background:var(--module-soft); font-size:12px; font-weight:600; }
+.result-toggle { display:flex; width:100%; min-height:40px; align-items:center; justify-content:center; border-radius:var(--radius); color:var(--ink); background:var(--surface-soft); font-size:12px; font-weight:600; }
 .result-toggle:active { transform:translateY(1px); opacity:.8; }
 .conversation-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 .conversation-head view>text,.conversation-head .ui-strong { display:block; }
@@ -167,7 +167,7 @@ async function rejectAction(action){try{await store.rejectAgentAction(action.id)
 .live { display:flex; align-items:center; gap:5px; color:var(--ink-2); font-size:12px; }
 .live .ui-dot { width:5px; height:5px; border-radius:50%; background:var(--success); }
 .conversation { display:flex; min-height:112px; max-height:320px; flex-direction:column; gap:8px; margin-top:14px; overflow-y:auto; }
-.message { align-self:flex-start; max-width:88%; padding:10px 12px; border-radius:10px; background:var(--surface-soft); }
+.message { align-self:flex-start; max-width:88%; padding:10px 12px; border-radius:var(--radius); background:var(--surface-soft); }
 .message.user { align-self:flex-end; color:#fff; background:var(--module-accent); }
 .message.assistant { background:var(--module-soft); }
 .message>text { font-size:12px; font-weight:500; opacity:.7; }
