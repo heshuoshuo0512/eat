@@ -216,12 +216,14 @@ function classifyDish(dish) {
   const name = dish.name || '';
   const cuisine = dish.cuisine || '';
   const tags = (dish.tags || []).join(' ');
-  const text = `${name} ${cuisine} ${tags}`;
+  const ingredients = (dish.ingredients || []).join(' ');
+  const category = dish.catalogCategory || '';
+  const text = `${name} ${cuisine} ${tags} ${ingredients} ${category}`;
   if (/面|拉面|拌面|刀削/.test(text)) return '面';
   if (/粉|米粉|河粉|螺蛳/.test(text)) return '粉';
   if (/汉堡|burger/i.test(text)) return '汉堡';
   if (/饮|奶|茶|果汁|咖啡|豆浆/.test(text)) return '饮品';
-  if (/饭|盖饭|炒饭|拌饭|粥|碗|套餐|饭/.test(text)) return '饭';
+  if (/饭|盖饭|炒饭|拌饭|粥|碗|套餐/.test(text)) return '饭';
   return '其他';
 }
 

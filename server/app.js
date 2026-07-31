@@ -1190,6 +1190,8 @@ async function dishDetail(db, id, tenantId = 'default') {
   const requestedRow = await db.prepare('SELECT * FROM dishes WHERE tenant_id = ? AND id = ?').get(tenantId, id);
   if (!requestedRow) return null;
   let row = requestedRow.status === 'active' && requestedRow.review_status === 'approved'
+const row = requestedRow.status === 'active' && requestedRow.review_status === 'approved'
+
     ? requestedRow
     : requestedRow.parent_dish_id
       ? await db.prepare("SELECT * FROM dishes WHERE tenant_id = ? AND id = ? AND status = 'active' AND review_status = 'approved'").get(tenantId, requestedRow.parent_dish_id)
@@ -1316,6 +1318,12 @@ async function upsertDish(db, body, id = body.id || `dish-${randomUUID()}`, tena
   const retrievalEligible = structuralItem
     ? 0
     : (body.retrievalEligible == null ? Number(conflictingRecord?.retrieval_eligible ?? 1) : (body.retrievalEligible ? 1 : 0));
+const reviewStatus = String(body.reviewStatus || conflictingRecord?.review_status || 'approved').trim();
+throw Object.assign(new Error('审核状态仅支持 approved、pending 或 excluded'), { status: 400, code: 'INVALID_REVIEW_STATUS' });
+const retrievalEligible = body.retrievalEligible != null
+? (body.retrievalEligible ? 1 : 0)
+: (conflictingRecord?.retrieval_eligible ?? 1);
+
   const dietaryLabels = splitList(body.dietaryLabels || []);
   if (dietaryLabels.some((label) => !['pescatarian', 'vegetarian', 'vegan'].includes(label))) {
     throw Object.assign(new Error('饮食模式标签仅支持 pescatarian、vegetarian、vegan'), { status: 400, code: 'INVALID_DIETARY_LABEL' });
@@ -1952,6 +1960,8 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
     "s.review_status = 'approved'", "s.retrieval_eligible = 1",
     "c.review_status = 'approved'", "c.retrieval_eligible = 1", "c.operating_status = 'open'",
     "(parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))",
+const clauses = ["d.tenant_id = ?", "d.status = 'active'", "d.review_status = 'approved'", "c.operating_status = 'open'", "(parent.id IS NULL OR parent.operating_status = 'open')",
+
     "TRIM(d.name) NOT LIKE '_人份'", "TRIM(d.name) NOT LIKE '_-_人份'", "TRIM(d.name) NOT LIKE '_~_人份'", "TRIM(d.name) NOT LIKE '_至_人份'",
     "TRIM(d.name) NOT LIKE '_._-_人份'", "TRIM(d.name) NOT LIKE '_、_-_人份'"];
   const values = [tenantId];
@@ -1967,6 +1977,12 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
     clauses.push(`d.catalog_category IN (${catalogCategories.map(() => '?').join(', ')})`);
     values.push(...catalogCategories);
   }
+  const catalogCategory = String(body.catalogCategory || filters.catalogCategory || '').trim();
+  if (catalogCategory) {
+    clauses.push('d.catalog_category = ?');
+    values.push(catalogCategory);
+  }
+  const likePattern = keyword ? `%${keyword}%` : null;
   if (keyword) {
     clauses.push(`LOWER(
       d.name || ' ' || d.aliases_json || ' ' || d.catalog_category || ' ' || d.cuisine || ' ' || d.taste || ' ' ||
@@ -1974,6 +1990,9 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
       s.name || ' ' || c.name || ' ' || COALESCE(parent.name, '')
     ) LIKE ?`);
     values.push(`%${keyword}%`);
+clauses.push("(LOWER(d.name || ' ' || d.ingredients_json || ' ' || d.cuisine || ' ' || d.taste || ' ' || d.description) LIKE ?)");
+values.push(likePattern);
+
   }
   const stallIds = [...new Set([
     ...[].concat(body.stallIds || filters.stallIds || []),
@@ -2020,6 +2039,16 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind, ${relevanceSql} AS relevance_score ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
     .all(...relevanceValues, ...values, pageSize, offset);
+const selectCols = keyword
+? `d.*, (CASE WHEN LOWER(d.name) LIKE ? THEN 4 ELSE 0 END + CASE WHEN LOWER(d.ingredients_json) LIKE ? THEN 3 ELSE 0 END + CASE WHEN LOWER(d.cuisine || ' ' || d.taste || ' ' || d.description) LIKE ? THEN 1 ELSE 0 END) AS relevance`
+: 'd.*';
+const defaultOrder = keyword ? 'relevance DESC, d.rating DESC, d.name' : 'd.name';
+const orderBy = sort === 'price_asc' ? 'd.price ASC, d.name' : sort === 'rating_desc' ? 'd.rating DESC, d.review_count DESC, d.name' : defaultOrder;
+const selectValues = keyword ? [likePattern, likePattern, likePattern, ...values] : values;
+const rows = await db.prepare(`SELECT ${selectCols}, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
+c.name AS canteen_name, c.venue_kind ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
+.all(...selectValues, pageSize, offset);
+
   const items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map(catalogDishPresentation));
   const suggestedRelaxations = total || !keyword ? [] : [...publicItemTypes]
     .filter((itemType) => itemType !== effectiveItemType)
@@ -2090,6 +2119,8 @@ async function listCatalogRankings(db, tenantId, params) {
         AND s.review_status = 'approved' AND c.review_status = 'approved'
         AND (c.parent_id IS NULL OR parent.review_status = 'approved')
         AND d.catalog_item_type = 'meal'`).get(tenantId))?.count || 0);
+total = Number((await db.prepare("SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = ? AND status = 'active' AND review_status = 'approved' AND catalog_item_type = 'meal'").get(tenantId))?.count || 0);
+
     const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind
       FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
@@ -2099,6 +2130,8 @@ async function listCatalogRankings(db, tenantId, params) {
         AND s.review_status = 'approved' AND c.review_status = 'approved'
         AND (c.parent_id IS NULL OR parent.review_status = 'approved')
         AND d.catalog_item_type = 'meal'
+WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.catalog_item_type = 'meal'
+
       ORDER BY d.rating DESC, d.review_count DESC, d.sales DESC, d.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
     items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map((row) => ({ ...catalogDishPresentation(row), rankScore: Number(row.rating || 0) })));
   } else if (type === 'stalls') {
@@ -2147,6 +2180,8 @@ async function listSavedCatalogDishes(db, user, params) {
     WHERE p.tenant_id = ? AND p.user_id = ? AND d.status = 'active' AND d.review_status = 'approved'
       AND s.review_status = 'approved' AND c.review_status = 'approved'
       AND (c.parent_id IS NULL OR parent.review_status = 'approved') AND ${predicate}`;
+WHERE p.tenant_id = ? AND p.user_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND ${predicate}`;
+
   const total = Number((await db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...values))?.count || 0);
   const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind, p.favorite, p.eaten_count, p.drawn_count, p.last_eaten_at, p.last_drawn_at
@@ -3581,7 +3616,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         if (![1, 3, 7].includes(days)) throw Object.assign(new Error('规划天数仅支持 1、3 或 7 天'), { status: 400 });
         const profile = await getProfile(db, activeUser.id, tenantId);
         const dishes = await listDishes(db, new URLSearchParams(), tenantId);
-        return send(res, 200, buildHealthPlan(dishes.filter((dish) => dish.status !== 'archived' && dish.catalogItemType === 'meal'), profile, days));
+        return send(res, 200, buildHealthPlan(dishes.filter((dish) => dish.status !== 'archived' && dish.catalogItemType === 'meal' && dish.reviewStatus === 'approved'), profile, days));
       }
 
       if (method === 'POST' && url.pathname === '/api/orders') {

@@ -328,8 +328,6 @@ export function buildDishIndexDocuments(dishes = [], stalls = [], canteens = [],
       metadata: {
         tenantId: dishTenantId,
         dishId: rowValue(dish, 'id'),
-        catalogItemType: String(rowValue(dish, 'catalogItemType', 'catalog_item_type') || 'meal'),
-        catalogCategory: String(rowValue(dish, 'catalogCategory', 'catalog_category') || ''),
         stallId,
         stallName,
         canteenId,
@@ -897,7 +895,7 @@ function tokenize(value) {
   return [...new Set([...words, ...chars])];
 }
 
-async function postgresLexicalSearch(db, query, tenantId, sourceTypes, limit, candidateIds, itemType, catalogCategories) {
+async function postgresLexicalSearch(db, query, tenantId, sourceTypes, limit) {
   const result = await db.query(
     `SELECT id, tenant_id, source_type, source_id, chunk_index, title, content,
             metadata_json, metadata,
@@ -916,9 +914,6 @@ async function postgresLexicalSearch(db, query, tenantId, sourceTypes, limit, ca
      FROM rag_documents
      WHERE tenant_id = $1
        AND source_type = ANY($3::text[])
-       AND ($4::text[] IS NULL OR source_id = ANY($4::text[]))
-       AND ($5::text IS NULL OR metadata->>'catalogItemType' = $5)
-       AND ($6::text[] IS NULL OR metadata->>'catalogCategory' = ANY($6::text[]))
        AND (
          search_text % $2 OR strpos(lower(search_text), lower($2)) > 0 OR strpos(lower($2), lower(title)) > 0
          OR EXISTS (
@@ -927,13 +922,13 @@ async function postgresLexicalSearch(db, query, tenantId, sourceTypes, limit, ca
          )
        )
      ORDER BY lexical_score DESC, indexed_at DESC NULLS LAST
-     LIMIT $7`,
-    [tenantId, query, sourceTypes, candidateIds, itemType, catalogCategories, limit],
+     LIMIT $4`,
+    [tenantId, query, sourceTypes, limit],
   );
   return result.rows.map(mapSearchRow);
 }
 
-async function postgresVectorSearch(db, embedding, embeddingModel, tenantId, sourceTypes, limit, minimumSimilarity, candidateIds, itemType, catalogCategories) {
+async function postgresVectorSearch(db, embedding, embeddingModel, tenantId, sourceTypes, limit, minimumSimilarity) {
   const result = await db.query(
     `SELECT id, tenant_id, source_type, source_id, chunk_index, title, content,
             metadata_json, metadata,
@@ -941,20 +936,17 @@ async function postgresVectorSearch(db, embedding, embeddingModel, tenantId, sou
      FROM rag_documents
      WHERE tenant_id = $1
        AND source_type = ANY($3::text[])
-       AND ($4::text[] IS NULL OR source_id = ANY($4::text[]))
-       AND ($5::text IS NULL OR metadata->>'catalogItemType' = $5)
-       AND ($6::text[] IS NULL OR metadata->>'catalogCategory' = ANY($6::text[]))
        AND embedding IS NOT NULL
-       AND embedding_model = $8
-       AND 1 - (embedding <=> $2::vector) >= $7
+       AND embedding_model = $6
+       AND 1 - (embedding <=> $2::vector) >= $5
      ORDER BY embedding <=> $2::vector
-     LIMIT $9`,
-    [tenantId, JSON.stringify(embedding), sourceTypes, candidateIds, itemType, catalogCategories, minimumSimilarity, embeddingModel, limit],
+     LIMIT $4`,
+    [tenantId, JSON.stringify(embedding), sourceTypes, limit, minimumSimilarity, embeddingModel],
   );
   return result.rows.map(mapSearchRow);
 }
 
-async function postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingModel, candidateIds, itemType, catalogCategories) {
+async function postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingModel) {
   const result = await db.query(
     `SELECT COUNT(*) AS candidate_count,
             COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS embedded_count,
@@ -965,11 +957,8 @@ async function postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingM
               WHERE embedding IS NOT NULL AND embedding_model IS DISTINCT FROM $3
             ) AS model_mismatch_count
      FROM rag_documents
-     WHERE tenant_id = $1 AND source_type = ANY($2::text[])
-       AND ($4::text[] IS NULL OR source_id = ANY($4::text[]))
-       AND ($5::text IS NULL OR metadata->>'catalogItemType' = $5)
-       AND ($6::text[] IS NULL OR metadata->>'catalogCategory' = ANY($6::text[]))`,
-    [tenantId, sourceTypes, embeddingModel, candidateIds, itemType, catalogCategories],
+     WHERE tenant_id = $1 AND source_type = ANY($2::text[])`,
+    [tenantId, sourceTypes, embeddingModel],
   );
   const row = result.rows[0] || {};
   return {
@@ -982,7 +971,7 @@ async function postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingM
   };
 }
 
-async function sqliteCandidateRows(db, tenantId, sourceTypes, { candidateIds = null, itemType = null, catalogCategories = null } = {}) {
+async function sqliteCandidateRows(db, tenantId, sourceTypes) {
   const normalizedTypes = [...new Set(sourceTypes)].sort();
   const cacheKey = `${tenantId}\n${normalizedTypes.join(',')}`;
   let cache = sqliteRowsCache.get(db);
@@ -991,24 +980,14 @@ async function sqliteCandidateRows(db, tenantId, sourceTypes, { candidateIds = n
     sqliteRowsCache.set(db, cache);
   }
   const cached = cache.get(cacheKey);
-  let rows = cached && Date.now() - cached.createdAt < SQLITE_VECTOR_CACHE_TTL_MS ? cached.rows : null;
-  if (!rows) {
-    const placeholders = normalizedTypes.map(() => '?').join(', ');
-    rows = await db.prepare(
-      `SELECT * FROM rag_documents WHERE tenant_id = ? AND source_type IN (${placeholders})`,
-    ).all(tenantId, ...normalizedTypes);
-    if (cache.size >= SQLITE_ROWS_CACHE_MAX) cache.delete(cache.keys().next().value);
-    cache.set(cacheKey, { rows, createdAt: Date.now() });
-  }
-  const allowedIds = candidateIds ? new Set(candidateIds) : null;
-  const allowedCategories = catalogCategories ? new Set(catalogCategories) : null;
-  return rows.filter((row) => {
-    if (allowedIds && !allowedIds.has(String(row.source_id))) return false;
-    const metadata = parseJson(row.metadata, parseJson(row.metadata_json, {}));
-    if (itemType && metadata.catalogItemType !== itemType) return false;
-    if (allowedCategories && !allowedCategories.has(metadata.catalogCategory)) return false;
-    return true;
-  });
+  if (cached && Date.now() - cached.createdAt < SQLITE_VECTOR_CACHE_TTL_MS) return cached.rows;
+  const placeholders = normalizedTypes.map(() => '?').join(', ');
+  const rows = await db.prepare(
+    `SELECT * FROM rag_documents WHERE tenant_id = ? AND source_type IN (${placeholders})`,
+  ).all(tenantId, ...normalizedTypes);
+  if (cache.size >= SQLITE_ROWS_CACHE_MAX) cache.delete(cache.keys().next().value);
+  cache.set(cacheKey, { rows, createdAt: Date.now() });
+  return rows;
 }
 
 function vectorNorm(vector) {
@@ -1237,13 +1216,6 @@ export async function searchRetrievalIndex(db, query, options = {}) {
   const sourceTypes = normalizeSourceTypes(options.sourceTypes);
   const limit = clampInteger(options.limit, 1, 50, 8);
   const candidateLimit = Math.min(100, Math.max(limit * 3, 12));
-  const candidateIds = options.candidateIds == null
-    ? null
-    : [...new Set([].concat(options.candidateIds).map((value) => String(value || '').trim()).filter(Boolean))];
-  const itemType = options.itemType == null ? null : String(options.itemType).trim();
-  const catalogCategories = options.catalogCategories == null
-    ? null
-    : [...new Set([].concat(options.catalogCategories).map((value) => String(value || '').trim()).filter(Boolean))];
   const {
     embeddingProvider,
     embeddingModel,
@@ -1253,39 +1225,6 @@ export async function searchRetrievalIndex(db, query, options = {}) {
   const channels = retrievalChannels(options, vectorMode);
   const wantsLexical = channels.includes('lexical');
   const wantsVector = channels.includes('vector') && vectorMode !== 'off';
-  if (candidateIds && candidateIds.length === 0) {
-    return {
-      items: [],
-      warnings: [],
-      meta: {
-        tenantId,
-        sourceTypes,
-        driver: db.pool ? 'postgres' : 'sqlite',
-        vectorMode,
-        channels,
-        retrievalModes: [],
-        degraded: false,
-        degradationReasons: [],
-        embeddingModel,
-        embeddingDimension,
-        indexVersion: RETRIEVAL_INDEX_VERSION,
-        trace: {
-          lexicalCandidateCount: 0,
-          vectorCandidateCount: 0,
-          fusedCandidateCount: 0,
-          embeddingLatencyMs: 0,
-          searchLatencyMs: 0,
-          totalLatencyMs: Date.now() - startedAt,
-          lexicalTopIds: [],
-          vectorTopIds: [],
-          hybridTopIds: [],
-          lexicalVectorOverlap: 1,
-          lexicalHybridOverlap: 1,
-          fallbackReasons: [],
-        },
-      },
-    };
-  }
   const warnings = [];
   let embedding = null;
   let embeddingLatencyMs = 0;
@@ -1314,15 +1253,15 @@ export async function searchRetrievalIndex(db, query, options = {}) {
   let vectorStats = null;
   if (db.pool) {
     const [lexical, stats, vector] = await Promise.all([
-      wantsLexical ? postgresLexicalSearch(db, normalized, tenantId, sourceTypes, candidateLimit, candidateIds, itemType, catalogCategories) : Promise.resolve([]),
-      embedding ? postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingModel, candidateIds, itemType, catalogCategories) : Promise.resolve(null),
-      embedding ? postgresVectorSearch(db, embedding, embeddingModel, tenantId, sourceTypes, candidateLimit, Number(options.minimumSimilarity ?? 0.1), candidateIds, itemType, catalogCategories) : Promise.resolve([]),
+      wantsLexical ? postgresLexicalSearch(db, normalized, tenantId, sourceTypes, candidateLimit) : Promise.resolve([]),
+      embedding ? postgresVectorDocumentStats(db, tenantId, sourceTypes, embeddingModel) : Promise.resolve(null),
+      embedding ? postgresVectorSearch(db, embedding, embeddingModel, tenantId, sourceTypes, candidateLimit, Number(options.minimumSimilarity ?? 0.1)) : Promise.resolve([]),
     ]);
     lexicalResults = lexical;
     vectorStats = stats;
     vectorResults = vector;
   } else {
-    const rows = await sqliteCandidateRows(db, tenantId, sourceTypes, { candidateIds, itemType, catalogCategories });
+    const rows = await sqliteCandidateRows(db, tenantId, sourceTypes);
     lexicalResults = wantsLexical ? sqliteLexicalSearch(rows, normalized, candidateLimit) : [];
     if (embedding) {
       const inspected = inspectSqliteVectorRows(db, rows, embeddingModel, embeddingDimension);
@@ -1358,7 +1297,6 @@ export async function searchRetrievalIndex(db, query, options = {}) {
     meta: {
       tenantId,
       sourceTypes,
-      partition: { candidateCount: candidateIds?.length ?? null, itemType, catalogCategories: catalogCategories || [] },
       driver: db.pool ? 'postgres' : 'sqlite',
       vectorMode,
       channels,
@@ -1426,9 +1364,6 @@ async function loadDishRows(db, tenantId, dishId = null) {
      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = d.tenant_id
      WHERE d.tenant_id = ? AND d.status = 'active'
        AND d.review_status = 'approved' AND d.retrieval_eligible = 1
-       AND s.review_status = 'approved' AND s.retrieval_eligible = 1
-       AND c.review_status = 'approved' AND c.retrieval_eligible = 1
-       AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1))
        AND d.catalog_item_type IN ('meal', 'beverage', 'snack')${dishFilter}`,
   ).all(...params);
 }
@@ -1444,9 +1379,7 @@ async function loadStallRows(db, tenantId, stallId = null) {
      FROM stalls s
      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = s.tenant_id
-     WHERE s.tenant_id = ? AND s.review_status = 'approved' AND s.retrieval_eligible = 1
-       AND c.review_status = 'approved' AND c.retrieval_eligible = 1
-       AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1))${stallFilter}`,
+     WHERE s.tenant_id = ? AND s.review_status = 'approved' AND s.retrieval_eligible = 1${stallFilter}`,
   ).all(...params);
 }
 
@@ -1457,8 +1390,7 @@ async function loadCanteenRows(db, tenantId, canteenId = null) {
   return db.prepare(`SELECT c.*, parent.name AS parent_canteen_name
     FROM canteens c
     LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-    WHERE c.tenant_id = ? AND c.review_status = 'approved' AND c.retrieval_eligible = 1
-      AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1))${canteenFilter}
+    WHERE c.tenant_id = ? AND c.review_status = 'approved' AND c.retrieval_eligible = 1${canteenFilter}
     ORDER BY c.parent_id, c.display_order, c.name, c.id`).all(...params);
 }
 

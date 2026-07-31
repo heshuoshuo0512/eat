@@ -8,7 +8,6 @@ import { budgetPriceForDish, normalizeDishPricing } from './dishPricing.js';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner'];
 const SEARCH_SORTS = ['relevance', 'price_asc', 'price_desc', 'rating', 'sales'];
-const PUBLIC_CATALOG_ITEM_TYPES = ['meal', 'snack', 'beverage'];
 const TASTE_WORDS = ['清淡', '清爽', '咸鲜', '麻辣', '微辣', '酸辣', '酸甜', '黑椒', '酱香', '甜味'];
 const NUTRITION_DEFAULTS = {
   highProtein: { minProtein: 25 },
@@ -39,9 +38,6 @@ const filtersSchema = z.object({
   budgetMin: optionalNumber(0, 10000),
   budgetMax: optionalNumber(0, 10000),
   mealType: z.enum(MEAL_TYPES).optional(),
-  itemType: z.enum(PUBLIC_CATALOG_ITEM_TYPES).optional(),
-  catalogCategory: z.string().trim().min(1).max(80).optional(),
-  catalogCategories: listSchema.optional(),
   primaryCanteenId: z.string().trim().max(128).optional(),
   canteenId: z.string().trim().max(128).optional(),
   canteenName: z.string().trim().max(128).optional(),
@@ -220,25 +216,11 @@ function mergeFilters(inferred, explicit) {
 
 /** Validate and interpret a dish-search request without touching storage. */
 export function parseDishSearchRequest(input = {}) {
-  const source = typeof input === 'string' ? { query: input } : { ...(input || {}) };
-  const raw = {
-    ...source,
-    filters: {
-      ...(source.filters || {}),
-      ...(source.itemType != null ? { itemType: source.itemType } : {}),
-      ...(source.catalogCategory != null ? { catalogCategory: source.catalogCategory } : {}),
-      ...(source.catalogCategories != null ? { catalogCategories: source.catalogCategories } : {}),
-    },
-  };
+  const raw = typeof input === 'string' ? { query: input } : input;
   const parsed = searchRequestSchema.safeParse(raw || {});
   if (!parsed.success) throw validationError(parsed);
   const query = parsed.data.query || parsed.data.filters?.keyword || '';
   const explicitFilters = { ...(parsed.data.filters || {}) };
-  const partitionInferred = explicitFilters.itemType == null;
-  explicitFilters.itemType ||= 'meal';
-  explicitFilters.catalogCategories = uniqueStrings(explicitFilters.catalogCategory, explicitFilters.catalogCategories);
-  if (!explicitFilters.catalogCategories.length) delete explicitFilters.catalogCategories;
-  delete explicitFilters.catalogCategory;
   if (explicitFilters.budgetMax == null && explicitFilters.maxPrice != null) explicitFilters.budgetMax = explicitFilters.maxPrice;
   delete explicitFilters.keyword;
   delete explicitFilters.maxPrice;
@@ -269,12 +251,7 @@ export function parseDishSearchRequest(input = {}) {
       softSignals: campus.softSignals,
       expandedTerms: campus.expandedTerms,
       ruleVersion: campus.ruleVersion,
-    },
-    partition: {
-      itemType: filters.itemType || 'meal',
-      categories: filters.catalogCategories || [],
-      inferred: partitionInferred,
-    },
+    }
   };
 }
 
@@ -359,7 +336,6 @@ function mapCandidate(raw, tenantId) {
     reservationEnabled: Boolean(raw.reservationEnabled ?? raw.reservation_enabled),
     stallReservationEnabled: Boolean(raw.stallReservationEnabled ?? raw.stall_reservation_enabled),
     catalogItemType: String(raw.catalogItemType || raw.catalog_item_type || 'meal'),
-    catalogCategory: String(raw.catalogCategory || raw.catalog_category || ''),
     parentDishId: raw.parentDishId || raw.parent_dish_id || null,
     name: String(raw.name || raw.dishName || raw.dish_name || ''),
     price: Number(raw.price ?? pricing.minAmount ?? 0),
@@ -458,14 +434,7 @@ async function loadCandidatesFromDatabase(db, tenantId, { date, mealType }) {
       FROM dishes d
       LEFT JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
       LEFT JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
-      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'
-        AND d.retrieval_eligible = 1
-        AND s.review_status = 'approved' AND s.retrieval_eligible = 1
-        AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
-        AND (c.parent_id IS NULL OR (
-          parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'
-        ))`).all(tenantId);
+      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'`).all(tenantId);
   return dishRows.map((row) => mapCandidate(row, tenantId));
 }
 
@@ -521,44 +490,30 @@ function isUnknownTaste(candidate) {
 export function lexicalRankDishes(query, candidates = []) {
   const normalizedQuery = normalizedText(query);
   if (!normalizedQuery) return candidates.map((candidate, rank) => ({ id: candidate.id, rank, score: 0, matchReasons: [] }));
-  const queryTerms = [...new Set(String(query).split(/\s+/u).map(normalizedText).filter((term) => term.length >= 2))];
-  const matchesQueryTerm = (value) => {
-    const normalizedValue = normalizedText(value);
-    return normalizedValue && queryTerms.some((term) => normalizedValue.includes(term) || term.includes(normalizedValue));
-  };
   const queryGrams = chineseBigrams(query);
   return candidates.map((candidate) => {
     const name = normalizedText(candidate.name);
     const searchText = normalizedText(candidateSearchText(candidate));
     const reasons = [];
     let score = 0;
-    const aliases = candidate.aliases.map(normalizedText);
-    const locationFields = [candidate.catalogCategory, candidate.stallName, candidate.canteenName].map(normalizedText).filter(Boolean);
-    if (name === normalizedQuery) { score = 100; reasons.push('菜名完全匹配'); }
-    else if (aliases.includes(normalizedQuery)) { score = 90; reasons.push('菜品别名匹配'); }
-    else if ((normalizedQuery.includes(name) && name.length >= 2) || (name.includes(normalizedQuery) && normalizedQuery.length >= 2) || matchesQueryTerm(name)) {
-      score = 80;
-      reasons.push('菜名匹配');
-    } else if (locationFields.some((value) => value.includes(normalizedQuery) || normalizedQuery.includes(value) || matchesQueryTerm(value))) {
-      score = 50;
-      reasons.push('分类或位置匹配');
-    } else if (candidate.ingredients.some((item) => includesTerm(query, item) || includesTerm(item, query) || matchesQueryTerm(item))
-      || candidate.tags.some((item) => includesTerm(query, item) || includesTerm(item, query) || matchesQueryTerm(item))) {
-      score = 25;
-      const ingredientMatches = candidate.ingredients.filter(matchesQueryTerm);
-      reasons.push(ingredientMatches.length ? `食材匹配：${ingredientMatches.slice(0, 3).join('、')}` : '标签匹配');
-    } else if ([candidate.description, candidate.taste, ...candidate.semanticLabels]
-      .some((value) => includesTerm(query, value) || includesTerm(value, query) || matchesQueryTerm(value))) {
-      score = 10;
-      reasons.push('目录语义匹配');
-    } else if (isSingleEditMatch(name, normalizedQuery) || candidate.aliases.some((alias) => isSingleEditMatch(alias, normalizedQuery))) {
-      score = 70;
+    if (name === normalizedQuery) { score += 220; reasons.push('菜名完全匹配'); }
+    else if (normalizedQuery.includes(name) && name.length >= 2) { score += 130; reasons.push('问题中点名菜品'); }
+    else if (name.includes(normalizedQuery) && normalizedQuery.length >= 2) { score += 105; reasons.push('菜名匹配'); }
+    else if (isSingleEditMatch(name, normalizedQuery) || candidate.aliases.some((alias) => isSingleEditMatch(alias, normalizedQuery))) {
+      score += 95;
       reasons.push('菜名近似匹配');
     }
 
-    if (score > 0 && queryGrams.length) {
+    const ingredientMatches = candidate.ingredients.filter((item) => includesTerm(query, item) || includesTerm(item, query));
+    if (ingredientMatches.length) { score += 45 + ingredientMatches.length * 8; reasons.push(`食材匹配：${ingredientMatches.slice(0, 3).join('、')}`); }
+    const tagMatches = candidate.tags.filter((item) => includesTerm(query, item));
+    if (tagMatches.length) { score += 25 + tagMatches.length * 5; reasons.push(`标签匹配：${tagMatches.slice(0, 3).join('、')}`); }
+    if (includesTerm(query, candidate.taste)) { score += 18; reasons.push(`口味匹配：${candidate.taste}`); }
+    if (includesTerm(query, candidate.canteenName) || includesTerm(query, candidate.stallName)) { score += 30; reasons.push('位置匹配'); }
+
+    if (queryGrams.length) {
       const overlap = queryGrams.filter((gram) => searchText.includes(gram)).length;
-      score += (overlap / queryGrams.length) * 0.99;
+      score += (overlap / queryGrams.length) * 35;
     }
     return { id: candidate.id, score: Number(score.toFixed(4)), matchReasons: reasons };
   }).filter((item) => item.score > 0).sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
@@ -613,8 +568,6 @@ export function applyDishHardConstraints(candidates, filters = {}, { requireOrde
     const menuPrice = candidate.availability?.menuItemId ? Number(candidate.availability.price) : null;
     const price = menuPrice ?? budgetPriceForDish(candidate);
     if (!isActiveDish(candidate)) return reject('status');
-    if (filters.itemType && candidate.catalogItemType !== filters.itemType) return reject('itemType');
-    if (filters.catalogCategories?.length && !filters.catalogCategories.includes(candidate.catalogCategory)) return reject('catalogCategory');
     if (price != null && filters.budgetMin != null && price < filters.budgetMin) return reject('budgetMin');
     if (price != null && filters.budgetMax != null && price > filters.budgetMax) return reject('budgetMax');
     if (filters.mealType && !candidate.mealTypes.includes(filters.mealType)) return reject('mealType');
@@ -668,11 +621,6 @@ function relaxationSuggestions(rejections, filters, { lexicalMiss = false } = {}
   if (rejections.minProtein || rejections.minFiber || rejections.maxCalories || rejections.maxFat || rejections.maxSodium || rejections.maxSugar) add('nutrition', '可适当放宽营养阈值');
   if (rejections.nutritionUnknown) add('nutritionEvidence', '部分菜品缺少已核验营养数据，无法作确定的营养筛选');
   if (lexicalMiss) add('query', '可改用菜名、主要食材、口味或档口名称查询');
-  if (rejections.itemType || lexicalMiss) {
-    for (const itemType of PUBLIC_CATALOG_ITEM_TYPES.filter((value) => value !== filters.itemType)) {
-      add('itemType', `可切换到${itemType === 'snack' ? '小吃' : itemType === 'beverage' ? '饮品' : '餐食'}分区继续查找`);
-    }
-  }
   return suggestions.slice(0, 5);
 }
 
@@ -680,11 +628,11 @@ function semanticId(result) {
   return String(result.dishId || result.sourceId || result.metadata?.dishId || result.id || '');
 }
 
-async function runSemanticSearch(semanticSearch, { query, tenantId, candidateIds, limit, itemType, catalogCategories }) {
+async function runSemanticSearch(semanticSearch, { query, tenantId, candidateIds, limit }) {
   if (!semanticSearch || !query) return { results: [], used: false, degradedReasons: [], trace: null };
   try {
     const allowed = new Set(candidateIds);
-    const raw = await semanticSearch({ query, tenantId, limit, candidateIds, itemType, catalogCategories, sourceType: 'dish' });
+    const raw = await semanticSearch({ query, tenantId, limit, candidateIds, sourceType: 'dish' });
     const results = (Array.isArray(raw) ? raw : raw?.items || raw?.results || [])
       .filter((item) => !item.sourceType || item.sourceType === 'dish')
       .map((item) => ({
@@ -789,9 +737,7 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
     query: retrievalQuery,
     tenantId: request.tenantId,
     candidateIds: constrained.items.map((item) => item.id),
-    limit: Math.max(request.limit * 3, 30),
-    itemType: request.filters.itemType,
-    catalogCategories: request.filters.catalogCategories,
+    limit: Math.max(request.limit * 3, 30)
   });
   const structuredOnly = request.interpreted.detected.length > 0 || !request.query;
   const baseline = structuredOnly
@@ -910,8 +856,7 @@ export async function runDishSearchWorkflow(input = {}, dependencies = {}) {
       hardConstraintRejections: constrained.rejections,
       date: exec.date,
       mealType: exec.mealType,
-      indexVersion: dependencies.indexVersion || null,
-      partition: request.partition,
+      indexVersion: dependencies.indexVersion || null
     }
   };
 }

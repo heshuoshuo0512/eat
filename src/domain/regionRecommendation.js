@@ -70,7 +70,7 @@ export const REGION_DEFINITIONS = [
 const REGION_IDS = new Set(REGION_DEFINITIONS.map((region) => region.id));
 
 function dishText(dish = {}) {
-  return [dish.name, dish.cuisine, dish.taste, ...(dish.tags || []), ...(dish.ingredients || [])]
+  return [dish.name, dish.cuisine, dish.taste, dish.catalogCategory, ...(dish.tags || []), ...(dish.ingredients || [])]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
