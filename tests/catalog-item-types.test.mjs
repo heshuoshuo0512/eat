@@ -22,12 +22,10 @@ async function request(path, { method = 'GET', body } = {}) {
 }
 
 describe('catalog item type boundaries', () => {
-  it('keeps integer stall availability predicates portable to PostgreSQL', () => {
+  it('does not confuse current stall availability with catalog publication', () => {
     const appSource = readFileSync(resolve('server/app.js'), 'utf8');
     const retrievalSource = readFileSync(resolve('server/retrievalService.js'), 'utf8');
-    assert.doesNotMatch(`${appSource}\n${retrievalSource}`, /s\.open\s*=\s*TRUE/i);
-    assert.match(appSource, /s\.open\s*=\s*1/);
-    assert.match(retrievalSource, /s\.open\s*=\s*1/);
+    assert.doesNotMatch(`${appSource}\n${retrievalSource}`, /s\.review_status\s*=\s*'approved'[^\n]*s\.open/);
   });
 
   before(async () => {
@@ -128,6 +126,21 @@ describe('catalog item type boundaries', () => {
     assert.ok(categorySearch.data.items.length > 0);
     assert.ok(categorySearch.data.items.every((dish) => dish.catalogItemType === 'meal' && dish.catalogCategory === '米饭套餐'));
     assert.equal(categorySearch.data.page.total, riceCategory.count);
+  });
+
+  it('keeps an approved catalog searchable while its stall is currently closed', async () => {
+    const stallId = db.prepare('SELECT stall_id FROM dishes WHERE id = ?').get(fixture.meal).stall_id;
+    db.prepare('UPDATE stalls SET open = 0 WHERE id = ?').run(stallId);
+    try {
+      const result = await request('/api/dishes/search', {
+        method: 'POST',
+        body: { query: '目录分型测试鸡蛋主菜', pageSize: 20 },
+      });
+      assert.equal(result.status, 200, JSON.stringify(result.data));
+      assert.ok(result.data.items.some((dish) => dish.id === fixture.meal));
+    } finally {
+      db.prepare('UPDATE stalls SET open = 1 WHERE id = ?').run(stallId);
+    }
   });
 
   it('resolves an inactive serving tier to its canonical parent dish', async () => {
