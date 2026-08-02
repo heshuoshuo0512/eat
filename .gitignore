@@ -29,6 +29,9 @@ miniapp/node_modules/
 miniapp/unpackage/
 artifacts/miniapp-ui/
 artifacts/collector-ui/
+artifacts/backups/
+artifacts/*classification*
+artifacts/*分类标准*
 artifacts/admin-*.png
 scripts/.tmp-smart-canteen-*
 __pycache__/
