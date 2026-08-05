@@ -55,6 +55,7 @@ describe('Production operations contract', () => {
     assert.doesNotMatch(promoter, /auditCounts\[key\] !== EXPECTED\[key\]/);
     assert.match(promoter, /Catalog classification schema is missing/);
     assert.match(promoter, /correctionMarker/);
+    assert.match(promoter, /classificationMigration\.slice\(correctionStart \+ 1\)/);
     assert.match(promoter, /026_catalog_classification\.sql/);
     assert.doesNotMatch(promoter, /readFileSync\(resolve\('server\/migrations\/025_catalog_item_types\.sql'/);
   });
