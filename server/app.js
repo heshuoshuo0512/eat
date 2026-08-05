@@ -35,6 +35,7 @@ import { CAMPUS_KNOWLEDGE_SOURCE_TYPE, GLOBAL_KNOWLEDGE_TENANT_ID } from './camp
 import { CAMPUS_POLICY_SOURCE_TYPE } from './knowledgeGovernance.js';
 import { loadFoodCompositionReferences } from './healthKnowledgeBase.js';
 import { FACT_STATUSES, SAFETY_STATUSES, normalizeSafetyDeclarations } from './diningFacts.js';
+import { generateInvitationCode, invitationCodeHash, isValidInvitationCode, normalizeInvitationCode } from './invitationCodes.js';
 import { businessDate, businessDayUtcRange } from './time.js';
 import { enqueueOutboxEvent, outboxBacklog } from './outbox.js';
 import { createRuntimeMetrics } from './metrics.js';
@@ -529,6 +530,63 @@ function assertAgreementVersion(value) {
 function verificationTestCode() {
   if (process.env.NODE_ENV !== 'test') return '';
   return String(process.env.SMS_TEST_CODE || '246810').trim();
+}
+
+function invitationRegistrationEnabled(env = process.env) {
+  return String(env.PILOT_REGISTRATION_MODE || 'sms').trim().toLowerCase() === 'invitation';
+}
+
+function invitationExpiry(value) {
+  const candidate = value ? new Date(String(value)) : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(candidate.getTime()) || candidate.getTime() <= Date.now()) {
+    throw Object.assign(new Error('邀请码有效期必须是未来时间'), { status: 400, code: 'INVALID_INVITATION_EXPIRY' });
+  }
+  return candidate.toISOString();
+}
+
+async function createInvitationCodes(db, { tenantId, user, count, expiresAt }) {
+  const amount = Number(count);
+  if (!Number.isInteger(amount) || amount < 1 || amount > 200) {
+    throw Object.assign(new Error('每次可发放 1-200 个邀请码'), { status: 400, code: 'INVALID_INVITATION_COUNT' });
+  }
+  return withTransaction(db, async (tx) => {
+    const invitations = [];
+    for (let index = 0; index < amount; index += 1) {
+      let code = '';
+      let hash = '';
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        code = generateInvitationCode();
+        hash = invitationCodeHash(code);
+        const duplicate = await tx.prepare('SELECT id FROM pilot_invitations WHERE tenant_id = ? AND code_hash = ?').get(tenantId, hash);
+        if (!duplicate) break;
+        code = '';
+      }
+      if (!code) throw Object.assign(new Error('邀请码生成失败，请稍后重试'), { status: 503, code: 'INVITATION_GENERATION_FAILED' });
+      const timestamp = now();
+      const id = `invite-${randomUUID()}`;
+      await tx.prepare(`INSERT INTO pilot_invitations
+        (id, tenant_id, code_hash, code_hint, status, created_by, expires_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`)
+        .run(id, tenantId, hash, code.slice(-4), user.id, expiresAt, timestamp, timestamp);
+      invitations.push({ id, code, codeHint: code.slice(-4), status: 'active', expiresAt, createdAt: timestamp });
+    }
+    return invitations;
+  });
+}
+
+async function consumeInvitationCode(db, { tenantId, value, phoneHash, userId }) {
+  const code = normalizeInvitationCode(value);
+  if (!isValidInvitationCode(code)) {
+    throw Object.assign(new Error('邀请码无效、已使用或已过期'), { status: 403, code: 'INVALID_INVITATION_CODE' });
+  }
+  const timestamp = now();
+  const result = await db.prepare(`UPDATE pilot_invitations
+    SET status = 'consumed', used_phone_hash = ?, used_user_id = ?, used_at = ?, updated_at = ?
+    WHERE tenant_id = ? AND code_hash = ? AND status = 'active' AND expires_at > ?`)
+    .run(phoneHash, userId, timestamp, timestamp, tenantId, invitationCodeHash(code), timestamp);
+  if (Number(result?.changes || 0) !== 1) {
+    throw Object.assign(new Error('邀请码无效、已使用或已过期'), { status: 403, code: 'INVALID_INVITATION_CODE' });
+  }
 }
 
 function pilotRuntimeConfig(env = process.env) {
@@ -3323,7 +3381,8 @@ async function saveAiSettings(db, settings, user = null) {
 async function clearAiSettings(db, user = null) {
   await db.prepare('DELETE FROM app_settings WHERE key = ?').run(scopedSettingKey(user, 'ai_provider'));
 }
-export function createApp({ db = openDatabase(), cache = createCache(), metrics = createRuntimeMetrics() } = {}) {
+export function createApp({ db = openDatabase(), cache = createCache(), metrics = createRuntimeMetrics(), invitationRegistrationMode = process.env.PILOT_REGISTRATION_MODE } = {}) {
+  const invitationRegistrationActive = invitationRegistrationEnabled({ PILOT_REGISTRATION_MODE: invitationRegistrationMode });
   async function rankings(tenantId = 'default', date = businessDate(), mealType = 'all') {
     const key = rankingCacheKey({ tenantId, date, mealType });
     const cached = await cache.get(key);
@@ -3427,25 +3486,74 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
           const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
           return send(res, 201, await authenticatedSessionResponse(db, req, created, { isNewUser: true }));
         }
-        requireFields(body, ['phone', 'verificationCode', 'password', 'agreementVersion']);
+        const usingInvitation = Boolean(String(body.invitationCode || '').trim());
+        requireFields(body, usingInvitation
+          ? ['phone', 'invitationCode', 'password', 'agreementVersion']
+          : ['phone', 'verificationCode', 'password', 'agreementVersion']);
         const phone = normalizePhone(body.phone);
         if (!phone) throw Object.assign(new Error('请输入有效的中国大陆手机号'), { status: 400, code: 'INVALID_PHONE' });
         const password = assertStudentPassword(body.password);
         const agreement = assertAgreementVersion(body.agreementVersion);
+        if (usingInvitation && !invitationRegistrationActive) {
+          throw Object.assign(new Error('当前未启用邀请码注册'), { status: 400, code: 'INVITATION_REGISTRATION_DISABLED' });
+        }
         const hash = phoneLookupHash(phone);
         const existing = await db.prepare('SELECT id FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', hash);
         if (existing) throw Object.assign(new Error('该手机号已注册'), { status: 409, code: 'PHONE_ALREADY_REGISTERED' });
-        assertNewRegistrationAllowed(phone);
-        await consumeVerificationCode(db, phone, 'register', body.verificationCode);
         const id = `u-${randomUUID()}`;
         const timestamp = now();
         const username = `student_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
         const nickname = String(body.nickname || `同学${phone.slice(-4)}`).trim().slice(0, 32) || `同学${phone.slice(-4)}`;
-        await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, phone_hash, phone_encrypted, phone_verified_at, token_version, agreement_version, agreement_accepted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, 'default', username, hashPassword(password), nickname, 'student', hash, encryptPhone(phone), timestamp, 0, agreement, timestamp, timestamp, timestamp);
-        await createPendingHealthProfile(db, id, 'default');
+        if (usingInvitation) {
+          await withTransaction(db, async (tx) => {
+            await tx.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, phone_hash, phone_encrypted, phone_verified_at, token_version, agreement_version, agreement_accepted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+              .run(id, 'default', username, hashPassword(password), nickname, 'student', hash, encryptPhone(phone), null, 0, agreement, timestamp, timestamp, timestamp);
+            await consumeInvitationCode(tx, { tenantId: 'default', value: body.invitationCode, phoneHash: hash, userId: id });
+            await createPendingHealthProfile(tx, id, 'default');
+          });
+        } else {
+          assertNewRegistrationAllowed(phone);
+          await consumeVerificationCode(db, phone, 'register', body.verificationCode);
+          await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, phone_hash, phone_encrypted, phone_verified_at, token_version, agreement_version, agreement_accepted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, 'default', username, hashPassword(password), nickname, 'student', hash, encryptPhone(phone), timestamp, 0, agreement, timestamp, timestamp, timestamp);
+          await createPendingHealthProfile(db, id, 'default');
+        }
         const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
         return send(res, 201, await authenticatedSessionResponse(db, req, created, { isNewUser: true }));
+      }
+
+      if (method === 'POST' && url.pathname === '/api/admin/invitations') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const body = await readBody(req);
+        const invitations = await createInvitationCodes(db, {
+          tenantId: tenantIdFor(activeUser),
+          user: activeUser,
+          count: body.count,
+          expiresAt: invitationExpiry(body.expiresAt)
+        });
+        await audit(db, activeUser, 'CREATE', 'pilot_invitation', `${invitations.length}`, { count: invitations.length, expiresAt: invitations[0]?.expiresAt || null });
+        return send(res, 201, { invitations });
+      }
+
+      if (method === 'GET' && url.pathname === '/api/admin/invitations') {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
+        const rows = await db.prepare(`SELECT id, code_hint, status, expires_at, used_at, created_at, updated_at
+          FROM pilot_invitations WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?`).all(tenantIdFor(activeUser), limit);
+        return send(res, 200, { invitations: rows.map((row) => ({
+          id: row.id, codeHint: row.code_hint, status: row.status, expiresAt: row.expires_at,
+          usedAt: row.used_at, createdAt: row.created_at, updatedAt: row.updated_at
+        })) });
+      }
+
+      if (method === 'DELETE' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'invitations' && pathParts[3]) {
+        const activeUser = await requireCapability(db, req, 'invitation:manage');
+        const id = decodeURIComponent(pathParts[3]);
+        const result = await db.prepare(`UPDATE pilot_invitations SET status = 'revoked', updated_at = ?
+          WHERE tenant_id = ? AND id = ? AND status = 'active'`).run(now(), tenantIdFor(activeUser), id);
+        if (Number(result?.changes || 0) !== 1) throw Object.assign(new Error('邀请码不存在或已不能撤销'), { status: 404, code: 'INVITATION_NOT_ACTIVE' });
+        await audit(db, activeUser, 'REVOKE', 'pilot_invitation', id);
+        return send(res, 200, { revoked: true, id });
       }
 
       if (method === 'POST' && url.pathname === '/api/auth/login') {

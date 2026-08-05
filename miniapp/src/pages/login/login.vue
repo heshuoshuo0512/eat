@@ -21,6 +21,7 @@
             <label><text>手机号或账号</text><input v-model="loginForm.identifier" class="input" maxlength="32" placeholder="请输入手机号或账号" /></label>
             <label><text>密码</text><input v-model="loginForm.password" class="input" password maxlength="72" placeholder="请输入密码" /></label>
             <button class="primary-btn" :loading="loadingMode==='account'" :disabled="Boolean(loadingMode)" @tap="loginWithAccount">登录</button>
+            <button class="text-action" @tap="switchMode('invite')">使用邀请码注册</button>
           </view>
 
           <view v-else-if="mode==='register'" class="auth-form">
@@ -31,6 +32,18 @@
             <label><text>密码</text><input v-model="registerForm.password" class="input" password maxlength="72" placeholder="8-72 位，包含字母和数字" /></label>
             <label><text>确认密码</text><input v-model="registerForm.confirmPassword" class="input" password maxlength="72" placeholder="再次输入密码" /></label>
             <button class="primary-btn" :loading="loadingMode==='register'" :disabled="Boolean(loadingMode)" @tap="registerAccount">注册并登录</button>
+          </view>
+
+          <view v-else-if="mode==='invite'" class="auth-form">
+            <text class="form-title">邀请码注册</text>
+            <text class="form-hint">邀请码仅可使用一次，注册后手机号尚未完成短信验证。</text>
+            <label><text>邀请码</text><input v-model="invitationForm.invitationCode" class="input" maxlength="64" placeholder="请输入邀请码" /></label>
+            <label><text>绑定手机号</text><view class="phone-input"><text>+86</text><input v-model="invitationForm.phone" class="input" type="number" maxlength="11" placeholder="请输入手机号码" /></view></label>
+            <label><text>昵称（可选）</text><input v-model="invitationForm.nickname" class="input" maxlength="32" placeholder="如何称呼你" /></label>
+            <label><text>密码</text><input v-model="invitationForm.password" class="input" password maxlength="72" placeholder="8-72 位，包含字母和数字" /></label>
+            <label><text>确认密码</text><input v-model="invitationForm.confirmPassword" class="input" password maxlength="72" placeholder="再次输入密码" /></label>
+            <button class="primary-btn" :loading="loadingMode==='invite'" :disabled="Boolean(loadingMode)" @tap="registerWithInvitation">使用邀请码注册</button>
+            <button class="text-action" @tap="switchMode('login')">返回登录</button>
           </view>
 
           <view v-else class="auth-form">
@@ -56,7 +69,7 @@
 <script setup>
 import { onShow } from '@dcloudio/uni-app';
 import { reactive, ref } from 'vue';
-import { validateLoginForm, validatePhoneAuthForm } from '../../domain/validation.js';
+import { validateInvitationRegistrationForm, validateLoginForm, validatePhoneAuthForm } from '../../domain/validation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
 
 const store = useCanteenStore();
@@ -64,6 +77,7 @@ const modes = [{value:'login',label:'登录'},{value:'register',label:'注册'},
 const mode = ref('login');
 const loginForm = reactive({identifier:'',password:''});
 const registerForm = reactive({phone:'',verificationCode:'',nickname:'',password:'',confirmPassword:''});
+const invitationForm = reactive({phone:'',invitationCode:'',nickname:'',password:'',confirmPassword:''});
 const resetForm = reactive({phone:'',verificationCode:'',password:'',confirmPassword:''});
 const consentAccepted = ref(false); const loadingMode = ref(''); const codeSending = ref(false); const message = ref(''); const isError = ref(false);
 
@@ -75,6 +89,7 @@ function loginWithWechat(event){const phoneCode=event?.detail?.code||'';if(!phon
 function loginWithAccount(){const error=validateLoginForm(loginForm);if(error){isError.value=true;message.value=error;return;}return runAuth('account',()=>store.login({...loginForm}));}
 async function sendCode(purpose){if(!requireConsent())return;const phone=purpose==='register'?registerForm.phone:resetForm.phone;if(!/^1[3-9]\d{9}$/.test(phone)){isError.value=true;message.value='请输入有效的中国大陆手机号。';return;}codeSending.value=true;message.value='';try{await store.sendVerificationCode({phone,purpose});message.value='验证码已发送，请在 5 分钟内使用。';isError.value=false;}catch(error){isError.value=true;message.value=error.message;}finally{codeSending.value=false;}}
 function registerAccount(){const error=validatePhoneAuthForm(registerForm);if(error){isError.value=true;message.value=error;return;}return runAuth('register',()=>store.register({phone:registerForm.phone,verificationCode:registerForm.verificationCode,password:registerForm.password,nickname:registerForm.nickname||undefined,agreementVersion:'2026-07'}));}
+function registerWithInvitation(){const error=validateInvitationRegistrationForm(invitationForm);if(error){isError.value=true;message.value=error;return;}return runAuth('invite',()=>store.register({phone:invitationForm.phone,invitationCode:invitationForm.invitationCode,password:invitationForm.password,nickname:invitationForm.nickname||undefined,agreementVersion:'2026-07'}));}
 async function resetPassword(){if(!requireConsent())return;const error=validatePhoneAuthForm(resetForm);if(error){isError.value=true;message.value=error;return;}loadingMode.value='reset';try{await store.resetPassword({phone:resetForm.phone,verificationCode:resetForm.verificationCode,newPassword:resetForm.password});Object.assign(loginForm,{identifier:resetForm.phone,password:''});switchMode('login');message.value='密码已重设，请使用新密码登录。';}catch(err){isError.value=true;message.value=err.message;}finally{loadingMode.value='';}}
 function openPrivacy(){uni.navigateTo({url:'/pages/privacy/privacy'});} function openTerms(){uni.navigateTo({url:'/pages/terms/terms'});}
 </script>
@@ -102,6 +117,11 @@ function openPrivacy(){uni.navigateTo({url:'/pages/privacy/privacy'});} function
 .code-row { display:grid; grid-template-columns:minmax(0,1fr) 112px; gap:8px; }
 .code-row button { display:flex; min-height:44px; align-items:center; padding:0; }
 .code-row button view { display:flex; width:100%; height:44px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface-soft); font-size:12px; box-sizing:border-box; }
+.phone-input { display:flex; min-height:44px; align-items:center; overflow:hidden; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface-soft); }
+.phone-input>text { margin:0 !important; padding:0 12px; border-right:1px solid var(--line); color:var(--ink) !important; }
+.phone-input .input { flex:1; border:0; border-radius:0; }
+.form-hint { margin-top:-4px; color:var(--muted); font-size:12px; line-height:1.5; }
+.text-action { min-height:40px; color:var(--ink-2); background:transparent; font-size:14px; }
 .demo-btn { min-height:44px; color:var(--ink-2); background:transparent; font-size:14px; }
 .consent { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; justify-content:center; gap:2px 3px; margin-top:16px; color:var(--muted); font-size:12px; }
 .consent label,.consent-links { display:flex; align-items:center; }

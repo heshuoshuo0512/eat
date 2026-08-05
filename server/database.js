@@ -601,6 +601,22 @@ function migrate(db) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS pilot_invitations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default' REFERENCES tenants(id) ON DELETE CASCADE,
+      code_hash TEXT NOT NULL,
+      code_hint TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','consumed','revoked')),
+      used_phone_hash TEXT,
+      used_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(tenant_id, code_hash)
+    );
+
     CREATE TABLE IF NOT EXISTS user_identities (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -1108,6 +1124,7 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_stalls_tenant_parent ON stalls(tenant_id, parent_id);
     CREATE INDEX IF NOT EXISTS idx_dishes_tenant_status ON dishes(tenant_id, status);
     CREATE INDEX IF NOT EXISTS idx_reviews_tenant_target ON reviews(tenant_id, target_type, target_id);
+    CREATE INDEX IF NOT EXISTS idx_pilot_invitations_tenant_status ON pilot_invitations(tenant_id, status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_uploads_tenant_owner ON uploads(tenant_id, owner_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_created ON audit_logs(tenant_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_app_settings_tenant_key ON app_settings(tenant_id, key);
