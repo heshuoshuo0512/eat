@@ -5,6 +5,7 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+Environment=SMART_CANTEEN_APP_DIR=/opt/smart-canteen/app
 ExecStart=/usr/local/sbin/smart-canteen-backup
 Nice=10
 IOSchedulingClass=best-effort
