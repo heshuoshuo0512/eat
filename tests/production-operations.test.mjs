@@ -45,6 +45,10 @@ describe('Production operations contract', () => {
     const dockerfile = read('Dockerfile');
     assert.match(dockerfile, /promote-real-catalog-postgres\.mjs/);
     assert.match(dockerfile, /import-catalog-introductions-postgres\.mjs/);
+    const webDockerfile = read('Dockerfile.web');
+    assert.match(webDockerfile, /COPY --from=build \/app\/dist \/usr\/share\/nginx\/html/);
+    assert.match(read('docker-compose.yml'), /dockerfile: Dockerfile\.web/);
+    assert.doesNotMatch(read('docker-compose.yml'), /\.\/dist:\/usr\/share\/nginx\/html/);
     const packageJson = JSON.parse(read('package.json'));
     assert.equal(packageJson.scripts['catalog:introductions:import:pg'], 'node scripts/import-catalog-introductions-postgres.mjs');
   });
