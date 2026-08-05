@@ -1,0 +1,11 @@
+[Unit]
+Description=Backup AstrBot NapCat and Sub2API private services
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/stueat-services-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
