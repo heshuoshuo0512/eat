@@ -179,6 +179,11 @@ async function applyCatalogItemCorrections(client, tenantId) {
   if (!columns.has('catalog_item_type') || !columns.has('catalog_category')) {
     throw new Error('Catalog classification schema is missing; run the PostgreSQL migrations before promotion');
   }
+  const classificationMigration = readFileSync(resolve('server/migrations/026_catalog_classification.sql'), 'utf8');
+  const correctionMarker = '-- Rebuild the classification from stable catalog evidence.';
+  const correctionStart = classificationMigration.indexOf(correctionMarker);
+  if (correctionStart < 0) throw new Error('Catalog classification correction section is missing');
+  await client.query(classificationMigration.slice(correctionStart + correctionMarker.length));
   const invalidTypes = await client.query(`SELECT COUNT(*)::integer AS count
     FROM dishes
     WHERE tenant_id = $1
