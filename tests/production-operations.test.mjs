@@ -53,6 +53,9 @@ describe('Production operations contract', () => {
     const promoter = read('scripts/promote-real-catalog-postgres.mjs');
     assert.match(promoter, /auditCounts\[key\] !== SOURCE_EXPECTED\[key\]/);
     assert.doesNotMatch(promoter, /auditCounts\[key\] !== EXPECTED\[key\]/);
+    assert.match(promoter, /Catalog classification schema is missing/);
+    assert.doesNotMatch(promoter, /readFileSync\(resolve\('server\/migrations\/025_catalog_item_types\.sql'/);
+    assert.doesNotMatch(promoter, /readFileSync\(resolve\('server\/migrations\/026_catalog_classification\.sql'/);
   });
 
   it('preserves only content-identical knowledge documents during catalog promotion', () => {

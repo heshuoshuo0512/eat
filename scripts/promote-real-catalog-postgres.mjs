@@ -167,8 +167,25 @@ async function applyCatalogItemCorrections(client, tenantId) {
       WHERE tenant_id IN ($1, '__global__')`, [tenantId]);
     return { itemTypes: {}, ragDocuments: Number(ragDocuments.rows[0]?.count || 0) };
   }
-  await client.query(readFileSync(resolve('server/migrations/025_catalog_item_types.sql'), 'utf8'));
-  await client.query(readFileSync(resolve('server/migrations/026_catalog_classification.sql'), 'utf8'));
+  // The migration runner owns schema changes. Replaying 025 here would
+  // temporarily reinstall its pre-section constraint after classified rows
+  // have already been inserted, which makes a valid prepared source fail.
+  const schema = await client.query(`SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'dishes'
+      AND column_name IN ('catalog_item_type', 'catalog_category')`);
+  const columns = new Set(schema.rows.map((row) => row.column_name));
+  if (!columns.has('catalog_item_type') || !columns.has('catalog_category')) {
+    throw new Error('Catalog classification schema is missing; run the PostgreSQL migrations before promotion');
+  }
+  const invalidTypes = await client.query(`SELECT COUNT(*)::integer AS count
+    FROM dishes
+    WHERE tenant_id = $1
+      AND catalog_item_type NOT IN ('meal', 'beverage', 'snack', 'addon', 'fee', 'variant', 'section')`, [tenantId]);
+  if (Number(invalidTypes.rows[0]?.count || 0) > 0) {
+    throw new Error('Catalog source contains an unsupported catalog_item_type');
+  }
   const counts = await client.query(`SELECT catalog_item_type, COUNT(*)::integer AS count FROM dishes
     WHERE tenant_id = $1 GROUP BY catalog_item_type ORDER BY catalog_item_type`, [tenantId]);
   const ragDocuments = await client.query(`SELECT COUNT(*)::integer AS count FROM rag_documents
