@@ -20,6 +20,10 @@ async function request(path, options = {}) {
 
 before(async () => {
   db = openDatabase(':memory:');
+  // The full test runner enables demo fixtures globally. This contract must
+  // still exercise the production state where no real ranking signals exist.
+  db.prepare('UPDATE dishes SET rating = 0, review_count = 0, sales = 0').run();
+  db.prepare('UPDATE stalls SET rating = 0').run();
   server = createServer(createApp({ db }).handler);
   await new Promise((resolve) => server.listen(0, resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
