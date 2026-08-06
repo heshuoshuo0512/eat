@@ -280,7 +280,8 @@ async function searchDishes(payload) {
 
 async function loadCatalogDishes({ page = 1, pageSize = 50, ...filters } = {}) {
   const result = await apiClient.searchDishes({ page, pageSize, ...filters });
-  mergeDishes(result.items || [], { replace: page === 1 });
+  // Pagination owns the visible catalog page; do not retain previous pages.
+  mergeDishes(result.items || [], { replace: true });
   catalogPage.value = result.page || { page, pageSize, total: state.value.dishes.length, hasMore: false };
   return result;
 }
