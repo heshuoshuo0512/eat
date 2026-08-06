@@ -45,7 +45,8 @@ export function sortDishesByRating(dishes = [], ratingById = new Map(), directio
     .sort((left, right) => {
       const ratingDelta = (left.displayRating - right.displayRating) * multiplier;
       if (ratingDelta) return ratingDelta;
-      return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+      const nameDelta = String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+      return nameDelta || String(left.id || '').localeCompare(String(right.id || ''));
     });
 }
 

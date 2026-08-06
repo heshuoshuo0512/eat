@@ -81,7 +81,8 @@ function reviewSignals(record) {
     signals.push('possible_section_heading');
   }
   if (record.itemType === 'meal' && /^(?:加|另加|可加|加购|选加)/u.test(name)) signals.push('possible_addon');
-  if (record.itemType === 'meal' && record.reason !== 'complete_combo' && /(?:豆浆|豆奶|杂粮汁|果汁|饮料|可乐|雪碧|奶茶|咖啡|酸奶|矿泉水|纯净水|苏打水|酸梅汤|冰红茶|乌龙茶|绿茶|红茶|果茶|茶粹|脉动|啤酒|汽水)$/u.test(name)) {
+  const completeCombo = ['complete_combo', 'complete_combo_context'].includes(record.reason);
+  if (record.itemType === 'meal' && !completeCombo && /(?:豆浆|豆奶|杂粮汁|果汁|饮料|可乐|雪碧|奶茶|咖啡|酸奶|矿泉水|纯净水|苏打水|酸梅汤|冰红茶|乌龙茶|绿茶|红茶|果茶|茶粹|脉动|啤酒|汽水)$/u.test(name)) {
     signals.push('possible_beverage');
   }
   if (record.itemType === 'meal' && record.reason === 'fallback' && /^(?:丸子|丸子类|鱼丸|虾丸|牛肉丸|蟹棒|蟹排|鱼豆腐|豆泡|豆皮|干豆腐|午餐肉|培根|年糕|魔芋|海带|宽粉|粉丝|方便面|卤蛋|煎蛋|荷包蛋|鸡蛋|鹌鹑蛋|炸蛋|火腿肠|烤肠|香肠)$/u.test(name)) {
@@ -100,7 +101,7 @@ function reviewSignals(record) {
   }
   if (record.itemType === 'meal' && /低消$/u.test(name)) signals.push('minimum_spend_as_meal');
   if (record.itemType === 'meal' && /款$/u.test(name)) signals.push('contextless_product_name');
-  if (record.itemType === 'meal' && /^T\d+[（(]/iu.test(name) && record.reason !== 'complete_combo') signals.push('coded_combo_as_meal');
+  if (record.itemType === 'meal' && /^T\d+[（(]/iu.test(name) && !completeCombo) signals.push('coded_combo_as_meal');
   if (['meal', 'beverage', 'snack'].includes(record.itemType) && record.sameStallDuplicateIds.length > 0) signals.push('same_stall_duplicate_name');
   return signals;
 }
@@ -169,7 +170,7 @@ for (const record of records) {
 }
 
 const report = {
-  schemaVersion: 'catalog-classification-audit-v3',
+  schemaVersion: 'catalog-classification-audit-v4',
   generatedAt: new Date().toISOString(),
   source,
   total: records.length,

@@ -20,6 +20,16 @@ const CONTEXT_ADDON_RULES = Object.freeze([
   { stall: /汤の饼相见/u, name: /^牛肉$/u, category: '佐餐加购' },
 ]);
 
+export const CATALOG_CATEGORY_ORDER = Object.freeze({
+  meal: Object.freeze(['早餐面点', '面食粉类', '米饭套餐', '家常热菜', '汤羹', '火锅麻辣烫', '汉堡套餐']),
+  snack: Object.freeze(['汉堡小吃', '烧烤卤味小吃', '小吃单品', '甜品小吃']),
+  beverage: Object.freeze(['饮品']),
+});
+
+export const RETIRED_MEAL_CATEGORIES = Object.freeze([
+  '组合套餐', '干锅菜', '砂锅煲类', '水煮菜', '蒸菜', '轻食简餐', '精品小炒', '多人烤鱼', '烤鱼',
+]);
+
 function text(value) {
   return String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 }
@@ -33,6 +43,36 @@ function snackCategory(name, stall) {
   if (/汉堡/u.test(stall) || /汉堡|堡/u.test(name)) return '汉堡小吃';
   if (/串吧|鸭货/u.test(stall)) return '烧烤卤味小吃';
   return '小吃单品';
+}
+
+function categoryResult(category, reason, itemType = 'meal') {
+  return {
+    itemType,
+    category,
+    independentlyOrderable: !['addon', 'fee', 'variant', 'section'].includes(itemType),
+    reason,
+  };
+}
+
+function classifyMealByContext(name, stall, reason = 'meal_context_category') {
+  const normalizedName = text(name);
+  const normalizedStall = text(stall);
+  const combined = `${normalizedName} ${normalizedStall}`;
+
+  if (/汉堡|堡|炸鸡/u.test(combined)) return categoryResult('汉堡套餐', reason);
+  if (/水煮/u.test(normalizedName)) {
+    if (/面|粉|米线|馄饨|水饺|饺子/u.test(normalizedStall)) return categoryResult('面食粉类', reason);
+    return categoryResult('米饭套餐', reason);
+  }
+  if (/米饭|盖饭|黄焖鸡|鸡公煲|拌饭|便当|套餐饭/u.test(normalizedName)) return categoryResult('米饭套餐', reason);
+  if (/面|粉|米线|河粉|板面|刀削|馄饨|水饺|饺子|方便面|油泼/u.test(normalizedName)) return categoryResult('面食粉类', reason);
+  if (/豆浆|油条|粥|包子|馒头|烧麦|烧饼|饼|豆腐脑|锅贴|盒子|粽子|夹馍|汤圆|早餐|三明治|卷饼/u.test(normalizedName)) {
+    return categoryResult('早餐面点', reason);
+  }
+  if (/小炒盖饭|海南鸡饭|盖饭|黄焖鸡|鸡公煲|拌饭|快餐|拼饭/u.test(normalizedStall)) return categoryResult('米饭套餐', reason);
+  if (/面|粉|米线|馄饨|水饺|饺子|木桶面|手擀面|土豆粉/u.test(normalizedStall)) return categoryResult('面食粉类', reason);
+  if (/粥|饼|早餐|烧饼|豆浆|油条|面点/u.test(normalizedStall)) return categoryResult('早餐面点', reason);
+  return categoryResult('家常热菜', reason);
 }
 
 export function isServingTierCatalogName(value) {
@@ -63,7 +103,7 @@ export function classifyCatalogItem({ name = '', price = 0, stallName = '', curr
     return { itemType: 'variant', category: '规格选项', independentlyOrderable: false, reason: 'context_variant' };
   }
   if (COMBO_RE.test(normalizedName) || /^T\d+[（(]/iu.test(normalizedName)) {
-    return { itemType: 'meal', category: /汉堡|堡|炸鸡/u.test(normalizedName) ? '汉堡套餐' : '组合套餐', independentlyOrderable: true, reason: 'complete_combo' };
+    return classifyMealByContext(normalizedName, normalizedStall, 'complete_combo_context');
   }
   if (BEVERAGE_STALL_RE.test(normalizedStall)
       || (BEVERAGE_RE.test(normalizedName) && !BEVERAGE_FOOD_EXCLUSION_RE.test(normalizedName))) {
@@ -88,15 +128,16 @@ export function classifyCatalogItem({ name = '', price = 0, stallName = '', curr
   if (SNACK_RE.test(normalizedName)) {
     return { itemType: 'snack', category: snackCategory(normalizedName, normalizedStall), independentlyOrderable: true, reason: 'standalone_snack' };
   }
+  if (/沙拉|轻食/u.test(normalizedName)) {
+    return categoryResult('小吃单品', 'light_food_snack', 'snack');
+  }
   if (SNACK_CONTEXT_STALL_RE.test(normalizedStall)) {
     return { itemType: 'snack', category: snackCategory(normalizedName, normalizedStall), independentlyOrderable: true, reason: 'snack_stall' };
   }
   if (/香锅|麻辣烫/u.test(normalizedStall) && /^冒/u.test(normalizedName)) return { itemType: 'meal', category: '火锅麻辣烫', independentlyOrderable: true, reason: 'stall_meal_category' };
   if (/小炒盖饭|海南鸡饭/u.test(normalizedStall)) return { itemType: 'meal', category: '米饭套餐', independentlyOrderable: true, reason: 'stall_meal_category' };
   if (/青年盖饭干锅/u.test(normalizedStall)) {
-    if (/烤.*鱼/u.test(normalizedName)) return { itemType: 'meal', category: '烤鱼', independentlyOrderable: true, reason: 'stall_meal_category' };
-    if (/干锅/u.test(normalizedName)) return { itemType: 'meal', category: '干锅菜', independentlyOrderable: true, reason: 'stall_meal_category' };
-    return { itemType: 'meal', category: '米饭套餐', independentlyOrderable: true, reason: 'stall_meal_category' };
+    return classifyMealByContext(normalizedName, normalizedStall, 'stall_meal_context');
   }
   if (/手工水饺/u.test(normalizedStall) && /^(?:大葱香菜肉|白菜莲藕肉|芹菜香菇肉|酸菜油梭肉|茴香鸡蛋肉|猪肉玉米)$/u.test(normalizedName)) {
     return { itemType: 'meal', category: '面食粉类', independentlyOrderable: true, reason: 'stall_meal_category' };
@@ -108,12 +149,10 @@ export function classifyCatalogItem({ name = '', price = 0, stallName = '', curr
   if (/饭|便当/u.test(normalizedName)) return { itemType: 'meal', category: '米饭套餐', independentlyOrderable: true, reason: 'meal_category' };
   if (/包|馒头|烧麦|粥|饼|油条|豆腐脑|锅贴|盒子|粽子|夹馍|汤圆|烤地瓜/u.test(normalizedName)) return { itemType: 'meal', category: '早餐面点', independentlyOrderable: true, reason: 'meal_category' };
   if (/汤|羹/u.test(normalizedName)) return { itemType: 'meal', category: '汤羹', independentlyOrderable: true, reason: 'meal_category' };
-  if (/干锅/u.test(normalizedName)) return { itemType: 'meal', category: '干锅菜', independentlyOrderable: true, reason: 'meal_category' };
-  if (/砂锅|煲/u.test(normalizedName)) return { itemType: 'meal', category: '砂锅煲类', independentlyOrderable: true, reason: 'meal_category' };
-  if (/水煮/u.test(normalizedName)) return { itemType: 'meal', category: '水煮菜', independentlyOrderable: true, reason: 'meal_category' };
-  if (/蒸/u.test(normalizedName)) return { itemType: 'meal', category: '蒸菜', independentlyOrderable: true, reason: 'meal_category' };
-  if (/沙拉|三明治|谷物/u.test(normalizedName)) return { itemType: 'meal', category: '轻食简餐', independentlyOrderable: true, reason: 'meal_category' };
-  if (/烤鱼/u.test(normalizedName)) return { itemType: 'meal', category: '烤鱼', independentlyOrderable: true, reason: 'meal_category' };
+  if (/干锅|砂锅|煲|水煮/u.test(normalizedName)) return classifyMealByContext(normalizedName, normalizedStall);
+  if (/蒸/u.test(normalizedName)) return categoryResult('家常热菜', 'steamed_to_house_dish');
+  if (/三明治|卷饼/u.test(normalizedName)) return categoryResult('早餐面点', 'light_food_breakfast');
+  if (/烤鱼/u.test(normalizedName)) return classifyMealByContext(normalizedName, normalizedStall, 'grilled_fish_context');
 
   const preservedType = ['meal', 'beverage', 'snack', 'addon', 'fee', 'variant', 'section'].includes(currentType) ? currentType : 'meal';
   const fallbackCategory = preservedType === 'beverage' ? '饮品' : preservedType === 'snack' ? '小吃单品' : '家常热菜';

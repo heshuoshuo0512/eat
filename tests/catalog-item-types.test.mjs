@@ -226,9 +226,10 @@ describe('real catalog classification rules', () => {
     assert.equal(classify('牛奶燕麦粥(甜)', 2, '小笼粥饼屋').itemType, 'meal');
     assert.equal(classify('香菇油菜', 3, '心怡快餐').itemType, 'meal');
     assert.equal(classify('香菇油菜', 3, '心怡快餐').category, '家常热菜');
-    assert.equal(classify('干锅花菜', 10, '小炒档口').category, '干锅菜');
+    assert.equal(classify('干锅花菜', 10, '小炒档口').category, '家常热菜');
     assert.equal(classify('鸡丁滑蛋饭', 12, '滑蛋饭').category, '米饭套餐');
-    assert.equal(classify('鸡肉谷物沙拉', 15, '轻食档口').category, '轻食简餐');
+    assert.equal(classify('鸡肉谷物沙拉', 15, '轻食档口').itemType, 'snack');
+    assert.equal(classify('鸡肉谷物沙拉', 15, '轻食档口').category, '小吃单品');
     assert.equal(classify('可乐鸡块盖饭', 12, '盖饭档口').itemType, 'meal');
     assert.equal(classify('红烧鸡块面', 12, '面馆').itemType, 'meal');
     assert.equal(classify('烤鸡皮', 2, '掉渣饼 剁椒面').itemType, 'addon');
@@ -239,7 +240,10 @@ describe('real catalog classification rules', () => {
     assert.equal(classify('大鸡腿', 7, '燃能-中国汉堡').itemType, 'snack');
     assert.equal(classify('冒牛肉', 12, '香锅 麻辣烫').category, '火锅麻辣烫');
     assert.equal(classify('溜肉段', 12, '小炒盖饭').category, '米饭套餐');
-    assert.equal(classify('烤里鱼', 18, '青年盖饭干锅').category, '烤鱼');
+    assert.equal(classify('烤里鱼', 18, '青年盖饭干锅').category, '米饭套餐');
+    assert.equal(classify('水煮鱼', 18, '家常菜档口').category, '米饭套餐');
+    assert.equal(classify('水煮鱼米线', 18, '米线档口').category, '面食粉类');
+    assert.equal(classify('砂锅鸡公煲', 18, '砂锅档口').category, '米饭套餐');
     assert.equal(classify('大葱香菜肉', 10, '手工水饺').category, '面食粉类');
     assert.equal(classify('标配款', 9, '肉灌饼').category, '早餐面点');
   });

@@ -54,7 +54,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app';
 import { dishSupplyPresentation } from '../../domain/dishPresentation.js';
 import { buildProfilePrompts, createRatingMap, sortDishesByRating } from '../../domain/studentDiscovery.js';
@@ -88,6 +88,16 @@ const resultSummary=computed(()=>{ const result=searchResult.value;if(!result)re
 const mealPicks=computed(()=>{const raw=recommendationResult.value?.recommendations||recommendationResult.value?.mealPlan?.dishes||recommendationResult.value?.mealPlan?.picks||recommendationResult.value?.ranked||[];const catalog=new Map(store.dishes.value.map((dish)=>[String(dish.id),dish]));const hydrated=raw.map((pick)=>{const id=pick.id||pick.dishId;return{...(catalog.get(String(id))||{}),...pick,id};}).filter((dish)=>dish.id);return sortDishesByRating(hydrated,ratingMap.value,recommendSort.value);});
 const visibleMealPicks=computed(()=>recommendExpanded.value ? mealPicks.value : mealPicks.value.slice(0,1));
 
+watch(sortDirection, async () => {
+  if (mode.value !== 'search' || searchResult.value || catalogLoadingMore.value) return;
+  catalogLoadingMore.value = true;
+  message.value = '';
+  isError.value = false;
+  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }); }
+  catch (error) { message.value = error.message || '菜品排序加载失败，请重试。'; isError.value = true; }
+  finally { catalogLoadingMore.value = false; }
+});
+
 onShow(async()=>{ try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}await store.loadCatalogCategories(catalogItemType.value);mode.value=store.discoveryMode.value||mode.value;if(!memoryLoaded){memoryLoaded=true;await loadMemory();}if(mode.value==='recommend'&&!recommendationLoaded)await loadInitialRecommendation();}catch{} });
 onPullDownRefresh(async()=>{try{await store.load(true);await Promise.all([store.loadCatalogCategories(catalogItemType.value,{force:true}),store.loadCatalogDishes({page:1,pageSize:50,...catalogBrowseFilters()})]);if(mode.value==='recommend'){recommendationLoaded=false;await loadInitialRecommendation();}}catch{}finally{uni.stopPullDownRefresh();}});
 onReachBottom(async()=>{if(mode.value!=='search')return;if(searchResult.value?.page?.hasMore){await loadMoreSearch();return;}if(searchResult.value||catalogLoadingMore.value||!store.catalogPage.value.hasMore)return;catalogLoadingMore.value=true;try{await store.loadMoreCatalog(catalogBrowseFilters());}catch(error){message.value=error.message||'加载更多失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}});
@@ -97,10 +107,10 @@ function openVision(){uni.navigateTo({url:'/pages/vision/vision'});}
 function openProfile(){uni.navigateTo({url:'/pages/health-profile/health-profile'});}
 function openExplore(entry){uni.navigateTo({url:entry.route});}
 function runSearchPrompt(text){query.value=text;submitSearch();}
-function catalogBrowseFilters(){return{sort:'rating_desc',itemType:catalogItemType.value,catalogCategory:catalogCategory.value||undefined};}
+function catalogBrowseFilters(){return{sort:sortDirection.value==='asc'?'rating_asc':'rating_desc',itemType:catalogItemType.value,catalogCategory:catalogCategory.value||undefined};}
 async function selectCatalogItemType(value){if(catalogLoadingMore.value)return;catalogLoadingMore.value=true;catalogItemType.value=value;catalogCategory.value='';message.value='';isError.value=false;try{await Promise.all([store.loadCatalogCategories(value),store.loadCatalogDishes({page:1,pageSize:50,...catalogBrowseFilters()})]);}catch(error){message.value=error.message||'目录分类加载失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}}
 async function selectCatalogCategory(value){if(catalogLoadingMore.value||catalogCategory.value===value)return;catalogLoadingMore.value=true;catalogCategory.value=value;message.value='';isError.value=false;try{await store.loadCatalogDishes({page:1,pageSize:50,...catalogBrowseFilters()});}catch(error){message.value=error.message||'菜品分类加载失败。';isError.value=true;}finally{catalogLoadingMore.value=false;}}
-function searchPayload(offset=0){return{query:query.value.trim(),filters:{itemType:catalogItemType.value,catalogCategory:catalogCategory.value||undefined,halalOnly:store.profile.value.halalOnly,avoidIngredients:[...(store.profile.value.allergies||[]),...(store.profile.value.avoid||[])]},sort:'relevance',limit:searchPageSize,offset};}
+function searchPayload(offset=0){return{query:query.value.trim(),filters:{itemType:catalogItemType.value,catalogCategory:catalogCategory.value||undefined,halalOnly:store.profile.value.halalOnly,avoidIngredients:[...(store.profile.value.allergies||[]),...(store.profile.value.avoid||[])]},sort:sortDirection.value==='asc'?'rating_asc':'rating_desc',limit:searchPageSize,offset};}
 async function submitSearch(){const text=query.value.trim();if(!text)return;searching.value=true;message.value='';isError.value=false;citationsExpanded.value=false;resultsExpanded.value=false;try{searchResult.value=await store.searchDishes(searchPayload(0));}catch(error){isError.value=true;message.value=error.message||'检索失败，请稍后重试。';}finally{searching.value=false;}}
 async function loadMoreSearch(){if(searchLoadingMore.value||!searchResult.value?.page?.hasMore)return;searchLoadingMore.value=true;try{const next=await store.searchDishes(searchPayload(searchResult.value.items?.length||0));const merged=new Map((searchResult.value.items||[]).map((dish)=>[String(dish.id),dish]));for(const dish of next.items||[])merged.set(String(dish.id),dish);searchResult.value={...next,items:[...merged.values()]};resultsExpanded.value=true;}catch(error){message.value=error.message||'加载更多失败。';isError.value=true;}finally{searchLoadingMore.value=false;}}
 function clearSearch(){searchResult.value=null;query.value='';citationsExpanded.value=false;resultsExpanded.value=false;message.value='';}

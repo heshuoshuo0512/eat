@@ -40,7 +40,7 @@ import { businessDate, businessDayUtcRange } from './time.js';
 import { enqueueOutboxEvent, outboxBacklog } from './outbox.js';
 import { createRuntimeMetrics } from './metrics.js';
 import { normalizeDishPricing, PRICING_MODES } from './dishPricing.js';
-import { classifyCatalogItem } from './catalogClassification.js';
+import { CATALOG_CATEGORY_ORDER, RETIRED_MEAL_CATEGORIES, classifyCatalogItem } from './catalogClassification.js';
 import {
   RETRIEVAL_INDEX_VERSION,
   getRetrievalIndexStatus,
@@ -102,6 +102,18 @@ function catalogTextMatches(value, query) {
 function catalogListText(value) {
   if (Array.isArray(value)) return value.join(' ');
   return String(value || '');
+}
+
+function normalizeCatalogFilter(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function catalogCategoryRank(itemType, value) {
+  const index = (CATALOG_CATEGORY_ORDER[itemType] || []).indexOf(value);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }
 
 async function loadAdminCatalogTree(db, { tenantId, regionId = '', canteenId = '', stallId = '', query = '', includeDishes = false, limit = 20, offset = 0 }) {
@@ -1984,7 +1996,7 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   const parsedQuery = parseDishSearchRequest({ query: rawQuery, filters, limit: pageSize, offset });
   const budgetOnlyQuery = /^\s*(?:预算|价格)?\s*(?:不超过|不高于|最多|低于|少于)?\s*[¥￥]?\s*\d+(?:\.\d+)?\s*元?\s*(?:以内|以下|内)?\s*$/u.test(rawQuery);
   const keyword = (budgetOnlyQuery ? '' : rawQuery).toLocaleLowerCase();
-  const requestedItemType = String(body.itemType || filters.itemType || '').trim().toLowerCase();
+  const requestedItemType = normalizeCatalogFilter(body.itemType || filters.itemType).toLowerCase();
   const allowedItemTypes = new Set(['meal', 'beverage', 'snack', 'addon', 'fee', 'variant', 'section', 'all']);
   const publicItemTypes = new Set(['meal', 'beverage', 'snack']);
   if (requestedItemType && !allowedItemTypes.has(requestedItemType)) {
@@ -2002,13 +2014,19 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
   clauses.push('d.catalog_item_type = ?');
   values.push(effectiveItemType);
   if (requestedItemType && !publicItemTypes.has(requestedItemType) && requestedItemType !== 'all') clauses.push('1 = 0');
-  const catalogCategories = [...new Set([
+  const requestedCatalogCategories = [...new Set([
     body.catalogCategory,
     filters.catalogCategory,
     ...[].concat(body.catalogCategories || filters.catalogCategories || []),
-  ].flatMap((value) => String(value || '').split(/[，,、;；]/u)).map((value) => value.trim()).filter(Boolean))].slice(0, 30);
-  if (catalogCategories.length) {
-    clauses.push(`d.catalog_category IN (${catalogCategories.map(() => '?').join(', ')})`);
+  ].flatMap((value) => normalizeCatalogFilter(value).split(/[,、;]/u))
+    .map(normalizeCatalogFilter)
+    .filter(Boolean))].slice(0, 30);
+  const retiredCategories = new Set(effectiveItemType === 'meal' ? RETIRED_MEAL_CATEGORIES : []);
+  const catalogCategories = requestedCatalogCategories.filter((value) => !retiredCategories.has(value));
+  if (requestedCatalogCategories.length && !catalogCategories.length) {
+    clauses.push('1 = 0');
+  } else if (catalogCategories.length) {
+    clauses.push(`TRIM(d.catalog_category) IN (${catalogCategories.map(() => '?').join(', ')})`);
     values.push(...catalogCategories);
   }
   if (keyword) {
@@ -2054,13 +2072,20 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
       WHEN LOWER(d.description || ' ' || d.semantic_labels_json) LIKE ? THEN 10
       ELSE 0 END` : '0';
   const relevanceValues = keyword ? [keyword, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`] : [];
-  const orderBy = sort === 'price_asc'
-    ? 'd.price ASC, d.name'
-    : sort === 'rating_desc'
-      ? 'd.rating DESC, d.review_count DESC, d.name'
-      : keyword
-        ? 'relevance_score DESC, d.rating DESC, d.name'
-        : 'd.name';
+  const browseOrderBy = sort === 'price_asc'
+    ? 'd.price ASC, d.name ASC, d.id ASC'
+    : sort === 'price_desc'
+      ? 'd.price DESC, d.name ASC, d.id ASC'
+      : sort === 'rating_asc'
+        ? 'd.rating ASC, d.review_count ASC, d.name ASC, d.id ASC'
+        : sort === 'sales'
+          ? 'd.sales DESC, d.rating DESC, d.name ASC, d.id ASC'
+          : 'd.rating DESC, d.review_count DESC, d.name ASC, d.id ASC';
+  // A keyword search always ranks by the documented relevance tiers first.
+  // The selected sort only breaks ties inside the same relevance tier.
+  const orderBy = keyword
+    ? `relevance_score DESC, ${sort === 'price_asc' ? 'd.price ASC' : sort === 'price_desc' ? 'd.price DESC' : sort === 'rating_asc' ? 'd.rating ASC, d.review_count ASC' : sort === 'sales' ? 'd.sales DESC, d.rating DESC' : 'd.rating DESC, d.review_count DESC'}, d.name ASC, d.id ASC`
+    : browseOrderBy;
   const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind, ${relevanceSql} AS relevance_score ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
     .all(...relevanceValues, ...values, pageSize, offset);
@@ -2100,7 +2125,7 @@ async function listCatalogCategories(db, tenantId, params) {
   if (!['meal', 'snack', 'beverage'].includes(itemType)) {
     throw Object.assign(new Error('学生目录只支持餐食、小吃和饮品分区'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
   }
-  const rows = await db.prepare(`SELECT d.catalog_category AS value, COUNT(*) AS count
+  const rows = await db.prepare(`SELECT TRIM(d.catalog_category) AS value, COUNT(*) AS count
     FROM dishes d
     JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
     JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
@@ -2110,11 +2135,15 @@ async function listCatalogCategories(db, tenantId, params) {
       AND s.review_status = 'approved' AND s.retrieval_eligible = 1
       AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
       AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
-    GROUP BY d.catalog_category
-    ORDER BY COUNT(*) DESC, d.catalog_category ASC`).all(tenantId, itemType);
+    GROUP BY TRIM(d.catalog_category)`).all(tenantId, itemType);
+  const allowedCategories = new Set(CATALOG_CATEGORY_ORDER[itemType] || []);
+  const categories = rows
+    .map((row) => ({ value: normalizeCatalogFilter(row.value), label: normalizeCatalogFilter(row.value), count: Number(row.count || 0) }))
+    .filter((row) => allowedCategories.has(row.value) && !RETIRED_MEAL_CATEGORIES.includes(row.value))
+    .sort((left, right) => catalogCategoryRank(itemType, left.value) - catalogCategoryRank(itemType, right.value));
   return {
     itemType,
-    categories: rows.map((row) => ({ value: row.value, label: row.value, count: Number(row.count || 0) })),
+    categories,
   };
 }
 

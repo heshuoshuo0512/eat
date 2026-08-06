@@ -95,6 +95,7 @@
       <p v-if="!sortedDishes.length" class="muted empty-dishes">暂无有效菜品。</p>
       <button v-if="searchResultActive && ragResult?.page?.hasMore" class="secondary load-more" type="button" :disabled="ragLoading" @click="loadMoreSearch">{{ ragLoading ? '加载中…' : `继续加载（已显示 ${sortedDishes.length} / ${ragResult.page.total}）` }}</button>
       <button v-if="!searchResultActive && store.catalogPage.hasMore" class="secondary load-more" type="button" :disabled="catalogLoadingMore" @click="loadMoreCatalog">{{ catalogLoadingMore ? '加载中…' : `加载更多（已加载 ${store.dishes.length} / ${store.catalogPage.total}）` }}</button>
+      <p v-if="!searchResultActive && catalogError" class="form-message catalog-error" role="alert">{{ catalogError }} <button class="text-link" type="button" @click="reloadCatalogPage">重新加载</button></p>
     </div>
 
   </section>
@@ -117,6 +118,7 @@ const router = useRouter();
 const stallFilter = ref(route.query.stall || '');
 const sortDir = ref('desc');
 const catalogLoadingMore = ref(false);
+const catalogError = ref('');
 const catalogItemType = ref('meal');
 const catalogItemTypes = [
   { value: 'meal', label: '餐食' },
@@ -158,6 +160,11 @@ watch(() => route.query.stall, (val) => {
   stallFilter.value = val || '';
 });
 
+watch([sortDir, stallFilter], () => {
+  if (searchResultActive.value || catalogLoadingMore.value) return;
+  reloadCatalogPage();
+});
+
 watch(() => route.query.dish, (val) => {
   if (val) router.replace({ name: 'dish-detail', params: { id: String(val) } });
 });
@@ -165,7 +172,19 @@ watch(() => route.query.dish, (val) => {
 async function loadMoreCatalog() {
   if (catalogLoadingMore.value || !store.catalogPage.hasMore) return;
   catalogLoadingMore.value = true;
-  try { await store.loadMoreCatalog(catalogBrowseFilters()); } finally { catalogLoadingMore.value = false; }
+  catalogError.value = '';
+  try { await store.loadMoreCatalog(catalogBrowseFilters()); }
+  catch (error) { catalogError.value = error.message || '加载更多失败，请重试。'; }
+  finally { catalogLoadingMore.value = false; }
+}
+
+async function reloadCatalogPage() {
+  if (catalogLoadingMore.value) return;
+  catalogLoadingMore.value = true;
+  catalogError.value = '';
+  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }); }
+  catch (error) { catalogError.value = error.message || '菜品加载失败，请重试。'; }
+  finally { catalogLoadingMore.value = false; }
 }
 
 async function selectCatalogItemType(itemType) {
@@ -173,20 +192,23 @@ async function selectCatalogItemType(itemType) {
   catalogLoadingMore.value = true;
   catalogItemType.value = itemType;
   catalogCategory.value = '';
+  catalogError.value = '';
   try {
     await Promise.all([
       store.loadCatalogCategories(itemType),
       store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }),
     ]);
   }
+  catch (error) { catalogError.value = error.message || '目录分类加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
 
 function catalogBrowseFilters() {
   return {
-    sort: 'rating_desc',
+    sort: sortDir.value === 'asc' ? 'rating_asc' : 'rating_desc',
     itemType: catalogItemType.value,
     catalogCategory: catalogCategory.value || undefined,
+    stallId: stallFilter.value || undefined,
   };
 }
 
@@ -194,7 +216,9 @@ async function selectCatalogCategory(value) {
   if (catalogLoadingMore.value || catalogCategory.value === value) return;
   catalogLoadingMore.value = true;
   catalogCategory.value = value;
+  catalogError.value = '';
   try { await store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }); }
+  catch (error) { catalogError.value = error.message || '菜品分类加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
 
@@ -258,7 +282,7 @@ function buildSearchPayload(query, offset) {
         stallId: stallFilter.value || undefined,
         avoidIngredients: [...(store.profile.allergies || []), ...(store.profile.avoid || [])]
       },
-      sort: 'relevance',
+      sort: sortDir.value === 'asc' ? 'rating_asc' : 'rating_desc',
       limit: 50,
       offset
   };
