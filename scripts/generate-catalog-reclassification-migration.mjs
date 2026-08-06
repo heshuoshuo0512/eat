@@ -33,7 +33,7 @@ const values = records.map((record) => [
   sqlString(record.stall),
   Number.isFinite(Number(record.price)) ? String(Number(record.price)) : 'NULL',
   sqlJson({ evidence: record.evidence || [], sourceRef: record.sourceRef || null }),
-].join(', '));
+].join(', ')).map((row) => `(${row})`);
 
 const migration = `-- Generated from ${source.replace(/\\/g, '/')}
 -- Batch: ${batchId}
