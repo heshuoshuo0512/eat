@@ -12,7 +12,9 @@
           <p class="eyebrow">今天想吃哪一派</p>
           <h2 id="region-showcase-title">按风味逛一圈</h2>
         </div>
-        <span class="pill">{{ regionSummaries.length }} 个区域 · {{ store.dishes.length }} 道菜</span>
+        <div class="tab-bar region-type-bar" role="tablist" aria-label="目录分区">
+          <button v-for="option in itemTypeOptions" :key="option.value" class="tab" :class="{ active: selectedItemType === option.value }" type="button" @click="setItemType(option.value)">{{ option.label }}</button>
+        </div>
       </div>
 
       <div class="region-grid">
@@ -33,7 +35,7 @@
             <span class="region-card-icon" aria-hidden="true">{{ region.icon }}</span>
           </div>
           <div class="region-card-body">
-            <span class="eyebrow">{{ region.subtitle }}</span>
+            <span class="eyebrow">{{ region.subtitle }} · {{ region.source === 'derived' ? '推断分组' : '数据库标签' }}</span>
             <h2>{{ region.name }}</h2>
             <p>{{ region.description }}</p>
             <div class="region-card-meta">
@@ -58,7 +60,7 @@
         <span v-else class="region-card-fallback">{{ selectedRegion.icon }}</span>
       </div>
       <div class="region-detail-copy">
-        <p class="eyebrow">{{ selectedRegion.subtitle }}</p>
+        <p class="eyebrow">{{ selectedRegion.subtitle }} · {{ selectedRegion.source === 'derived' ? '推断分组' : '数据库标签' }}</p>
         <h2>{{ selectedRegion.name }}</h2>
         <p class="hero-copy">{{ selectedRegion.description }}</p>
         <div class="metric-grid compact region-stats">
@@ -126,15 +128,9 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { dishPriceText, dishRatingText, dishSupplyPresentation } from '../domain/dishPresentation.js';
-import {
-  getRegionById,
-  getRegionDishes,
-  rankRegionDishes,
-  summarizeRegions
-} from '../domain/regionRecommendation.js';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
@@ -142,62 +138,57 @@ const route = useRoute();
 const router = useRouter();
 const pressedRegionId = ref('');
 
-const sortOptions = [
-  { value: 'forYou', label: '适合我' },
-  { value: 'rating', label: '评分优先' },
-  { value: 'hot', label: '热度优先' },
-  { value: 'price', label: '价格优先' }
-];
+const itemTypeOptions = [{ value: 'meal', label: '餐食' }, { value: 'snack', label: '小吃' }, { value: 'beverage', label: '饮品' }];
+const sortOptions = [{ value: 'forYou', label: '适合我' }, { value: 'rating', label: '评分优先' }, { value: 'hot', label: '热度优先' }, { value: 'price', label: '价格优先' }];
 const sortValues = new Set(sortOptions.map((option) => option.value));
-
-const ratingById = computed(() => new Map(store.rankings.dishes.map((dish) => [dish.id, dish])));
-const regionSummaries = computed(() => summarizeRegions(store.dishes, {
-  ratingById: ratingById.value,
-  preferences: store.dishPreferences
-}));
+const itemTypeValues = new Set(itemTypeOptions.map((option) => option.value));
+const regionSummaries = ref([]);
+const selectedDishes = ref([]);
+const regionsLoading = ref(false);
+const regionsError = ref('');
+const selectedItemType = computed(() => itemTypeValues.has(String(route.query.itemType || '')) ? String(route.query.itemType) : 'meal');
 const selectedRegionId = computed(() => String(route.query.region || ''));
-const selectedRegion = computed(() => {
-  const definition = getRegionById(selectedRegionId.value);
-  return definition ? regionSummaries.value.find((region) => region.id === definition.id) : null;
-});
+const selectedRegion = computed(() => regionSummaries.value.find((region) => region.id === selectedRegionId.value) || null);
 const selectedSort = computed(() => sortValues.has(route.query.sort) ? route.query.sort : 'forYou');
-const selectedDishes = computed(() => {
-  if (!selectedRegion.value) return [];
-  return rankRegionDishes(getRegionDishes(selectedRegion.value.id, store.dishes), {
-    sortBy: selectedSort.value,
-    ratingById: ratingById.value,
-    preferences: store.dishPreferences
-  });
-});
 const selectedDishGroups = computed(() => {
-  const order = ['staple', 'noodle', 'hot', 'snack', 'beverage', 'other'];
-  const definitions = {
-    staple: { label: '主食与套餐', description: '米饭、盖饭、早餐主食和组合套餐' },
-    noodle: { label: '面食粉类', description: '面、粉、米线、水饺与馄饨' },
-    hot: { label: '热菜与锅物', description: '家常热菜、干锅、砂锅和火锅类' },
-    snack: { label: '小吃', description: '可单独购买的小吃与甜品' },
-    beverage: { label: '饮品', description: '茶饮、豆浆、汽水与其他饮料' },
-    other: { label: '其他餐食', description: '暂未归入以上分类的目录菜品' }
-  };
   const groups = new Map();
   for (const dish of selectedDishes.value) {
-    const id = regionDishGroup(dish);
-    if (!groups.has(id)) groups.set(id, { id, ...definitions[id], items: [] });
+    const id = String(dish.catalogCategory || '其他');
+    if (!groups.has(id)) groups.set(id, { id, label: id, description: '数据库中的原始分类', items: [] });
     groups.get(id).items.push(dish);
   }
-  return order.filter((id) => groups.has(id)).map((id) => groups.get(id));
+  return [...groups.values()];
 });
 const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) => [dish.id, dish])));
 
-function regionDishGroup(dish) {
-  const itemType = String(dish.catalogItemType || 'meal');
-  const category = String(dish.catalogCategory || dish.category || '');
-  if (itemType === 'beverage' || /饮品/u.test(category)) return 'beverage';
-  if (itemType === 'snack' || /小吃|甜品/u.test(category)) return 'snack';
-  if (/面食|粉类|水饺|馄饨/u.test(category)) return 'noodle';
-  if (/米饭|早餐|套餐|主食|轻食/u.test(category)) return 'staple';
-  if (/热菜|火锅|麻辣烫|干锅|砂锅|烤鱼|水煮|蒸菜|汤羹/u.test(category)) return 'hot';
-  return 'other';
+function decorateRegion(region, index) {
+  const icons = { meal: '🍱', snack: '🥟', beverage: '🥤' };
+  return { ...region, icon: icons[selectedItemType.value] || '🍽️', tone: `tone-${(index % 4) + 1}` };
+}
+
+async function refreshRegions() {
+  regionsLoading.value = true;
+  regionsError.value = '';
+  try {
+    const result = await store.loadCatalogRegions(selectedItemType.value);
+    regionSummaries.value = (result.regions || []).map(decorateRegion);
+    if (selectedRegionId.value) {
+      const detail = await store.loadCatalogRegionDishes(selectedRegionId.value, {
+        itemType: selectedItemType.value,
+        page: 1,
+        pageSize: 50,
+        sort: selectedSort.value === 'forYou' ? 'rating' : selectedSort.value
+      });
+      selectedDishes.value = detail.items || [];
+    } else {
+      selectedDishes.value = [];
+    }
+  } catch (error) {
+    regionsError.value = error.message || '区域数据加载失败，请稍后重试。';
+    selectedDishes.value = [];
+  } finally {
+    regionsLoading.value = false;
+  }
 }
 
 function formatSales(value) {
@@ -221,6 +212,10 @@ function setSort(sortBy) {
   router.replace({ query: { ...route.query, sort: sortBy } });
 }
 
+function setItemType(itemType) {
+  router.replace({ query: { ...route.query, itemType, region: undefined, sort: undefined } });
+}
+
 function pressRegion(id) {
   pressedRegionId.value = id;
 }
@@ -237,6 +232,9 @@ function backToRegions() {
   delete query.sort;
   router.replace({ query });
 }
+
+watch(() => [route.query.region, route.query.sort, route.query.itemType], refreshRegions);
+onMounted(refreshRegions);
 </script>
 
 <style scoped>

@@ -2,7 +2,7 @@
   <section class="page-heading">
     <p class="eyebrow">数据排行</p>
     <h1>全站排行榜</h1>
-    <p class="muted">基于综合评分（评分 70% + 热度 30%）实时排名，涵盖菜品、档口、食堂三大维度。</p>
+    <p class="muted">只展示来自真实评价、评分或销量信号的菜品、档口和食堂排行。</p>
   </section>
 
   <div class="rankings-grid">
@@ -18,31 +18,20 @@
 
       <!-- Collapsed: top 3 preview -->
       <div v-if="expandedSection !== 'dishes'" class="rank-preview">
-        <RouterLink v-for="(dish, i) in filteredDishes.slice(0, 3)" :key="dish.id" class="preview-item" :to="rankingLink('dishes', dish)">
+        <RouterLink v-for="(dish, i) in rankedDishes.slice(0, 3)" :key="dish.id" class="preview-item" :to="rankingLink('dishes', dish)">
           <span class="preview-rank">{{ i + 1 }}</span>
           <span class="preview-name">{{ dish.name }}</span>
           <span class="preview-score">{{ dishRatingText(dish) }}</span>
         </RouterLink>
-        <p v-if="filteredDishes.length === 0" class="preview-empty">暂无数据</p>
+        <p v-if="!rankedDishes.length" class="preview-empty">{{ rankingMessage('dishes') }}</p>
       </div>
       <button v-if="expandedSection !== 'dishes'" class="rank-expand-button" type="button" @click="toggleSection('dishes')"><span>展开完整菜品榜</span><b aria-hidden="true">›</b></button>
 
       <!-- Expanded: full list with category filter -->
       <template v-if="expandedSection === 'dishes'">
-        <div class="category-filter">
-          <button
-            v-for="cat in dishCategories"
-            :key="cat"
-            :class="['filter-btn', { active: selectedCategory === cat }]"
-            @click="selectedCategory = cat"
-          >
-            {{ cat }}
-          </button>
-        </div>
-
-        <div v-if="filteredDishes.length" class="rank-list">
+        <div v-if="rankedDishes.length" class="rank-list">
           <RouterLink
-            v-for="(dish, i) in filteredDishes"
+            v-for="(dish, i) in rankedDishes"
             :key="dish.id"
             class="rank-item"
             :to="rankingLink('dishes', dish)"
@@ -66,7 +55,7 @@
         </div>
         <button v-if="rankingPages.dishes.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='dishes'" @click="loadMore('dishes')">{{ loadingMore==='dishes'?'加载中…':'加载更多菜品' }}</button>
         <div v-else class="empty-state">
-          <p>{{ selectedCategory === '全部' ? '暂无菜品数据。' : `"${selectedCategory}"分类暂无菜品。` }}</p>
+          <p>{{ rankingMessage('dishes') }}</p>
         </div>
         <button class="rank-expand-button collapse" type="button" @click="toggleSection('dishes')"><span>收起菜品榜</span><b aria-hidden="true">⌃</b></button>
       </template>
@@ -89,7 +78,7 @@
           <span class="preview-name">{{ stall.name }}</span>
           <span class="preview-score">{{ stall.rankScore }}</span>
         </RouterLink>
-        <p v-if="rankedStalls.length === 0" class="preview-empty">暂无数据</p>
+        <p v-if="rankedStalls.length === 0" class="preview-empty">{{ rankingMessage('stalls') }}</p>
       </div>
       <button v-if="expandedSection !== 'stalls'" class="rank-expand-button" type="button" @click="toggleSection('stalls')"><span>展开完整档口榜</span><b aria-hidden="true">›</b></button>
 
@@ -122,7 +111,7 @@
         </div>
         <button v-if="rankingPages.stalls.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='stalls'" @click="loadMore('stalls')">{{ loadingMore==='stalls'?'加载中…':'加载更多档口' }}</button>
         <div v-else class="empty-state">
-          <p>暂无档口数据。</p>
+          <p>{{ rankingMessage('stalls') }}</p>
         </div>
         <button class="rank-expand-button collapse" type="button" @click="toggleSection('stalls')"><span>收起档口榜</span><b aria-hidden="true">⌃</b></button>
       </template>
@@ -145,7 +134,7 @@
           <span class="preview-name">{{ canteen.name }}</span>
           <span class="preview-score">{{ canteen.rankScore }}</span>
         </RouterLink>
-        <p v-if="rankedSubCanteens.length === 0" class="preview-empty">暂无数据</p>
+        <p v-if="rankedSubCanteens.length === 0" class="preview-empty">{{ rankingMessage('canteens') }}</p>
       </div>
       <button v-if="expandedSection !== 'canteens'" class="rank-expand-button" type="button" @click="toggleSection('canteens')"><span>展开完整场所榜</span><b aria-hidden="true">›</b></button>
 
@@ -175,7 +164,7 @@
         </div>
         <button v-if="rankingPages.canteens.hasMore" class="secondary load-more" type="button" :disabled="loadingMore==='canteens'" @click="loadMore('canteens')">{{ loadingMore==='canteens'?'加载中…':'加载更多场所' }}</button>
         <div v-else class="empty-state">
-          <p>暂无食堂数据。</p>
+          <p>{{ rankingMessage('canteens') }}</p>
         </div>
         <button class="rank-expand-button collapse" type="button" @click="toggleSection('canteens')"><span>收起场所榜</span><b aria-hidden="true">⌃</b></button>
       </template>
@@ -208,33 +197,18 @@ function rankingLink(type, item) {
   return { path: '/canteens', query: { canteen: item.id } };
 }
 
-/* ── Dish category chips ── */
-const dishCategories = ['全部', '饭', '面', '粉', '汉堡', '饮品'];
-const selectedCategory = ref('全部');
-
-function classifyDish(dish) {
-  const name = dish.name || '';
-  const cuisine = dish.cuisine || '';
-  const tags = (dish.tags || []).join(' ');
-  const text = `${name} ${cuisine} ${tags}`;
-  if (/面|拉面|拌面|刀削/.test(text)) return '面';
-  if (/粉|米粉|河粉|螺蛳/.test(text)) return '粉';
-  if (/汉堡|burger/i.test(text)) return '汉堡';
-  if (/饮|奶|茶|果汁|咖啡|豆浆/.test(text)) return '饮品';
-  if (/饭|盖饭|炒饭|拌饭|粥|碗|套餐|饭/.test(text)) return '饭';
-  return '其他';
-}
-
-const filteredDishes = computed(() => {
-  const ranked = store.rankings.dishes;
-  if (selectedCategory.value === '全部') return ranked;
-  return ranked.filter((d) => classifyDish(d) === selectedCategory.value);
-});
+const rankedDishes = computed(() => store.rankings.dishes);
 
 /* ── Stall & Canteen rankings ── */
 const rankedStalls = computed(() => store.rankings.stalls);
 
 const rankedSubCanteens = computed(() => store.rankings.canteens);
+
+function rankingMessage(type) {
+  const status = store.rankingMeta?.[type];
+  if (status?.available === false) return `评价与热度数据积累中，当前有 ${status.candidateCount || 0} 项真实目录可评价。`;
+  return type === 'dishes' ? '暂无菜品排行。' : type === 'stalls' ? '暂无档口排行。' : '暂无食堂排行。';
+}
 
 async function loadRanking(type, page = 1) {
   const result = await store.loadCatalogRanking(type === 'canteens' ? 'venues' : type, { page, pageSize: 20 });

@@ -202,6 +202,29 @@
       </div>
     </section>
 
+    <section v-if="catalogOverview" class="card admin-form catalog-real-overview">
+      <div class="section-title horizontal">
+        <div>
+          <p class="eyebrow">Verified Catalog</p>
+          <h2>真实目录概览</h2>
+          <p class="muted">统计来自当前租户已审核、可检索的真实数据，不用首屏分页结果推算总数。</p>
+        </div>
+        <span class="pill">{{ catalogOverview.source }}</span>
+      </div>
+      <div class="summary-bar compact-summary">
+        <div class="summary-item"><strong>{{ catalogOverview.rawTotal }}</strong><span>原始目录</span></div>
+        <div class="summary-item"><strong>{{ catalogOverview.publicTotal }}</strong><span>可检索目录</span></div>
+        <div class="summary-item"><strong>{{ catalogOverview.canteens }}</strong><span>食堂 / 分区</span></div>
+        <div class="summary-item"><strong>{{ catalogOverview.stalls }}</strong><span>档口</span></div>
+      </div>
+      <div class="catalog-type-summary">
+        <span v-for="item in catalogOverview.itemTypes" :key="item.itemType" class="pill">{{ item.itemType }}：{{ item.count }}</span>
+      </div>
+      <p v-if="catalogOverview.introductions?.latestBatch" class="muted catalog-intro-status">
+        AI 介绍批次：{{ catalogOverview.introductions.latestBatch.id }} · {{ catalogOverview.introductions.latestBatch.status }}
+      </p>
+    </section>
+
     <div class="region-management-grid">
       <section v-for="regionCard in regionCards" :key="regionCard.id" class="card region-management-card">
         <div class="region-card-heading">
@@ -785,6 +808,7 @@ const menuForm = reactive(defaultMenuForm());
 const menuItemForm = reactive(defaultMenuItemForm());
 const deploymentReadiness = ref(null);
 const databaseOverview = ref(null);
+const catalogOverview = ref(null);
 
 // ===== 数据库驱动的餐饮场所层级 =====
 const fixedRegions = computed(() => {
@@ -2267,6 +2291,7 @@ function editTenant(tenant) {
 
 async function refreshDatabaseOverview() {
   try { databaseOverview.value = await store.loadDatabaseOverview(); } catch { /* silent */ }
+  try { catalogOverview.value = await store.loadAdminCatalogOverview(); } catch { catalogOverview.value = null; }
 }
 
 async function refreshMenus() {
@@ -2478,6 +2503,9 @@ watch(() => [store.canteens.length, store.stalls.length, store.dishes.length], (
 .readiness-error, .readiness-unknown { color: #9a2f2f; }
 
 .data-overview-bar { margin-bottom: 1rem; }
+.catalog-real-overview { display: grid; gap: .9rem; margin-bottom: 1rem; }
+.catalog-type-summary { display: flex; flex-wrap: wrap; gap: .5rem; }
+.catalog-intro-status { margin: 0; }
 .compact-summary { flex-wrap: wrap; justify-content: flex-end; }
 .compact-summary .summary-item { min-width: 6.5rem; padding: 0.65rem 1rem; border-radius: 0.5rem; }
 .compact-summary .summary-item strong { font-size: 1.35rem; }

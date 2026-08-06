@@ -41,6 +41,7 @@ import { enqueueOutboxEvent, outboxBacklog } from './outbox.js';
 import { createRuntimeMetrics } from './metrics.js';
 import { normalizeDishPricing, PRICING_MODES } from './dishPricing.js';
 import { CATALOG_CATEGORY_ORDER, RETIRED_MEAL_CATEGORIES, classifyCatalogItem } from './catalogClassification.js';
+import { PUBLIC_CATALOG_ITEM_TYPES, catalogTasteGroups, classifyCatalogTaste } from './catalogTasteGroups.js';
 import {
   RETRIEVAL_INDEX_VERSION,
   getRetrievalIndexStatus,
@@ -2147,62 +2148,294 @@ async function listCatalogCategories(db, tenantId, params) {
   };
 }
 
+function publicCatalogItemType(value = 'meal') {
+  const itemType = normalizeCatalogFilter(value).toLowerCase() || 'meal';
+  if (!PUBLIC_CATALOG_ITEM_TYPES.includes(itemType)) {
+    throw Object.assign(new Error('学生目录只支持餐食、小吃和饮品分区'), { status: 400, code: 'INVALID_CATALOG_ITEM_TYPE' });
+  }
+  return itemType;
+}
+
+async function loadPublicCatalogTasteRows(db, tenantId, itemType) {
+  return db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id,
+      s.reservation_enabled AS stall_reservation_enabled,
+      c.name AS canteen_name, c.venue_kind,
+      parent.name AS parent_canteen_name
+    FROM dishes d
+    JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+      AND d.catalog_item_type = ?
+      AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+      AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+      AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))`)
+    .all(tenantId, itemType);
+}
+
+function catalogRegionSort(items, sort = 'rating') {
+  const normalizedSort = ['rating', 'hot', 'price', 'name'].includes(sort) ? sort : 'rating';
+  const rating = (item) => Number(item.rating || 0);
+  const reviews = (item) => Number(item.reviewCount || 0);
+  const sales = (item) => Number(item.sales || 0);
+  const id = (item) => String(item.id || '');
+  return [...items].sort((left, right) => {
+    if (normalizedSort === 'price') return Number(left.price || 0) - Number(right.price || 0) || id(left).localeCompare(id(right));
+    if (normalizedSort === 'hot') return sales(right) - sales(left) || rating(right) - rating(left) || reviews(right) - reviews(left) || id(left).localeCompare(id(right));
+    if (normalizedSort === 'name') return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN') || id(left).localeCompare(id(right));
+    return rating(right) - rating(left) || reviews(right) - reviews(left) || sales(right) - sales(left) || id(left).localeCompare(id(right));
+  });
+}
+
+function catalogRegionItem(row) {
+  const item = catalogDishPresentation(row);
+  const group = classifyCatalogTaste({
+    itemType: item.catalogItemType,
+    catalogCategory: item.catalogCategory,
+    regionalTaste: item.regionalTaste,
+  });
+  return { ...item, regionId: group.id, regionLabel: group.label, regionSource: group.source, regionConfidence: group.confidence };
+}
+
+function summarizeCatalogRegion(group, items) {
+  const priced = items.map((item) => Number(item.price)).filter((value) => Number.isFinite(value) && value >= 0);
+  const rated = items.filter((item) => Number(item.reviewCount || 0) > 0 && Number(item.rating || 0) > 0);
+  return {
+    id: group.id,
+    name: group.label,
+    label: group.label,
+    subtitle: group.source === 'regional_taste' ? '数据库口味标签' : '真实目录聚合',
+    description: group.description,
+    itemType: group.itemType,
+    source: group.source,
+    confidence: group.confidence,
+    count: items.length,
+    averagePrice: priced.length ? Number((priced.reduce((sum, value) => sum + value, 0) / priced.length).toFixed(2)) : 0,
+    priceRange: priced.length ? { min: Math.min(...priced), max: Math.max(...priced) } : { min: 0, max: 0 },
+    ratedCount: rated.length,
+    averageRating: rated.length ? Number((rated.reduce((sum, item) => sum + Number(item.rating || 0), 0) / rated.length).toFixed(1)) : 0,
+    totalSales: items.reduce((sum, item) => sum + Number(item.sales || 0), 0),
+  };
+}
+
+async function listCatalogRegions(db, tenantId, params, regionId = '') {
+  const itemType = publicCatalogItemType(params.get('itemType') || 'meal');
+  const rows = await loadPublicCatalogTasteRows(db, tenantId, itemType);
+  const grouped = new Map();
+  for (const row of rows) {
+    const item = catalogRegionItem(row);
+    if (!grouped.has(item.regionId)) grouped.set(item.regionId, { id: item.regionId, label: item.regionLabel, source: item.regionSource, confidence: item.regionConfidence, description: '', itemType, items: [] });
+    const group = grouped.get(item.regionId);
+    group.description = classifyCatalogTaste({ itemType, catalogCategory: item.catalogCategory, regionalTaste: item.regionalTaste }).description;
+    group.items.push(item);
+  }
+  const defined = catalogTasteGroups(itemType);
+  const order = new Map(defined.map((group, index) => [group.id, index]));
+  const regions = [...grouped.values()]
+    .map((group) => ({ ...summarizeCatalogRegion(group, group.items), items: undefined }))
+    .sort((left, right) => (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER) || left.name.localeCompare(right.name, 'zh-CN'));
+  if (!regionId) {
+    const preview = await Promise.all(regions.map(async (region) => {
+      const group = grouped.get(region.id);
+      const items = catalogRegionSort(group.items).slice(0, 3);
+      return { ...region, heroDish: (await applyApprovedIntroductions(db, tenantId, 'dish', items))[0] || null, previewItems: await applyApprovedIntroductions(db, tenantId, 'dish', items) };
+    }));
+    return { itemType, regions: preview, meta: { source: 'derived', confidence: 'inferred', total: rows.length } };
+  }
+  const selected = grouped.get(regionId);
+  if (!selected) throw Object.assign(new Error('口味分组不存在'), { status: 404, code: 'CATALOG_REGION_NOT_FOUND' });
+  const page = positivePage(params.get('page'), 1);
+  const pageSize = positivePage(params.get('pageSize'), 20, 50);
+  const sorted = catalogRegionSort(selected.items, params.get('sort') || 'rating');
+  const offset = (page - 1) * pageSize;
+  const items = await applyApprovedIntroductions(db, tenantId, 'dish', sorted.slice(offset, offset + pageSize));
+  return {
+    itemType,
+    region: summarizeCatalogRegion(selected, selected.items),
+    items,
+    page: { page, pageSize, total: sorted.length, hasMore: offset + items.length < sorted.length },
+    meta: { source: 'derived', confidence: 'inferred', total: rows.length },
+  };
+}
+
+async function adminCatalogOverview(db, tenantId) {
+  const rawTotal = Number((await db.prepare('SELECT COUNT(*) AS count FROM dishes WHERE tenant_id = ?').get(tenantId))?.count || 0);
+  const itemTypeRows = await db.prepare(`SELECT catalog_item_type AS item_type, COUNT(*) AS count
+    FROM dishes WHERE tenant_id = ? GROUP BY catalog_item_type ORDER BY catalog_item_type`).all(tenantId);
+  const categoryRows = await db.prepare(`SELECT catalog_item_type AS item_type, TRIM(catalog_category) AS category, COUNT(*) AS count
+    FROM dishes WHERE tenant_id = ? GROUP BY catalog_item_type, TRIM(catalog_category)
+    ORDER BY catalog_item_type, TRIM(catalog_category)`).all(tenantId);
+  const publicTotal = Number((await db.prepare(`SELECT COUNT(*) AS count
+    FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+      AND d.catalog_item_type IN ('meal','snack','beverage')
+      AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+      AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+      AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))`).get(tenantId))?.count || 0);
+  const [canteenCount, stallCount, latestDish, latestStall, latestCanteen] = await Promise.all([
+    db.prepare('SELECT COUNT(*) AS count FROM canteens WHERE tenant_id = ?').get(tenantId),
+    db.prepare('SELECT COUNT(*) AS count FROM stalls WHERE tenant_id = ?').get(tenantId),
+    db.prepare('SELECT MAX(updated_at) AS value FROM dishes WHERE tenant_id = ?').get(tenantId),
+    db.prepare('SELECT MAX(updated_at) AS value FROM stalls WHERE tenant_id = ?').get(tenantId),
+    db.prepare('SELECT MAX(updated_at) AS value FROM canteens WHERE tenant_id = ?').get(tenantId),
+  ]);
+  const introductionStatuses = await db.prepare(`SELECT status, entity_type, COUNT(*) AS count
+    FROM catalog_entity_introductions WHERE tenant_id = ? GROUP BY status, entity_type ORDER BY status, entity_type`).all(tenantId);
+  const latestBatch = await db.prepare(`SELECT id, status, model, entity_count, completed_count, failed_count, created_at, updated_at
+    FROM catalog_introduction_batches WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1`).get(tenantId);
+  return {
+    source: 'postgresql',
+    rawTotal,
+    publicTotal,
+    itemTypes: itemTypeRows.map((row) => ({ itemType: row.item_type, count: Number(row.count || 0) })),
+    categories: categoryRows.map((row) => ({ itemType: row.item_type, category: normalizeCatalogFilter(row.category), count: Number(row.count || 0) })),
+    canteens: Number(canteenCount?.count || 0),
+    stalls: Number(stallCount?.count || 0),
+    introductions: { latestBatch: latestBatch || null, statuses: introductionStatuses.map((row) => ({ status: row.status, entityType: row.entity_type, count: Number(row.count || 0) })) },
+    updatedAt: [latestDish?.value, latestStall?.value, latestCanteen?.value].filter(Boolean).sort().pop() || null,
+  };
+}
+
+async function catalogRankingSignalSummary(db, tenantId, type) {
+  if (type === 'dishes') {
+    const row = await db.prepare(`SELECT COUNT(*) AS count,
+        SUM(CASE WHEN COALESCE(d.rating, 0) > 0 OR COALESCE(d.review_count, 0) > 0 THEN 1 ELSE 0 END) AS rated_count,
+        SUM(CASE WHEN COALESCE(d.sales, 0) > 0 THEN 1 ELSE 0 END) AS sales_count
+      FROM dishes d
+      JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+        AND d.catalog_item_type = 'meal' AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+        AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+        AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
+        AND (COALESCE(d.rating, 0) > 0 OR COALESCE(d.review_count, 0) > 0 OR COALESCE(d.sales, 0) > 0)`).get(tenantId);
+    return { count: Number(row?.count || 0), ratedCount: Number(row?.rated_count || 0), salesCount: Number(row?.sales_count || 0) };
+  }
+  if (type === 'stalls') {
+    const row = await db.prepare(`SELECT COUNT(*) AS count,
+        SUM(CASE WHEN COALESCE(s.rating, 0) > 0 THEN 1 ELSE 0 END) AS rated_count,
+        SUM(CASE WHEN EXISTS (SELECT 1 FROM dishes sales_d WHERE sales_d.tenant_id = s.tenant_id AND sales_d.stall_id = s.id
+          AND sales_d.status = 'active' AND sales_d.review_status = 'approved' AND sales_d.retrieval_eligible = 1
+          AND COALESCE(sales_d.sales, 0) > 0) THEN 1 ELSE 0 END) AS sales_count
+      FROM stalls s
+      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
+      LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+      WHERE s.tenant_id = ? AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+        AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+        AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
+        AND (COALESCE(s.rating, 0) > 0 OR EXISTS (SELECT 1 FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id
+          AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+          AND (COALESCE(d.rating, 0) > 0 OR COALESCE(d.review_count, 0) > 0 OR COALESCE(d.sales, 0) > 0)))`).get(tenantId);
+    return { count: Number(row?.count || 0), ratedCount: Number(row?.rated_count || 0), salesCount: Number(row?.sales_count || 0) };
+  }
+  const row = await db.prepare(`SELECT COUNT(*) AS count,
+      SUM(CASE WHEN EXISTS (SELECT 1 FROM stalls rated_s WHERE rated_s.tenant_id = c.tenant_id AND rated_s.canteen_id = c.id
+        AND rated_s.review_status = 'approved' AND rated_s.retrieval_eligible = 1 AND COALESCE(rated_s.rating, 0) > 0) THEN 1 ELSE 0 END) AS rated_count,
+      SUM(CASE WHEN EXISTS (SELECT 1 FROM dishes sales_d JOIN stalls sales_s ON sales_s.id = sales_d.stall_id AND sales_s.tenant_id = sales_d.tenant_id
+        WHERE sales_d.tenant_id = c.tenant_id AND sales_s.canteen_id = c.id AND sales_d.status = 'active' AND sales_d.review_status = 'approved'
+          AND sales_d.retrieval_eligible = 1 AND COALESCE(sales_d.sales, 0) > 0) THEN 1 ELSE 0 END) AS sales_count
+    FROM canteens c
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE c.tenant_id = ? AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+      AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
+      AND (EXISTS (SELECT 1 FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id
+        AND s.review_status = 'approved' AND s.retrieval_eligible = 1 AND COALESCE(s.rating, 0) > 0)
+        OR EXISTS (SELECT 1 FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+          WHERE d.tenant_id = c.tenant_id AND s.canteen_id = c.id AND d.status = 'active' AND d.review_status = 'approved'
+            AND d.retrieval_eligible = 1 AND (COALESCE(d.rating, 0) > 0 OR COALESCE(d.review_count, 0) > 0 OR COALESCE(d.sales, 0) > 0)))`).get(tenantId);
+  return { count: Number(row?.count || 0), ratedCount: Number(row?.rated_count || 0), salesCount: Number(row?.sales_count || 0) };
+}
+
 async function listCatalogRankings(db, tenantId, params) {
   const type = ['dishes', 'stalls', 'venues'].includes(String(params.get('type') || '')) ? String(params.get('type')) : 'dishes';
   const page = positivePage(params.get('page'), 1);
   const pageSize = positivePage(params.get('pageSize'), 20, 50);
   const offset = (page - 1) * pageSize;
   let total = 0;
+  let candidateCount = 0;
   let items = [];
   if (type === 'dishes') {
     total = Number((await db.prepare(`SELECT COUNT(*) AS count FROM dishes d
       JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
       JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
       LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'
-        AND s.review_status = 'approved' AND c.review_status = 'approved'
-        AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+        AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+        AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+        AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
         AND d.catalog_item_type = 'meal'`).get(tenantId))?.count || 0);
+    candidateCount = total;
     const rows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id, s.reservation_enabled AS stall_reservation_enabled,
       c.name AS canteen_name, c.venue_kind
       FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
       JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
       LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved'
-        AND s.review_status = 'approved' AND c.review_status = 'approved'
-        AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+      WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+        AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+        AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+        AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
         AND d.catalog_item_type = 'meal'
+        AND (COALESCE(d.rating, 0) > 0 OR COALESCE(d.review_count, 0) > 0 OR COALESCE(d.sales, 0) > 0)
       ORDER BY d.rating DESC, d.review_count DESC, d.sales DESC, d.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
     items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map((row) => ({ ...catalogDishPresentation(row), rankScore: Number(row.rating || 0) })));
   } else if (type === 'stalls') {
     total = Number((await db.prepare(`SELECT COUNT(*) AS count FROM stalls s
       JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
       LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-      WHERE s.tenant_id = ? AND s.review_status = 'approved' AND c.review_status = 'approved'
-        AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).get(tenantId))?.count || 0);
+      WHERE s.tenant_id = ? AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+        AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+        AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))`).get(tenantId))?.count || 0);
+    candidateCount = total;
     const rows = await db.prepare(`SELECT s.*, c.name AS canteen_name,
-      (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active' AND d.review_status = 'approved' AND d.catalog_item_type = 'meal') AS dish_count
+      (SELECT COUNT(*) FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1 AND d.catalog_item_type = 'meal') AS dish_count
       FROM stalls s JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
       LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-      WHERE s.tenant_id = ? AND s.review_status = 'approved' AND c.review_status = 'approved'
-        AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+      WHERE s.tenant_id = ? AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+        AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+        AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
+        AND (COALESCE(s.rating, 0) > 0 OR EXISTS (SELECT 1 FROM dishes d WHERE d.tenant_id = s.tenant_id AND d.stall_id = s.id
+          AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+          AND (COALESCE(d.rating, 0) > 0 OR COALESCE(d.review_count, 0) > 0 OR COALESCE(d.sales, 0) > 0)))
       ORDER BY s.rating DESC, dish_count DESC, s.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
     items = await applyApprovedIntroductions(db, tenantId, 'stall', rows.map((row) => ({ ...rowToStall(row), canteenName: row.canteen_name || '', dishCount: Number(row.dish_count || 0), rankScore: Number(row.rating || 0) })));
   } else {
     total = Number((await db.prepare(`SELECT COUNT(*) AS count FROM canteens c
       LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-      WHERE c.tenant_id = ? AND c.review_status = 'approved'
-        AND (c.parent_id IS NULL OR parent.review_status = 'approved')`).get(tenantId))?.count || 0);
+      WHERE c.tenant_id = ? AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+        AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))`).get(tenantId))?.count || 0);
+    candidateCount = total;
     const rows = await db.prepare(`SELECT c.*,
-      (SELECT COUNT(*) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id AND s.review_status = 'approved') AS stall_count,
-      (SELECT COALESCE(AVG(s.rating), 0) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id AND s.review_status = 'approved') AS rank_score
+      (SELECT COUNT(*) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id AND s.review_status = 'approved' AND s.retrieval_eligible = 1) AS stall_count,
+      (SELECT COALESCE(AVG(s.rating), 0) FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id AND s.review_status = 'approved' AND s.retrieval_eligible = 1 AND s.rating > 0) AS rank_score
       FROM canteens c LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
-      WHERE c.tenant_id = ? AND c.review_status = 'approved'
-        AND (c.parent_id IS NULL OR parent.review_status = 'approved')
+      WHERE c.tenant_id = ? AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+        AND (c.parent_id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))
+        AND (EXISTS (SELECT 1 FROM stalls s WHERE s.tenant_id = c.tenant_id AND s.canteen_id = c.id
+          AND s.review_status = 'approved' AND s.retrieval_eligible = 1 AND COALESCE(s.rating, 0) > 0)
+          OR EXISTS (SELECT 1 FROM dishes d JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+            WHERE d.tenant_id = c.tenant_id AND s.canteen_id = c.id AND d.status = 'active' AND d.review_status = 'approved'
+              AND d.retrieval_eligible = 1 AND (COALESCE(d.rating, 0) > 0 OR COALESCE(d.review_count, 0) > 0 OR COALESCE(d.sales, 0) > 0)))
       ORDER BY rank_score DESC, stall_count DESC, c.name ASC LIMIT ? OFFSET ?`).all(tenantId, pageSize, offset);
     items = await applyApprovedIntroductions(db, tenantId, 'canteen', rows.map((row) => ({ ...rowToCanteen(row), stallCount: Number(row.stall_count || 0), rankScore: Number(Number(row.rank_score || 0).toFixed(2)) })));
   }
-  return { type, items, page: { page, pageSize, total, hasMore: offset + items.length < total } };
+  const signal = await catalogRankingSignalSummary(db, tenantId, type);
+  total = signal.count;
+  return {
+    type,
+    items,
+    ranking: {
+      available: total > 0,
+      reason: total > 0 ? null : 'INSUFFICIENT_REAL_SIGNALS',
+      candidateCount,
+      signalCount: total,
+      ratedCount: signal.ratedCount,
+      salesCount: signal.salesCount,
+    },
+    page: { page, pageSize, total, hasMore: offset + items.length < total },
+  };
 }
 
 async function listSavedCatalogDishes(db, user, params) {
@@ -3653,6 +3886,10 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
       if (method === 'GET' && url.pathname === '/api/catalog/venues') return send(res, 200, await listCatalogVenues(db, tenantIdFor(user)));
       if (method === 'GET' && url.pathname === '/api/catalog/stalls') return send(res, 200, await listCatalogStalls(db, tenantIdFor(user), url.searchParams));
       if (method === 'GET' && url.pathname === '/api/catalog/categories') return send(res, 200, await listCatalogCategories(db, tenantIdFor(user), url.searchParams));
+      if (method === 'GET' && url.pathname === '/api/catalog/regions') return send(res, 200, await listCatalogRegions(db, tenantIdFor(user), url.searchParams));
+      if (method === 'GET' && pathParts[0] === 'api' && pathParts[1] === 'catalog' && pathParts[2] === 'regions' && pathParts[3] && pathParts[4] === 'dishes') {
+        return send(res, 200, await listCatalogRegions(db, tenantIdFor(user), url.searchParams, decodeURIComponent(pathParts[3])));
+      }
       if (method === 'GET' && url.pathname === '/api/catalog/rankings') return send(res, 200, await listCatalogRankings(db, tenantIdFor(user), url.searchParams));
       if (method === 'GET' && url.pathname === '/api/catalog/saved') {
         const activeUser = await requireUser(db, req);
@@ -4909,6 +5146,12 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
           offset
         });
         await audit(db, activeUser, 'LIST', 'catalog_tree', null, { include, query: url.searchParams.get('q') || '' });
+        return send(res, 200, result);
+      }
+      if (method === 'GET' && url.pathname === '/api/admin/catalog/overview') {
+        const activeUser = await requireAnyCapability(db, req, ['audit:read', 'canteen:write', 'stall:write', 'dish:write']);
+        const result = await adminCatalogOverview(db, tenantIdFor(activeUser));
+        await audit(db, activeUser, 'LIST', 'catalog_overview', null);
         return send(res, 200, result);
       }
       if (method === 'GET' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'catalog' && pathParts[3] === 'stalls' && pathParts[4] && pathParts[5] === 'dishes') {

@@ -136,6 +136,12 @@ export const apiClient = {
   catalogRankings(params = {}) {
     return request(`/api/catalog/rankings${queryString({ type: params.type || 'dishes', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
   },
+  catalogRegions(params = {}) {
+    return request(`/api/catalog/regions${queryString({ itemType: params.itemType || 'meal' })}`);
+  },
+  catalogRegionDishes(regionId, params = {}) {
+    return request(`/api/catalog/regions/${encodeURIComponent(regionId)}/dishes${queryString({ itemType: params.itemType || 'meal', page: params.page || 1, pageSize: params.pageSize || 20, sort: params.sort || 'rating' })}`);
+  },
   savedCatalog(params = {}) {
     return request(`/api/catalog/saved${queryString({ kind: params.kind || 'favorite', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
   },

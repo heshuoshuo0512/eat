@@ -8,7 +8,6 @@
       </view>
       <view class="ranking-main">
         <sc-segmented-control v-model="activeType" :options="typeOptions" block />
-        <scroll-view v-if="activeType==='dishes'" class="filter-scroll" scroll-x enable-flex><view class="filter-row"><button v-for="option in cuisineOptions" :key="option" :class="{active:cuisine===option}" @tap="cuisine=option">{{ option }}</button></view></scroll-view>
         <sc-state-card v-if="store.loading.value&&!store.loaded.value" type="loading" title="正在计算排行榜" />
         <view v-else class="rank-list">
           <button v-for="(item,index) in activeItems" :key="item.id" class="rank-row" :class="{ podium:index<3 }" :style="entryStyle(index)" @tap="openItem(item)">
@@ -17,7 +16,7 @@
             <view class="rank-score"><text class="ui-strong">{{ rating(item) }}</text><text>{{ activeType==='dishes'?'口碑':'综合分' }}</text></view><sc-icon name="arrow-right" :size="16" tone="muted" />
           </button>
           <text v-if="activePage.hasMore" class="page-progress">{{ loadingMore?'正在加载更多':'继续上拉加载更多' }}</text>
-          <sc-state-card v-if="!activeItems.length" type="empty" title="暂无排行数据" desc="评价数据积累后会显示在这里。" />
+          <sc-state-card v-if="!activeItems.length" type="empty" :title="activeMeta?.available===false?'评价与热度数据积累中':'暂无排行数据'" :desc="activeMeta?.available===false?`当前有 ${activeMeta?.candidateCount||0} 项真实目录可评价。`:'这里仅展示真实评分、评价或销量信号。'" />
         </view>
       </view>
     </view>
@@ -29,9 +28,9 @@ import { computed, reactive, ref, watch } from 'vue';
 import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app';
 import { dishPriceText, dishRatingText, verifiedDishImageUrl } from '../../domain/dishPresentation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
-const store=useCanteenStore();const typeOptions=[{value:'dishes',label:'菜品'},{value:'stalls',label:'档口'},{value:'canteens',label:'场所'}];const activeType=ref('dishes');const cuisine=ref('全部');const loadingMore=ref(false);const rankingPages=reactive({dishes:{page:1,pageSize:20,total:0,hasMore:false},stalls:{page:1,pageSize:20,total:0,hasMore:false},canteens:{page:1,pageSize:20,total:0,hasMore:false}});
-const cuisineOptions=computed(()=>['全部',...new Set((store.rankings.value.dishes||[]).map((item)=>item.cuisine).filter(Boolean))]);
-const activeItems=computed(()=>{const list=store.rankings.value[activeType.value]||[];if(activeType.value!=='dishes'||cuisine.value==='全部')return list;return list.filter((item)=>item.cuisine===cuisine.value);});
+const store=useCanteenStore();const typeOptions=[{value:'dishes',label:'菜品'},{value:'stalls',label:'档口'},{value:'canteens',label:'场所'}];const activeType=ref('dishes');const loadingMore=ref(false);const rankingPages=reactive({dishes:{page:1,pageSize:20,total:0,hasMore:false},stalls:{page:1,pageSize:20,total:0,hasMore:false},canteens:{page:1,pageSize:20,total:0,hasMore:false}});
+const activeItems=computed(()=>store.rankings.value[activeType.value]||[]);
+const activeMeta=computed(()=>store.rankingMeta.value[activeType.value]);
 const podiumItems=computed(()=>activeItems.value.slice(0,3).map((item,index)=>({...item,place:index+1})));
 const podiumImageDish=computed(()=>activeType.value==='dishes'&&verifiedDishImageUrl(activeItems.value[0]||{})?activeItems.value[0]:null);
 const activePage=computed(()=>rankingPages[activeType.value]);

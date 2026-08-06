@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { buildMealPlan, calculateRanking, contextualRankDishes, normalizeProfile } from '../domain/recommendation.js';
+import { buildMealPlan, contextualRankDishes, normalizeProfile } from '../domain/recommendation.js';
 import { apiClient } from '../services/apiClient.js';
 
 function emptyState() {
@@ -111,6 +111,10 @@ export const useCanteenStore = defineStore('canteen', () => {
   const catalogCategories = ref({ meal: [], snack: [], beverage: [] });
   const reservationCatalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
   const remoteRankings = ref({ dishes: [], stalls: [], canteens: [] });
+  const rankingMeta = ref({ dishes: null, stalls: null, canteens: null });
+  const catalogRegions = ref({ meal: [], snack: [], beverage: [] });
+  const catalogRegionDetails = ref({});
+  const adminCatalogOverview = ref(null);
   const savedCatalog = ref({ favorite: { items: [], page: { page: 0, hasMore: false, total: 0 } }, eaten: { items: [], page: { page: 0, hasMore: false, total: 0 } } });
 
   const orders = ref([]);
@@ -163,6 +167,7 @@ export const useCanteenStore = defineStore('canteen', () => {
       });
       catalogPage.value = dishesResult.page || { page: 1, pageSize: 50, total: dishesResult.items?.length || 0, hasMore: false };
       remoteRankings.value = { dishes: dishRanks.items || [], stalls: stallRanks.items || [], canteens: venueRanks.items || [] };
+      rankingMeta.value = { dishes: dishRanks.ranking || null, stalls: stallRanks.ranking || null, canteens: venueRanks.ranking || null };
       todayMenu.value = { date: '', mealType: state.value.profile.mealType, menus: [], dishes: [], source: 'stable_catalog' };
     } catch (err) {
       error.value = err.message;
@@ -178,25 +183,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const profile = computed(() => state.value.profile);
   const dishPreferences = computed(() => state.value.dishPreferences);
   const searchedDishes = computed(() => filterDishes(state.value.dishes, searchFilters.value));
-  const rankings = computed(() => {
-    if (remoteRankings.value.dishes.length || remoteRankings.value.stalls.length || remoteRankings.value.canteens.length) return remoteRankings.value;
-    const reviewsByTarget = new Map();
-    for (const review of state.value.reviews) {
-      reviewsByTarget.set(review.targetId, [...(reviewsByTarget.get(review.targetId) || []), review]);
-    }
-    const rankedDishes = calculateRanking(state.value.dishes, reviewsByTarget);
-    const rankedStalls = state.value.stalls.map((stall) => {
-      const stallDishes = rankedDishes.filter((dish) => dish.stallId === stall.id);
-      const rankScore = stallDishes.length ? stallDishes.reduce((sum, dish) => sum + dish.rankScore, 0) / stallDishes.length : stall.rating;
-      return { ...stall, rankScore: Number(rankScore.toFixed(2)), dishCount: stallDishes.length };
-    }).sort((left, right) => right.rankScore - left.rankScore);
-    const rankedCanteens = state.value.canteens.map((canteen) => {
-      const canteenStalls = rankedStalls.filter((stall) => stall.canteenId === canteen.id);
-      const rankScore = canteenStalls.length ? canteenStalls.reduce((sum, stall) => sum + stall.rankScore, 0) / canteenStalls.length : 0;
-      return { ...canteen, rankScore: Number(rankScore.toFixed(2)), stallCount: canteenStalls.length };
-    }).sort((left, right) => right.rankScore - left.rankScore);
-    return { dishes: rankedDishes, stalls: rankedStalls, canteens: rankedCanteens };
-  });
+  const rankings = computed(() => remoteRankings.value);
   const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
 
   async function loadRecommendation() {
@@ -299,8 +286,31 @@ export const useCanteenStore = defineStore('canteen', () => {
     const entities = new Map(previous.map((item) => [String(item.id), item]));
     for (const item of result.items || []) entities.set(String(item.id), item);
     remoteRankings.value = { ...remoteRankings.value, [key]: [...entities.values()] };
+    rankingMeta.value = { ...rankingMeta.value, [key]: result.ranking || null };
     if (type === 'dishes') mergeDishes(result.items || []);
     return result;
+  }
+
+  async function loadCatalogRegions(itemType = 'meal') {
+    const result = await apiClient.catalogRegions({ itemType });
+    catalogRegions.value = { ...catalogRegions.value, [itemType]: result.regions || [] };
+    return result;
+  }
+
+  async function loadCatalogRegionDishes(regionId, params = {}) {
+    const result = await apiClient.catalogRegionDishes(regionId, params);
+    const key = `${params.itemType || 'meal'}:${regionId}`;
+    const previous = Number(params.page || 1) > 1 ? catalogRegionDetails.value[key]?.items || [] : [];
+    const entities = new Map(previous.map((item) => [String(item.id), item]));
+    for (const item of result.items || []) entities.set(String(item.id), item);
+    catalogRegionDetails.value = { ...catalogRegionDetails.value, [key]: { ...result, items: [...entities.values()] } };
+    mergeDishes(result.items || []);
+    return catalogRegionDetails.value[key];
+  }
+
+  async function loadAdminCatalogOverview() {
+    adminCatalogOverview.value = await apiClient.getAdminCatalogOverview();
+    return adminCatalogOverview.value;
   }
 
   async function loadCommunityDishOptions(filters = {}) {
@@ -1031,12 +1041,19 @@ export const useCanteenStore = defineStore('canteen', () => {
     rebuildRetrievalIndex,
     searchDishes,
     catalogCategories,
+    catalogRegions,
+    catalogRegionDetails,
+    rankingMeta,
+    adminCatalogOverview,
     loadCatalogCategories,
     loadCatalogDishes,
     loadMoreCatalog,
     fetchDishDetail,
     loadSavedCatalog,
     loadCatalogRanking,
+    loadCatalogRegions,
+    loadCatalogRegionDishes,
+    loadAdminCatalogOverview,
     loadCommunityDishOptions,
     clearDishSearch,
     loadRecommendation,

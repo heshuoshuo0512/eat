@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue';
-import { buildMealPlan, calculateRanking, normalizeProfile } from '../domain/recommendation.js';
+import { buildMealPlan, normalizeProfile } from '../domain/recommendation.js';
 import { DEFAULT_DATA_MAX_AGE_MS, isDataCacheStale } from '../domain/cachePolicy.js';
 import { normalizeRecommendationResult } from '../domain/studentDiscovery.js';
 import { apiClient } from '../services/apiClient.js';
@@ -22,25 +22,6 @@ function emptyMenu() {
   return { date: '', mealType: 'lunch', menus: [], dishes: [], source: 'stable_catalog' };
 }
 
-function localRankings(source) {
-  const reviewsByTarget = new Map();
-  for (const review of source.reviews || []) {
-    reviewsByTarget.set(review.targetId, [...(reviewsByTarget.get(review.targetId) || []), review]);
-  }
-  const dishes = calculateRanking(source.dishes || [], reviewsByTarget);
-  const stalls = (source.stalls || []).map((stall) => {
-    const items = dishes.filter((dish) => dish.stallId === stall.id);
-    const rankScore = items.length ? items.reduce((sum, dish) => sum + dish.rankScore, 0) / items.length : Number(stall.rating || 0);
-    return { ...stall, rankScore: Number(rankScore.toFixed(2)), dishCount: items.length };
-  }).sort((left, right) => right.rankScore - left.rankScore);
-  const canteens = (source.canteens || []).map((canteen) => {
-    const items = stalls.filter((stall) => stall.canteenId === canteen.id);
-    const rankScore = items.length ? items.reduce((sum, stall) => sum + stall.rankScore, 0) / items.length : 0;
-    return { ...canteen, rankScore: Number(rankScore.toFixed(2)), stallCount: items.length };
-  }).sort((left, right) => right.rankScore - left.rankScore);
-  return { dishes, stalls, canteens };
-}
-
 const state = ref(emptyState());
 const loading = ref(false);
 const error = ref('');
@@ -51,6 +32,9 @@ const catalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
 const catalogCategories = ref({ meal: [], snack: [], beverage: [] });
 const reservationCatalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
 const remoteRankings = ref({ dishes: [], stalls: [], canteens: [] });
+const rankingMeta = ref({ dishes: null, stalls: null, canteens: null });
+const catalogRegions = ref({ meal: [], snack: [], beverage: [] });
+const catalogRegionDetails = ref({});
 const savedCatalog = ref({ favorite: { items: [], page: { page: 0, hasMore: false, total: 0 } }, eaten: { items: [], page: { page: 0, hasMore: false, total: 0 } } });
 const contextualRecommendation = ref(normalizeRecommendationResult());
 const recommendationLoading = ref(false);
@@ -112,6 +96,11 @@ async function hydrateExtras() {
     stalls: results[4].status === 'fulfilled' ? results[4].value.items || [] : [],
     canteens: results[5].status === 'fulfilled' ? results[5].value.items || [] : [],
   };
+  rankingMeta.value = {
+    dishes: results[3].status === 'fulfilled' ? results[3].value.ranking || null : null,
+    stalls: results[4].status === 'fulfilled' ? results[4].value.ranking || null : null,
+    canteens: results[5].status === 'fulfilled' ? results[5].value.ranking || null : null,
+  };
   if (results[6].status === 'fulfilled') setPreferences(results[6].value.preferences || []);
 }
 
@@ -169,7 +158,7 @@ const stalls = computed(() => state.value.stalls);
 const dishes = computed(() => state.value.dishes);
 const profile = computed(() => state.value.profile);
 const dishPreferences = computed(() => state.value.dishPreferences);
-const rankings = computed(() => remoteRankings.value.dishes.length || remoteRankings.value.stalls.length || remoteRankings.value.canteens.length ? remoteRankings.value : localRankings(state.value));
+const rankings = computed(() => remoteRankings.value);
 const searchedDishes = computed(() => state.value.dishes.filter((dish) => dish.status !== 'archived' && dish.status !== 'inactive'));
 const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes?.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
 
@@ -321,8 +310,26 @@ async function loadCatalogRanking(type = 'dishes', { page = 1, pageSize = 20 } =
   const entities = new Map(previous.map((item) => [String(item.id), item]));
   for (const item of result.items || []) entities.set(String(item.id), item);
   remoteRankings.value = { ...remoteRankings.value, [key]: [...entities.values()] };
+  rankingMeta.value = { ...rankingMeta.value, [key]: result.ranking || null };
   if (type === 'dishes') mergeDishes(result.items || []);
   return result;
+}
+
+async function loadCatalogRegions(itemType = 'meal') {
+  const result = await apiClient.catalogRegions({ itemType });
+  catalogRegions.value = { ...catalogRegions.value, [itemType]: result.regions || [] };
+  return result;
+}
+
+async function loadCatalogRegionDishes(regionId, params = {}) {
+  const result = await apiClient.catalogRegionDishes(regionId, params);
+  const key = `${params.itemType || 'meal'}:${regionId}`;
+  const previous = Number(params.page || 1) > 1 ? catalogRegionDetails.value[key]?.items || [] : [];
+  const entities = new Map(previous.map((item) => [String(item.id), item]));
+  for (const item of result.items || []) entities.set(String(item.id), item);
+  catalogRegionDetails.value = { ...catalogRegionDetails.value, [key]: { ...result, items: [...entities.values()] } };
+  mergeDishes(result.items || []);
+  return catalogRegionDetails.value[key];
 }
 
 async function toggleFavorite(dishId) {
@@ -369,11 +376,11 @@ function setMotionReduced(value) {
 
 export function useCanteenStore() {
   return {
-    state, loading, error, loaded, lastLoadedAt, todayMenu, catalogPage, catalogCategories, reservationCatalogPage, remoteRankings, savedCatalog, contextualRecommendation, recommendationLoading,
+    state, loading, error, loaded, lastLoadedAt, todayMenu, catalogPage, catalogCategories, reservationCatalogPage, remoteRankings, rankingMeta, catalogRegions, catalogRegionDetails, savedCatalog, contextualRecommendation, recommendationLoading,
     discoveryMode, communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
     rankings, searchedDishes, recommendation,
     load, ensureLoaded, refreshIfStale, login, register, wechatLogin, logout, getDishDetail, addReview, saveProfile, deferProfileOnboarding,
-    loadTodayMenu, loadMoreTodayMenu, loadCatalogDishes, loadMoreCatalog, loadCatalogCategories, loadSavedCatalog, loadCatalogRanking, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
+    loadTodayMenu, loadMoreTodayMenu, loadCatalogDishes, loadMoreCatalog, loadCatalogCategories, loadSavedCatalog, loadCatalogRanking, loadCatalogRegions, loadCatalogRegionDishes, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
     markDishDrawn, openDiscoveryMode, openCommunitySection, setMotionReduced,
     fetchDishDetail,
     runAgent: apiClient.runAgent,

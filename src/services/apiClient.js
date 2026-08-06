@@ -118,6 +118,13 @@ export const apiClient = {
   async catalogRankings({ type = 'dishes', page = 1, pageSize = 20 } = {}) {
     return request(`/api/catalog/rankings?${new URLSearchParams({ type, page: String(page), pageSize: String(pageSize) })}`);
   },
+  async catalogRegions({ itemType = 'meal' } = {}) {
+    return request(`/api/catalog/regions?${new URLSearchParams({ itemType })}`);
+  },
+  async catalogRegionDishes(regionId, { itemType = 'meal', page = 1, pageSize = 20, sort = 'rating' } = {}) {
+    const query = new URLSearchParams({ itemType, page: String(page), pageSize: String(pageSize), sort });
+    return request(`/api/catalog/regions/${encodeURIComponent(regionId)}/dishes?${query}`);
+  },
   async savedCatalog({ kind = 'favorite', page = 1, pageSize = 20 } = {}) {
     return request(`/api/catalog/saved?${new URLSearchParams({ kind, page: String(page), pageSize: String(pageSize) })}`);
   },
@@ -430,6 +437,9 @@ export const apiClient = {
   },
   async getDatabaseOverview() {
     return request('/api/admin/database/overview');
+  },
+  async getAdminCatalogOverview() {
+    return request('/api/admin/catalog/overview');
   },
   async getAdminCatalogTree(params = {}) {
     const query = new URLSearchParams();

@@ -1,7 +1,9 @@
 <template>
-  <sc-page-shell back title="地区口味推荐" subtitle="六种地区风味" tone="explore">
+  <sc-page-shell back title="区域推荐" subtitle="真实目录聚合" tone="explore">
     <view class="region-intro"><text class="ui-strong">从风味开始选</text><text class="ui-small">按区域风味、菜系、口味和食材整理校内菜品。</text></view>
-    <sc-state-card v-if="store.loading.value&&!store.loaded.value" type="loading" title="正在整理区域菜品" />
+    <sc-segmented-control v-model="itemType" :options="itemTypeOptions" block />
+    <sc-state-card v-if="loading" type="loading" title="正在整理区域菜品" />
+    <sc-state-card v-else-if="error" type="error" title="区域数据加载失败" :desc="error" />
     <view v-else class="region-grid">
       <sc-list-row
         v-for="(region,index) in regions"
@@ -9,7 +11,7 @@
         class="region-card"
         icon-name="location"
         :title="region.name"
-        :description="`${region.subtitle} · ${region.description}`"
+        :description="`${region.subtitle} · ${region.description} · ${region.source==='derived'?'推断分组':'数据库标签'}`"
         :meta="region.averageRating>0?`${region.averageRating} 分`:'暂无评分'"
         :badge="`${region.count} 道`"
         :style="entryStyle(index)"
@@ -20,12 +22,20 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { ref, watch } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
-import { summarizeRegions } from '../../domain/regionRecommendation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
-const store=useCanteenStore();const ratingById=computed(()=>new Map((store.rankings.value.dishes||[]).map((dish)=>[String(dish.id),dish])));const regions=computed(()=>summarizeRegions(store.dishes.value,{ratingById:ratingById.value,preferences:store.dishPreferences.value}));
-onShow(async()=>{try{await store.refreshIfStale();if(!store.user.value)uni.reLaunch({url:'/pages/login/login'});}catch{}});function entryStyle(index){return store.motionReduced.value?{}:{animationDelay:`${index*60}ms`};}function openRegion(id){uni.navigateTo({url:`/pages/region-detail/region-detail?id=${encodeURIComponent(id)}`});}
+const store=useCanteenStore();
+const itemType=ref('meal');
+const itemTypeOptions=[{value:'meal',label:'餐食'},{value:'snack',label:'小吃'},{value:'beverage',label:'饮品'}];
+const regions=ref([]);
+const loading=ref(false);
+const error=ref('');
+async function loadRegions(){loading.value=true;error.value='';try{const result=await store.loadCatalogRegions(itemType.value);regions.value=result.regions||[];}catch(err){error.value=err.message||'请稍后重试';}finally{loading.value=false;}}
+onShow(async()=>{try{await store.refreshIfStale();if(!store.user.value){uni.reLaunch({url:'/pages/login/login'});return;}await loadRegions();}catch(err){error.value=err.message||'请稍后重试';}});
+watch(itemType,loadRegions);
+function entryStyle(index){return store.motionReduced.value?{}:{animationDelay:`${index*60}ms`};}
+function openRegion(id){uni.navigateTo({url:`/pages/region-detail/region-detail?id=${encodeURIComponent(id)}&itemType=${itemType.value}`});}
 </script>
 
 <style scoped>

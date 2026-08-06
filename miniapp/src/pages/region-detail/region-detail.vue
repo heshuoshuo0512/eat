@@ -1,6 +1,8 @@
 <template>
   <sc-page-shell back :title="region?.name||'地区口味推荐'" :subtitle="region?.subtitle||'地区风味'" tone="explore">
-    <sc-state-card v-if="!region" type="error" title="区域不存在" desc="返回区域列表重新选择。" />
+    <sc-state-card v-if="loading" type="loading" title="正在加载区域菜品" />
+    <sc-state-card v-else-if="error" type="error" title="区域数据加载失败" :desc="error" />
+    <sc-state-card v-else-if="!region" type="error" title="区域不存在" desc="返回区域列表重新选择。" />
     <template v-else>
       <view class="region-workspace">
         <view class="region-aside">
@@ -23,16 +25,30 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
 import { dishSupplyPresentation } from '../../domain/dishPresentation.js';
-import { getDishRegionIds, getRegionById, getRegionDishes, rankRegionDishes, summarizeRegions } from '../../domain/regionRecommendation.js';
 import { useCanteenStore } from '../../stores/canteenStore.js';
-const store=useCanteenStore();const regionId=ref('');const sortBy=ref('forYou');const sortOptions=[{value:'forYou',label:'适合我'},{value:'rating',label:'评分'},{value:'hot',label:'热度'},{value:'price',label:'价格'}];const region=computed(()=>getRegionById(regionId.value));const ratingById=computed(()=>new Map((store.rankings.value.dishes||[]).map((dish)=>[String(dish.id),dish])));const summary=computed(()=>summarizeRegions(store.dishes.value,{ratingById:ratingById.value,preferences:store.dishPreferences.value}).find((item)=>item.id===regionId.value));const dishes=computed(()=>rankRegionDishes(getRegionDishes(regionId.value,store.dishes.value),{sortBy:sortBy.value,ratingById:ratingById.value,preferences:store.dishPreferences.value}));
-const dishGroups=computed(()=>{const order=['staple','noodle','hot','snack','beverage','other'];const definitions={staple:{label:'主食与套餐',description:'米饭、盖饭、早餐主食和组合套餐'},noodle:{label:'面食粉类',description:'面、粉、米线、水饺与馄饨'},hot:{label:'热菜与锅物',description:'家常热菜、干锅、砂锅和火锅类'},snack:{label:'小吃',description:'可单独购买的小吃与甜品'},beverage:{label:'饮品',description:'茶饮、豆浆、汽水与其他饮料'},other:{label:'其他餐食',description:'暂未归入以上分类的目录菜品'}};const groups=new Map();for(const dish of dishes.value){const id=regionDishGroup(dish);if(!groups.has(id))groups.set(id,{id,...definitions[id],items:[]});groups.get(id).items.push(dish);}return order.filter((id)=>groups.has(id)).map((id)=>groups.get(id));});
-onLoad(async(options)=>{regionId.value=String(options?.id||'');if(options?.sort&&sortOptions.some((item)=>item.value===options.sort))sortBy.value=options.sort;try{await store.refreshIfStale();if(!store.user.value)uni.reLaunch({url:'/pages/login/login'});}catch{}});
+const store=useCanteenStore();const regionId=ref('');const itemType=ref('meal');const sortBy=ref('rating');const region=ref(null);const dishes=ref([]);const loading=ref(false);const error=ref('');const sortOptions=[{value:'rating',label:'评分'},{value:'hot',label:'热度'},{value:'price',label:'价格'}];const summary=computed(()=>region.value);
+const dishGroups=computed(()=>{const groups=new Map();for(const dish of dishes.value){const label=String(dish.catalogCategory||'其他');if(!groups.has(label))groups.set(label,{id:label,label,description:'数据库中的原始分类',items:[]});groups.get(label).items.push(dish);}return [...groups.values()];});
+async function loadDetail(){if(!regionId.value)return;loading.value=true;error.value='';try{const result=await store.loadCatalogRegionDishes(regionId.value,{itemType:itemType.value,page:1,pageSize:50,sort:sortBy.value});region.value=result.region||null;dishes.value=result.items||[];}catch(err){region.value=null;dishes.value=[];error.value=err.message||'请稍后重试';}finally{loading.value=false;}}
+onLoad(async (options) => {
+  regionId.value = String(options?.id || '');
+  itemType.value = String(options?.itemType || 'meal');
+  if (options?.sort && sortOptions.some((item) => item.value === options.sort)) sortBy.value = options.sort;
+  try {
+    await store.refreshIfStale();
+    if (!store.user.value) {
+      uni.reLaunch({ url: '/pages/login/login' });
+      return;
+    }
+    await loadDetail();
+  } catch (err) {
+    error.value = err.message || '请稍后重试';
+  }
+});
+watch(sortBy,loadDetail);
 function formatHeat(value){const count=Number(value||0);return count>=1000?`${(count/1000).toFixed(1)}k`:String(count);}function locationLabel(dish){const stall=store.stalls.value.find((item)=>item.id===dish.stallId);const canteen=store.canteens.value.find((item)=>item.id===stall?.canteenId);return[canteen?.name,stall?.name].filter(Boolean).join(' · ')||'校园档口';}function supplyState(dish){const menu=store.todayMenu.value.dishes?.find((item)=>String(item.id)===String(dish.id));return dishSupplyPresentation(dish,menu||null);}function openDish(id){uni.navigateTo({url:`/pages/dish-detail/dish-detail?id=${encodeURIComponent(id)}`});}
-function regionDishGroup(dish){const itemType=String(dish.catalogItemType||'meal');const category=String(dish.catalogCategory||dish.category||'');if(itemType==='beverage'||/饮品/u.test(category))return'beverage';if(itemType==='snack'||/小吃|甜品/u.test(category))return'snack';if(/面食|粉类|水饺|馄饨/u.test(category))return'noodle';if(/米饭|早餐|套餐|主食|轻食/u.test(category))return'staple';if(/热菜|火锅|麻辣烫|干锅|砂锅|烤鱼|水煮|蒸菜|汤羹/u.test(category))return'hot';return'other';}
 </script>
 
 <style scoped>
