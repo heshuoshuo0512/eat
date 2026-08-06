@@ -95,12 +95,22 @@
       <p v-if="!sortedDishes.length" class="muted empty-dishes">暂无有效菜品。</p>
       <nav v-if="searchResultActive && searchPageCount > 1" class="pagination" aria-label="检索结果分页">
         <button type="button" :disabled="ragLoading || searchPage <= 1" @click="changeSearchPage(searchPage - 1)">上一页</button>
-        <label>第 <select :value="searchPage" aria-label="选择检索页码" @change="changeSearchPage(Number($event.target.value))"><option v-for="page in searchPageCount" :key="page" :value="page">{{ page }}</option></select> / {{ searchPageCount }} 页</label>
+        <div class="pagination-pages" aria-label="检索结果页码">
+          <template v-for="item in searchPaginationItems" :key="item.key">
+            <span v-if="item.type === 'ellipsis'" class="pagination-ellipsis" aria-hidden="true">…</span>
+            <button v-else type="button" class="pagination-page" :class="{ active: item.page === searchPage }" :aria-label="`第 ${item.page} 页`" :aria-current="item.page === searchPage ? 'page' : undefined" :disabled="ragLoading || item.page === searchPage" @click="changeSearchPage(item.page)">{{ item.page }}</button>
+          </template>
+        </div>
         <button type="button" :disabled="ragLoading || searchPage >= searchPageCount" @click="changeSearchPage(searchPage + 1)">下一页</button>
       </nav>
       <nav v-if="!searchResultActive && catalogPageCount > 1" class="pagination" aria-label="菜品目录分页">
         <button type="button" :disabled="catalogLoadingMore || catalogPage <= 1" @click="changeCatalogPage(catalogPage - 1)">上一页</button>
-        <label>第 <select :value="catalogPage" aria-label="选择目录页码" @change="changeCatalogPage(Number($event.target.value))"><option v-for="page in catalogPageCount" :key="page" :value="page">{{ page }}</option></select> / {{ catalogPageCount }} 页</label>
+        <div class="pagination-pages" aria-label="菜品目录页码">
+          <template v-for="item in catalogPaginationItems" :key="item.key">
+            <span v-if="item.type === 'ellipsis'" class="pagination-ellipsis" aria-hidden="true">…</span>
+            <button v-else type="button" class="pagination-page" :class="{ active: item.page === catalogPage }" :aria-label="`第 ${item.page} 页`" :aria-current="item.page === catalogPage ? 'page' : undefined" :disabled="catalogLoadingMore || item.page === catalogPage" @click="changeCatalogPage(item.page)">{{ item.page }}</button>
+          </template>
+        </div>
         <button type="button" :disabled="catalogLoadingMore || catalogPage >= catalogPageCount" @click="changeCatalogPage(catalogPage + 1)">下一页</button>
       </nav>
       <p v-if="!searchResultActive && catalogError" class="form-message catalog-error" role="alert">{{ catalogError }} <button class="text-link" type="button" @click="reloadCatalogPage">重新加载</button></p>
@@ -162,6 +172,8 @@ const catalogPage = computed(() => Number(store.catalogPage.page || 1));
 const catalogPageCount = computed(() => Math.max(1, Math.ceil(Number(store.catalogPage.total || 0) / Number(store.catalogPage.pageSize || 50))));
 const searchPage = computed(() => Number(ragResult.value?.page?.page || 1));
 const searchPageCount = computed(() => Math.max(1, Math.ceil(Number(ragResult.value?.page?.total || 0) / Number(ragResult.value?.page?.pageSize || 50))));
+const searchPaginationItems = computed(() => buildPaginationItems(searchPage.value, searchPageCount.value));
+const catalogPaginationItems = computed(() => buildPaginationItems(catalogPage.value, catalogPageCount.value));
 const resultCountLabel = computed(() => {
   if (!searchResultActive.value) return `第 ${catalogPage.value} / ${catalogPageCount.value} 页，共 ${store.catalogPage.total} 项${catalogItemTypes.find((item) => item.value === catalogItemType.value)?.label || '目录'}`;
   const total = Number(ragResult.value?.page?.total ?? ragResult.value?.availability?.totalCount ?? sortedDishes.value.length);
@@ -181,12 +193,35 @@ watch(() => route.query.dish, (val) => {
   if (val) router.replace({ name: 'dish-detail', params: { id: String(val) } });
 });
 
+function buildPaginationItems(currentPage, pageCount) {
+  const total = Math.max(1, Number(pageCount) || 1);
+  const current = Math.min(total, Math.max(1, Number(currentPage) || 1));
+  let pages;
+  if (total <= 7) pages = Array.from({ length: total }, (_, index) => index + 1);
+  else if (current <= 4) pages = [1, 2, 3, 4, 5, total];
+  else if (current >= total - 3) pages = [1, total - 4, total - 3, total - 2, total - 1, total];
+  else pages = [1, current - 1, current, current + 1, total];
+
+  const items = [];
+  let previousPage = 0;
+  for (const page of pages) {
+    if (page - previousPage > 1) items.push({ type: 'ellipsis', key: `ellipsis-${previousPage}-${page}` });
+    items.push({ type: 'page', page, key: `page-${page}` });
+    previousPage = page;
+  }
+  return items;
+}
+
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 async function changeCatalogPage(page) {
   const targetPage = Number(page);
   if (catalogLoadingMore.value || !Number.isInteger(targetPage) || targetPage < 1 || targetPage > catalogPageCount.value || targetPage === catalogPage.value) return;
   catalogLoadingMore.value = true;
   catalogError.value = '';
-  try { await store.loadCatalogDishes({ page: targetPage, pageSize: 50, ...catalogBrowseFilters() }); }
+  try { await store.loadCatalogDishes({ page: targetPage, pageSize: 50, ...catalogBrowseFilters() }); scrollToTop(); }
   catch (error) { catalogError.value = error.message || '目录分页加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
@@ -307,6 +342,7 @@ async function changeSearchPage(page) {
   try {
     ragResult.value = await store.searchDishes(buildSearchPayload(ragQuery.value.trim(), targetPage));
     citationsExpanded.value = false;
+    scrollToTop();
   } catch (error) {
     ragError.value = error.message || '检索分页加载失败，请重试。';
   }
@@ -465,7 +501,7 @@ onMounted(async () => {
 .compact-citations strong, .compact-citations small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.compact-citations small { color: var(--muted); font-size: 11px; }
 .relaxation-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
 .result-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 28px 0 14px; }.result-toolbar h2 { margin: 0; font-size: 20px; }
-.pagination { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 18px 0 4px; color: var(--muted); font-size: 13px; }.pagination button { min-height: 36px; padding: 0 12px; border: 1px solid rgba(31,122,77,.18); border-radius: 6px; background: #fff; color: inherit; }.pagination button:disabled { cursor: not-allowed; opacity: .48; }.pagination label { display: inline-flex; align-items: center; gap: 5px; }.pagination select { min-width: 56px; min-height: 34px; padding: 0 6px; border: 1px solid rgba(31,122,77,.2); border-radius: 5px; background: #fff; color: inherit; }
+.pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 18px 0 4px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }.pagination-pages { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }.pagination button { min-height: 36px; min-width: 36px; padding: 0 10px; border: 1px solid rgba(31,122,77,.18); border-radius: 6px; background: #fff; color: inherit; }.pagination button:disabled { cursor: not-allowed; opacity: .48; }.pagination .pagination-page.active { color: #fff; border-color: #176b45; background: #176b45; opacity: 1; }.pagination-ellipsis { display: inline-flex; min-width: 20px; align-items: center; justify-content: center; color: var(--muted); }
 .catalog-type-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0; }
 .catalog-type-bar .pill.active { color: #fff; background: #176b45; border-color: #176b45; }
 .catalog-category-bar { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
