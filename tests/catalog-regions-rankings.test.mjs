@@ -47,6 +47,7 @@ describe('real catalog regions and rankings', () => {
       ['\u5730\u4e09\u9c9c', 'northeast'],
       ['\u9c7c\u9999\u8089\u4e1d', 'sichuan-hunan'],
       ['\u51c9\u76ae', 'northwest'],
+      ['\u9999\u8fa3\u80a5\u80a0\u7c89 / \u9762', 'sichuan-hunan'],
       ['\u8001\u5317\u4eac\u70b8\u9171\u9762', 'beijing-shandong'],
       ['\u996d\u56e2', 'japanese'],
       ['\u6c49\u5821', 'western-fast-food'],

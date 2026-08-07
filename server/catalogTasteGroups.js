@@ -20,6 +20,7 @@ const GROUPS = Object.freeze([
     kind: 'regional',
     aliases: ['\u7ca4\u83dc', '\u7ca4\u5f0f', '\u5e7f\u5f0f', '\u5e7f\u4e1c', '\u6f6e\u6c55', '\u5ba2\u5bb6'],
     nameCues: ['\u80a0\u7c89', '\u4e91\u541e', '\u70e7\u814a', '\u53c9\u70e7', '\u70e7\u9e45', '\u767d\u5207\u9e21', '\u7172\u4ed4\u996d', '\u6f6e\u6c55'],
+    excludedNameCues: ['\u80a5\u80a0\u7c89'],
   },
   {
     id: 'sichuan-hunan',
@@ -27,7 +28,7 @@ const GROUPS = Object.freeze([
     description: '\u4ece\u5ddd\u5473\u3001\u6e58\u5473\u548c\u91cd\u53e3\u5473\u83dc\u540d\u4e2d\u5f52\u7c7b',
     kind: 'regional',
     aliases: ['\u5ddd\u83dc', '\u5ddd\u5473', '\u5ddd\u6e58', '\u6e58\u83dc', '\u6e58\u5473', '\u56db\u5ddd', '\u91cd\u5e86', '\u6e56\u5357'],
-    nameCues: ['\u9ebb\u5a46\u8c46\u8150', '\u5bab\u4fdd\u9e21\u4e01', '\u56de\u9505\u8089', '\u9c7c\u9999\u8089\u4e1d', '\u9c7c\u9999\u8304\u5b50', '\u8fa3\u5b50\u9e21', '\u53e3\u6c34\u9e21', '\u6bdb\u8840\u65fa', '\u5c16\u6912', '\u5c0f\u7092\u8089', '\u62c5\u62c5\u9762', '\u91cd\u5e86\u5c0f\u9762'],
+    nameCues: ['\u9ebb\u5a46\u8c46\u8150', '\u5bab\u4fdd\u9e21\u4e01', '\u56de\u9505\u8089', '\u9c7c\u9999\u8089\u4e1d', '\u9c7c\u9999\u8304\u5b50', '\u8fa3\u5b50\u9e21', '\u53e3\u6c34\u9e21', '\u6bdb\u8840\u65fa', '\u5c16\u6912', '\u5c0f\u7092\u8089', '\u80a5\u80a0\u7c89', '\u62c5\u62c5\u9762', '\u91cd\u5e86\u5c0f\u9762'],
   },
   {
     id: 'northwest',
@@ -190,16 +191,19 @@ function hasPrimaryEvidence(evidence) {
 
 function evidenceFor(group, item) {
   const evidence = [];
+  const nameValues = [item.name, ...(item.aliases || [])];
+  const nameIsExcluded = (group.excludedNameCues || []).some((cue) => matchCue(nameValues, [cue]));
   const regional = matchCue(item.regionalTaste, group.aliases);
   if (regional) evidence.push({ field: 'regionalTaste', value: regional.value, cue: regional.cue, rule: 'verified_regional_taste' });
 
-  const name = matchCue([item.name, ...(item.aliases || [])], [...group.aliases, ...group.nameCues]);
+  const name = nameIsExcluded ? null : matchCue(nameValues, [...group.aliases, ...group.nameCues]);
   if (name) evidence.push({ field: 'name', value: name.value, cue: name.cue, rule: 'dish_name_cue' });
 
   const cuisine = matchCue(item.cuisine, group.aliases);
   if (cuisine) evidence.push({ field: 'cuisine', value: cuisine.value, cue: cuisine.cue, rule: 'cuisine_field' });
 
   for (const field of ['semanticLabels', 'tags', 'stallName', 'canteenName', 'ingredients', 'sourceRef']) {
+    if (field === 'sourceRef' && nameIsExcluded) continue;
     const values = field === 'sourceRef' ? searchableSourceRef(item.sourceRef) : item[field];
     const match = matchCue(values, [...group.aliases, ...group.nameCues]);
     if (match) evidence.push({ field, value: match.value, cue: match.cue, rule: field === 'stallName' || field === 'canteenName' ? 'venue_context_cue' : 'metadata_cue' });
