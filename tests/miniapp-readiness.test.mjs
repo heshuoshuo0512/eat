@@ -179,7 +179,8 @@ describe('miniapp student navigation visibility', () => {
     assert.match(profile, /saved\.favorites\.length/);
     assert.match(profile, /class="favorite-count"/);
     assert.match(profile, /saved\/saved\?panel=favorites/);
-    assert.doesNotMatch(profile, /<image\b|favoritePreview/);
+    assert.match(profile, /<image\b[^>]*store\.user\.value\?\.avatarUrl/);
+    assert.doesNotMatch(profile, /favoritePreview/);
   });
 });
 
@@ -292,6 +293,7 @@ describe('miniapp native visual contracts', () => {
       'components/sc-illustration/sc-illustration.vue',
       'pages/community-publish/community-publish.vue',
       'pages/community/community.vue',
+      'pages/profile/profile.vue',
       'pages/vision/vision.vue',
       'pages/vision/vision.vue'
     ].sort());

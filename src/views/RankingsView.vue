@@ -29,6 +29,13 @@
 
       <!-- Expanded: full list with category filter -->
       <template v-if="expandedSection === 'dishes'">
+        <div class="category-filter" aria-label="菜品排行分区">
+          <button v-for="type in rankingItemTypes" :key="type.value" type="button" class="filter-btn" :class="{ active: rankingItemType === type.value }" @click="selectRankingItemType(type.value)">{{ type.label }}</button>
+        </div>
+        <select v-model="rankingCategory" class="ranking-category-select" aria-label="菜品排行分类" @change="selectRankingCategory">
+          <option value="">全部餐食分类</option>
+          <option v-for="category in rankingCategories" :key="category.value" :value="category.value">{{ category.label }}（{{ category.count }}）</option>
+        </select>
         <div v-if="rankedDishes.length" class="rank-list">
           <RouterLink
             v-for="(dish, i) in rankedDishes"
@@ -185,6 +192,10 @@ const rankingPages = ref({
   stalls: { page: 1, pageSize: 20, total: 0, hasMore: false },
   canteens: { page: 1, pageSize: 20, total: 0, hasMore: false }
 });
+const rankingItemType = ref('meal');
+const rankingCategory = ref('');
+const rankingCategories = ref([]);
+const rankingItemTypes = [{ value: 'meal', label: '餐食' }, { value: 'snack', label: '小吃' }, { value: 'beverage', label: '饮品' }];
 
 /* ── Expand/collapse state ── */
 const expandedSection = ref('');
@@ -211,9 +222,21 @@ function rankingMessage(type) {
 }
 
 async function loadRanking(type, page = 1) {
-  const result = await store.loadCatalogRanking(type === 'canteens' ? 'venues' : type, { page, pageSize: 20 });
+  const result = await store.loadCatalogRanking(type === 'canteens' ? 'venues' : type, { page, pageSize: 20, itemType: rankingItemType.value, catalogCategory: rankingCategory.value });
   rankingPages.value[type] = result.page || rankingPages.value[type];
 }
+async function loadRankingCategories() {
+  const result = await store.loadCatalogCategories(rankingItemType.value, { force: true });
+  rankingCategories.value = result || [];
+}
+async function selectRankingItemType(value) {
+  if (rankingItemType.value === value) return;
+  rankingItemType.value = value;
+  rankingCategory.value = '';
+  await loadRankingCategories();
+  await loadRanking('dishes', 1);
+}
+async function selectRankingCategory() { await loadRanking('dishes', 1); }
 
 async function loadMore(type) {
   const page = rankingPages.value[type];
@@ -222,7 +245,10 @@ async function loadMore(type) {
   try { await loadRanking(type, Number(page.page || 1) + 1); } finally { loadingMore.value = ''; }
 }
 
-onMounted(() => Promise.all(['dishes', 'stalls', 'canteens'].map((type) => loadRanking(type))));
+onMounted(async () => {
+  await loadRankingCategories();
+  await Promise.all(['dishes', 'stalls', 'canteens'].map((type) => loadRanking(type)));
+});
 
 /* ── Location helpers ── */
 

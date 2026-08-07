@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
 import { hashPassword } from '../server/security.js';
+import { completePublicProfile, imageFixtures } from './community-test-helpers.mjs';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -45,7 +46,11 @@ async function register(username, password) {
     method: 'POST',
     body: { username, password },
   });
-  return { status, ...data };
+  const result = { status, ...data };
+  if (status === 201 && data?.token) {
+    await completePublicProfile(req, data.token, `User ${username}`.slice(0, 32));
+  }
+  return result;
 }
 
 /** Login and return status plus parsed data. */
@@ -234,6 +239,7 @@ describe('E2E — RBAC rejection (no-token, bad-token, student boundaries)', () 
   before(async () => {
     ({ token: studentToken } = await register('e2e-rbac-student', 'pass'));
     ({ token: adminToken } = await adminLogin());
+    await completePublicProfile(req, adminToken, 'E2E Admin');
   });
 
   it('admin endpoints return 401 when no token is provided', async () => {
@@ -331,7 +337,7 @@ describe('E2E — RBAC rejection (no-token, bad-token, student boundaries)', () 
     const { status } = await req('/api/uploads', {
       method: 'POST',
       token: studentToken,
-      body: { filename: 'rbac-test.png', contentType: 'image/png', dataBase64: Buffer.from('test-png').toString('base64') },
+      body: { filename: 'rbac-test.png', contentType: 'image/png', dataBase64: imageFixtures.png },
     });
     assert.equal(status, 201, 'student can upload');
   });
@@ -658,7 +664,7 @@ describe('E2E — Audit trail is written for admin operations', () => {
     await req('/api/uploads', {
       method: 'POST',
       token: adminToken,
-      body: { filename: 'audit-test.png', contentType: 'image/png', dataBase64: Buffer.from('audit-png').toString('base64') },
+      body: { filename: 'audit-test.png', contentType: 'image/png', dataBase64: imageFixtures.png },
     });
     const logs = _db.prepare("SELECT * FROM audit_logs WHERE entity = 'upload' AND action = 'CREATE'").all();
     assert.ok(logs.length >= 1, 'CREATE upload audit log exists');
@@ -692,7 +698,7 @@ describe('E2E — Upload path validation', () => {
     const payload = {
       filename: 'valid.png',
       contentType: 'image/png',
-      dataBase64: Buffer.from('fake-png-data-here').toString('base64'),
+      dataBase64: imageFixtures.png,
     };
     const { status, data } = await req('/api/uploads', { method: 'POST', token: authedToken, body: payload });
     assert.equal(status, 201);
@@ -708,7 +714,7 @@ describe('E2E — Upload path validation', () => {
     const { status } = await req('/api/uploads', {
       method: 'POST',
       token: authedToken,
-      body: { filename: 'photo.jpg', contentType: 'image/jpeg', dataBase64: Buffer.from('fake-jpeg').toString('base64') },
+      body: { filename: 'photo.jpg', contentType: 'image/jpeg', dataBase64: imageFixtures.jpeg },
     });
     assert.equal(status, 201);
   });
@@ -717,7 +723,7 @@ describe('E2E — Upload path validation', () => {
     const { status } = await req('/api/uploads', {
       method: 'POST',
       token: authedToken,
-      body: { filename: 'image.webp', contentType: 'image/webp', dataBase64: Buffer.from('fake-webp').toString('base64') },
+      body: { filename: 'image.webp', contentType: 'image/webp', dataBase64: imageFixtures.webp },
     });
     assert.equal(status, 201);
   });
@@ -726,7 +732,7 @@ describe('E2E — Upload path validation', () => {
     const { status } = await req('/api/uploads', {
       method: 'POST',
       token: authedToken,
-      body: { filename: 'anim.gif', contentType: 'image/gif', dataBase64: Buffer.from('fake-gif').toString('base64') },
+      body: { filename: 'anim.gif', contentType: 'image/gif', dataBase64: imageFixtures.gif },
     });
     assert.equal(status, 201);
   });
@@ -777,7 +783,7 @@ describe('E2E — Upload path validation', () => {
     const { status, data } = await req('/api/uploads', {
       method: 'POST',
       token: authedToken,
-      body: { filename: 'authed.png', contentType: 'image/png', dataBase64: Buffer.from('authed').toString('base64') },
+      body: { filename: 'authed.png', contentType: 'image/png', dataBase64: imageFixtures.png },
     });
     assert.equal(status, 201);
     const row = _db.prepare('SELECT * FROM uploads WHERE id = ?').get(data.id);
@@ -976,7 +982,7 @@ describe('E2E — Rankings invalidation on mutations', () => {
     const target = before.dishes[0];
     const beforeScore = target.rankScore;
 
-    // Post a review (created as pending)
+    // Post a valid review; local moderation publishes it immediately.
     const perturbRating = beforeScore >= 3 ? 1 : 5;
     const { status: reviewStatus, data: reviewData } = await req('/api/reviews', {
       method: 'POST',
@@ -985,15 +991,7 @@ describe('E2E — Rankings invalidation on mutations', () => {
     });
     assert.equal(reviewStatus, 201, 'review posted');
 
-    // Retrieve the pending review via admin list and approve it
-    const { data: pendingList } = await req('/api/admin/reviews?status=pending', { token: adminToken });
-    const pending = pendingList.reviews.find((r) => r.targetId === target.id);
-    assert.ok(pending, 'pending review found in admin list');
-    await req(`/api/admin/reviews/${pending.id}/status`, {
-      method: 'PUT',
-      token: adminToken,
-      body: { status: 'approved' },
-    });
+    assert.equal(reviewData.review.status, 'approved');
 
     // Re-fetch rankings — score should now reflect the approved review
     const { data: after } = await req('/api/rankings');

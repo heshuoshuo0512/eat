@@ -61,6 +61,7 @@ export function normalizeApiError(data = {}, status = 0) {
   error.code = code;
   error.kind = kind;
   error.requestId = data?.requestId || '';
+  error.details = payload?.details || data?.details || null;
   return error;
 }
 
@@ -115,14 +116,20 @@ export const apiClient = {
   async catalogCategories(itemType = 'meal') {
     return request(`/api/catalog/categories?${new URLSearchParams({ itemType })}`);
   },
-  async catalogRankings({ type = 'dishes', page = 1, pageSize = 20 } = {}) {
-    return request(`/api/catalog/rankings?${new URLSearchParams({ type, page: String(page), pageSize: String(pageSize) })}`);
+  async catalogRankings({ type = 'dishes', itemType = 'meal', catalogCategory = '', page = 1, pageSize = 20 } = {}) {
+    const query = new URLSearchParams({ type, page: String(page), pageSize: String(pageSize) });
+    if (type === 'dishes') query.set('itemType', itemType);
+    if (catalogCategory) query.set('catalogCategory', catalogCategory);
+    return request(`/api/catalog/rankings?${query}`);
   },
-  async catalogRegions({ itemType = 'meal' } = {}) {
-    return request(`/api/catalog/regions?${new URLSearchParams({ itemType })}`);
+  async catalogRegions({ itemType = '' } = {}) {
+    const query = new URLSearchParams();
+    if (itemType) query.set('itemType', itemType);
+    return request(`/api/catalog/regions?${query}`);
   },
-  async catalogRegionDishes(regionId, { itemType = 'meal', page = 1, pageSize = 20, sort = 'rating' } = {}) {
-    const query = new URLSearchParams({ itemType, page: String(page), pageSize: String(pageSize), sort });
+  async catalogRegionDishes(regionId, { itemType = '', page = 1, pageSize = 20, sort = 'rating' } = {}) {
+    const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize), sort });
+    if (itemType) query.set('itemType', itemType);
     return request(`/api/catalog/regions/${encodeURIComponent(regionId)}/dishes?${query}`);
   },
   async savedCatalog({ kind = 'favorite', page = 1, pageSize = 20 } = {}) {
@@ -140,6 +147,17 @@ export const apiClient = {
     const result = await request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) });
     saveSession(result);
     return result;
+  },
+  async phoneLogin(payload) {
+    const result = await request('/api/auth/phone-login', { method: 'POST', body: JSON.stringify(payload) });
+    saveSession(result);
+    return result;
+  },
+  async bindPhone(payload) {
+    return request('/api/auth/phone/bind', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async updatePublicProfile(payload) {
+    return request('/api/account/profile', { method: 'PATCH', body: JSON.stringify(payload) });
   },
   async sendVerificationCode(payload) {
     return request('/api/auth/verification-codes', { method: 'POST', body: JSON.stringify(payload) });
@@ -202,11 +220,34 @@ export const apiClient = {
   async createPostComment(id, content) {
     return request(`/api/posts/${encodeURIComponent(id)}/comments`, { method: 'POST', body: JSON.stringify({ content }) });
   },
+  async updatePostComment(postId, commentId, content) {
+    return request(`/api/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}`, { method: 'PATCH', body: JSON.stringify({ content }) });
+  },
+  async deletePostComment(postId, commentId) {
+    return request(`/api/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}`, { method: 'DELETE' });
+  },
+  async reportPostComment(postId, commentId, payload = {}) {
+    return request(`/api/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}/report`, { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async archiveCommunityContent(type, id) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+  },
+  async restoreCommunityContent(type, id) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  },
   async updateCommunityContent(type, id, payload) {
     return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
   },
   async deleteCommunityContent(type, id) {
     return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+  async listCommunityReports({ status = 'pending', targetType = '', limit = 50, offset = 0 } = {}) {
+    const query = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
+    if (targetType) query.set('targetType', targetType);
+    return request(`/api/admin/community/reports?${query}`);
+  },
+  async updateCommunityReport(id, status) {
+    return request(`/api/admin/community/reports/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) });
   },
   async saveProfile(payload) {
     return request('/api/health/profile', { method: 'PUT', body: JSON.stringify(payload) });

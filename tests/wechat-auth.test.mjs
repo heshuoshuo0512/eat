@@ -68,7 +68,8 @@ describe('WeChat miniapp login', () => {
     const created = await req('/api/auth/wechat-login', { body: { code: 'valid-code', phoneCode: 'valid-phone-code', agreementVersion: '2026-07', profile: { nickName: '微信同学' } } });
     assert.equal(created.status, 200);
     assert.equal(created.data.user.role, 'student');
-    assert.equal(created.data.user.nickname, '微信同学');
+    assert.equal(created.data.user.nickname, '');
+    assert.equal(created.data.user.profileComplete, false);
     assert.ok(created.data.token);
     assert.equal(created.data.state.session.user.id, created.data.user.id);
 

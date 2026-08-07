@@ -5,6 +5,7 @@ import { normalizeRecommendationResult } from '../domain/studentDiscovery.js';
 import { apiClient } from '../services/apiClient.js';
 
 const MOTION_KEY = 'smart-canteen-reduced-motion';
+const CATALOG_REVISION_KEY = 'smart-canteen-catalog-revision';
 
 function emptyState() {
   return {
@@ -44,6 +45,18 @@ const runtimeUni = typeof uni !== 'undefined' ? uni : globalThis?.uni;
 const motionReduced = ref(runtimeUni?.getStorageSync?.(MOTION_KEY) === '1');
 const searchFilters = reactive({ keyword: '', maxPrice: 999, taste: '不限', halalOnly: false });
 let loadPromise = null;
+
+function applyCatalogRevision(revision) {
+  const next = String(revision || '');
+  if (!next) return;
+  const previous = String(runtimeUni?.getStorageSync?.(CATALOG_REVISION_KEY) || '');
+  if (previous && previous !== next) {
+    catalogCategories.value = { meal: [], snack: [], beverage: [] };
+    catalogRegions.value = { all: [], meal: [], snack: [], beverage: [] };
+    catalogRegionDetails.value = {};
+  }
+  runtimeUni?.setStorageSync?.(CATALOG_REVISION_KEY, next);
+}
 
 function setState(nextState = {}) {
   state.value = {
@@ -88,6 +101,7 @@ async function hydrateExtras() {
     }
   }
   if (results[2].status === 'fulfilled') {
+    applyCatalogRevision(results[2].value.meta?.catalogRevision);
     state.value.dishes = results[2].value.items || [];
     catalogPage.value = results[2].value.page || { page: 1, pageSize: 50, total: state.value.dishes.length, hasMore: false };
   }
@@ -171,6 +185,24 @@ async function login(payload) {
 async function register(payload) {
   const result = await apiClient.register(payload);
   await load(true);
+  return result.user;
+}
+
+async function phoneLogin(payload) {
+  const result = await apiClient.phoneLogin(payload);
+  await load(true);
+  return result.user;
+}
+
+async function bindPhone(payload) {
+  const result = await apiClient.bindPhone(payload);
+  state.value.session.user = result.user;
+  return result.user;
+}
+
+async function updatePublicProfile(payload) {
+  const result = await apiClient.updatePublicProfile(payload);
+  state.value.session.user = result.user;
   return result.user;
 }
 
@@ -278,6 +310,7 @@ async function loadCatalogDishes({ page = 1, pageSize = 50, ...filters } = {}) {
 async function loadCatalogCategories(itemType = 'meal', { force = false } = {}) {
   if (!force && catalogCategories.value[itemType]?.length) return catalogCategories.value[itemType];
   const result = await apiClient.catalogCategories(itemType);
+  applyCatalogRevision(result.catalogRevision);
   catalogCategories.value = { ...catalogCategories.value, [itemType]: result.categories || [] };
   return catalogCategories.value[itemType];
 }
@@ -303,8 +336,9 @@ async function loadSavedCatalog(kind = 'favorite', { page = 1, pageSize = 20 } =
   return savedCatalog.value[kind];
 }
 
-async function loadCatalogRanking(type = 'dishes', { page = 1, pageSize = 20 } = {}) {
-  const result = await apiClient.catalogRankings({ type, page, pageSize });
+async function loadCatalogRanking(type = 'dishes', { page = 1, pageSize = 20, itemType = 'meal', catalogCategory = '' } = {}) {
+  const result = await apiClient.catalogRankings({ type, page, pageSize, itemType, catalogCategory });
+  applyCatalogRevision(result.meta?.catalogRevision);
   const key = type === 'venues' ? 'canteens' : type;
   const previous = page > 1 ? remoteRankings.value[key] || [] : [];
   const entities = new Map(previous.map((item) => [String(item.id), item]));
@@ -315,15 +349,17 @@ async function loadCatalogRanking(type = 'dishes', { page = 1, pageSize = 20 } =
   return result;
 }
 
-async function loadCatalogRegions(itemType = 'meal') {
+async function loadCatalogRegions(itemType = '') {
   const result = await apiClient.catalogRegions({ itemType });
-  catalogRegions.value = { ...catalogRegions.value, [itemType]: result.regions || [] };
+  applyCatalogRevision(result.meta?.catalogRevision);
+  catalogRegions.value = { ...catalogRegions.value, [itemType || 'all']: result.regions || [] };
   return result;
 }
 
 async function loadCatalogRegionDishes(regionId, params = {}) {
   const result = await apiClient.catalogRegionDishes(regionId, params);
-  const key = `${params.itemType || 'meal'}:${regionId}`;
+  applyCatalogRevision(result.meta?.catalogRevision);
+  const key = `${params.itemType || 'all'}:${regionId}`;
   const previous = Number(params.page || 1) > 1 ? catalogRegionDetails.value[key]?.items || [] : [];
   const entities = new Map(previous.map((item) => [String(item.id), item]));
   for (const item of result.items || []) entities.set(String(item.id), item);
@@ -379,7 +415,7 @@ export function useCanteenStore() {
     state, loading, error, loaded, lastLoadedAt, todayMenu, catalogPage, catalogCategories, reservationCatalogPage, remoteRankings, rankingMeta, catalogRegions, catalogRegionDetails, savedCatalog, contextualRecommendation, recommendationLoading,
     discoveryMode, communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
     rankings, searchedDishes, recommendation,
-    load, ensureLoaded, refreshIfStale, login, register, wechatLogin, logout, getDishDetail, addReview, saveProfile, deferProfileOnboarding,
+    load, ensureLoaded, refreshIfStale, login, register, phoneLogin, bindPhone, updatePublicProfile, wechatLogin, logout, getDishDetail, addReview, saveProfile, deferProfileOnboarding,
     loadTodayMenu, loadMoreTodayMenu, loadCatalogDishes, loadMoreCatalog, loadCatalogCategories, loadSavedCatalog, loadCatalogRanking, loadCatalogRegions, loadCatalogRegionDishes, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
     markDishDrawn, openDiscoveryMode, openCommunitySection, setMotionReduced,
     fetchDishDetail,
@@ -397,6 +433,11 @@ export function useCanteenStore() {
     reportContent: apiClient.reportContent,
     listPostComments: apiClient.listPostComments,
     createPostComment: apiClient.createPostComment,
+    updatePostComment: apiClient.updatePostComment,
+    deletePostComment: apiClient.deletePostComment,
+    reportPostComment: apiClient.reportPostComment,
+    archiveCommunityContent: apiClient.archiveCommunityContent,
+    restoreCommunityContent: apiClient.restoreCommunityContent,
     updateCommunityContent: apiClient.updateCommunityContent,
     deleteCommunityContent: apiClient.deleteCommunityContent,
     uploadImage: apiClient.uploadImage,

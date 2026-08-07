@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
+import { completePublicProfile } from './community-test-helpers.mjs';
 
 
 /* ------------------------------------------------------------------ */
@@ -42,16 +43,29 @@ async function adminToken() {
     method: 'POST',
     body: { username: 'admin', password: 'admin123' },
   });
-  return data.token;
+  const token = data.token;
+  const key = `admin:${globalThis.__productOverhaulBaseUrl}`;
+  if (!completedProfiles.has(key)) {
+    await completePublicProfile(req, token, 'Product Admin');
+    completedProfiles.add(key);
+  }
+  return token;
 }
 
 /** Login as student and return token. */
+const completedProfiles = new Set();
 async function studentToken() {
   const { data } = await req('/api/auth/login', {
     method: 'POST',
     body: { username: '演示学生', password: 'student123' },
   });
-  return data.token;
+  const token = data.token;
+  const key = `student:${globalThis.__productOverhaulBaseUrl}`;
+  if (!completedProfiles.has(key)) {
+    await completePublicProfile(req, token, 'Product Student');
+    completedProfiles.add(key);
+  }
+  return token;
 }
 
 /* ================================================================== */
@@ -745,76 +759,64 @@ describe('Review status moderation — RBAC and transitions', () => {
     admin = await adminToken();
   });
 
-  it('student review is forced to pending regardless of body.status', async () => {
-    const { status } = await req('/api/reviews', {
+  it('valid student review is approved by synchronous moderation', async () => {
+    const { status, data } = await req('/api/reviews', {
       method: 'POST',
       token: student,
       body: { targetId: 'd-chicken-bowl', rating: 4, content: '不错很好吃' },
     });
     assert.equal(status, 201);
 
-    // Verify the review appears in admin pending list — student cannot bypass moderation
-    const { data: pending } = await req('/api/admin/reviews?status=pending', { token: admin });
-    const myReview = pending.reviews.find((r) => r.content === '不错很好吃');
-    assert.ok(myReview, 'student review forced to pending for admin moderation');
-    assert.equal(myReview.status, 'pending');
+    assert.equal(data.review.status, 'approved');
+    assert.equal(data.moderation.status, 'approved');
   });
 
-  it('explicit body.status=approved does not bypass pending for student', async () => {
-    const { status } = await req('/api/reviews', {
+  it('client status cannot override the synchronous moderation result', async () => {
+    const { status, data } = await req('/api/reviews', {
       method: 'POST',
       token: student,
       body: { targetId: 'd-salad', rating: 5, content: '减脂神器推荐', status: 'approved' },
     });
     assert.equal(status, 201);
 
-    // Must still appear as pending — student cannot self-approve
-    const { data: pending } = await req('/api/admin/reviews?status=pending', { token: admin });
-    const myReview = pending.reviews.find((r) => r.content === '减脂神器推荐');
-    assert.ok(myReview, 'review with explicit approved still forced to pending');
-    assert.equal(myReview.status, 'pending');
+    assert.equal(data.review.status, data.moderation.status);
   });
 
-  it('admin can list reviews filtered by status', async () => {
-    const { status, data } = await req('/api/admin/reviews?status=pending', {
+  it('admin can list automatically approved reviews by status', async () => {
+    const { status, data } = await req('/api/admin/reviews?status=approved', {
       token: admin,
     });
     assert.equal(status, 200);
     assert.ok(Array.isArray(data.reviews));
-    assert.ok(data.total >= 1, 'at least one pending review');
+    assert.ok(data.total >= 1, 'at least one approved review');
     for (const r of data.reviews) {
-      assert.equal(r.status, 'pending', 'all listed reviews are pending');
+      assert.equal(r.status, 'approved', 'all listed reviews are approved');
     }
   });
 
-  it('admin can approve a pending review', async () => {
-    const { data: pending } = await req('/api/admin/reviews?status=pending', { token: admin });
-    assert.ok(pending.reviews.length > 0, 'has pending reviews');
-    const targetId = pending.reviews[0].id;
+  it('admin can move an approved review into pending for later inspection', async () => {
+    const { data: approved } = await req('/api/admin/reviews?status=approved', { token: admin });
+    assert.ok(approved.reviews.length > 0, 'has approved reviews');
+    const targetId = approved.reviews[0].id;
 
     const { status, data } = await req(`/api/admin/reviews/${targetId}/status`, {
       method: 'PATCH',
       token: admin,
-      body: { status: 'approved' },
+      body: { status: 'pending' },
     });
     assert.equal(status, 200);
-    assert.equal(data.status, 'approved');
+    assert.equal(data.status, 'pending');
     assert.equal(data.id, targetId);
   });
 
   it('admin can reject a review', async () => {
-    // Create a review as student (forced to pending), then reject via admin
-    await req('/api/reviews', {
+    // Create a valid review, then reject it through the follow-up queue.
+    const created = await req('/api/reviews', {
       method: 'POST',
       token: student,
       body: { targetId: 'd-egg-tomato', rating: 1, content: '这个不好吃太咸了' },
     });
-    // Find it in admin pending list
-    const { data: pending } = await req('/api/admin/reviews?status=pending', { token: admin });
-    const target = pending.reviews.find((r) => r.content === '这个不好吃太咸了');
-    assert.ok(target, 'newly created review appears in admin pending list');
-
-    const { status, data } = await req(`/api/admin/reviews/${target.id}/status`, {
+    const { status, data } = await req(`/api/admin/reviews/${created.data.review.id}/status`, {
       method: 'PATCH',
       token: admin,
       body: { status: 'rejected' },

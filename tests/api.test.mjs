@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
+import { completePublicProfile } from './community-test-helpers.mjs';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -206,6 +207,7 @@ describe('Reviews', () => {
       body: { username: '评论学生', password: 'pass123' },
     });
     studentToken = login.data.token;
+    await completePublicProfile(req, studentToken, 'Review Student');
 
     // Pick a seeded dish to review
     const boot = await req('/api/bootstrap');
@@ -228,7 +230,7 @@ describe('Reviews', () => {
     assert.ok(data.error);
   });
 
-  it('posting a review returns 201; pending review hidden until admin approves', async () => {
+  it('posting a valid review returns 201 and is published by automatic moderation', async () => {
     // Submit student review
     const { status, data } = await req('/api/reviews', {
       method: 'POST',
@@ -236,29 +238,8 @@ describe('Reviews', () => {
       body: { targetId: targetDishId, rating: 4, content: '不错不错' },
     });
     assert.equal(status, 201);
-    // Response is the dish detail; pending review must NOT appear publicly
-    assert.ok(data.reviews, 'dish detail includes reviews array');
-    const mine = data.reviews.find((r) => r.content === '不错不错');
-    assert.equal(mine, undefined, 'pending review not visible in public dish detail');
-
-    // Admin locates the review in the pending list
-    const pending = await req('/api/admin/reviews?status=pending', { token: adminToken });
-    assert.equal(pending.status, 200);
-    const pendingReview = pending.data.reviews.find((r) => r.content === '不错不错');
-    assert.ok(pendingReview, 'review appears in admin pending list');
-    assert.equal(pendingReview.status, 'pending');
-    assert.equal(pendingReview.rating, 4);
-
-    // Admin approves
-    const approveRes = await req(`/api/admin/reviews/${pendingReview.id}/status`, {
-      method: 'PATCH',
-      token: adminToken,
-      body: { status: 'approved' },
-    });
-    assert.equal(approveRes.status, 200);
-    assert.equal(approveRes.data.status, 'approved');
-
-    // After approval, review appears in public dish detail
+    assert.equal(data.review.status, 'approved');
+    assert.equal(data.moderation.status, 'approved');
     const dishRes = await req(`/api/dishes/${targetDishId}`);
     assert.equal(dishRes.status, 200);
     const approved = dishRes.data.reviews.find((r) => r.content === '不错不错');
@@ -273,19 +254,18 @@ describe('Reviews', () => {
     assert.equal(mine.rating, 4);
   });
 
-  it('body.status=approved on student POST cannot skip pending', async () => {
-    const { status } = await req('/api/reviews', {
+  it('ignores client supplied status and uses the automatic moderation decision', async () => {
+    const { status, data } = await req('/api/reviews', {
       method: 'POST',
       token: studentToken,
       body: { targetId: targetDishId, rating: 2, content: '试图跳过审核', status: 'approved' },
     });
     assert.equal(status, 201);
 
-    // Verify it still landed as pending, not approved
-    const pending = await req('/api/admin/reviews?status=pending', { token: adminToken });
-    const bypass = pending.data.reviews.find((r) => r.content === '试图跳过审核');
-    assert.ok(bypass, 'review with body.status=approved still lands in pending');
-    assert.equal(bypass.status, 'pending');
+    assert.equal(data.review.status, data.moderation.status);
+    const approved = await req('/api/admin/reviews?status=approved', { token: adminToken });
+    const saved = approved.data.reviews.find((r) => r.content === '试图跳过审核');
+    assert.ok(saved, 'review is stored according to automatic moderation');
   });
 });
 

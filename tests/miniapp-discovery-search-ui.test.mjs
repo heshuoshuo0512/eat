@@ -49,7 +49,8 @@ describe('miniapp discovery and community search UI contracts', () => {
   it('uses a compact, structured login landing layout', () => {
     assert.match(login, /login-brandline/);
     assert.match(login, /class="auth-tabs"/);
-    assert.match(login, /open-type="getPhoneNumber"/);
+    assert.match(login, /微信一键登录/);
+    assert.doesNotMatch(login, /open-type="getPhoneNumber"/);
     assert.match(login, /手机号注册/);
     assert.match(login, /找回密码/);
   });

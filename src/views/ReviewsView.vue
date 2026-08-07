@@ -46,6 +46,8 @@
           <button type="button" :class="{ active: review.viewerReaction === 'dislike' }" @click="react(review, 'dislike')">踩 {{ review.engagement?.dislikes || 0 }}</button>
           <button v-if="!review.isOwn" type="button" :disabled="review.viewerReported" @click="report(review)">{{ review.viewerReported ? '已举报' : '举报' }}</button>
           <button v-if="review.canEdit" type="button" @click="editReview(review)">修改</button>
+          <button v-if="review.canEdit && review.status !== 'archived'" type="button" @click="archiveReview(review)">封存</button>
+          <button v-if="review.canEdit && review.status === 'archived'" type="button" @click="restoreReview(review)">恢复</button>
           <button v-if="review.canDelete" type="button" class="danger-text" @click="deleteReview(review)">删除</button>
         </div>
       </div>
@@ -134,7 +136,7 @@ async function loadReviews() {
 function targetName(review) { return review.dish?.name || review.canteen?.name || '校园评价'; }
 function locationLabel(review) { return [review.canteen?.name, review.stall?.name].filter(Boolean).join(' · ') || review.canteen?.location || '校内食堂'; }
 function formatDate(value) { return String(value || '').slice(0, 10); }
-function statusLabel(status) { return { pending: '审核中', approved: '已公开', rejected: '未通过' }[status] || status; }
+function statusLabel(status) { return { pending: '审核中', approved: '已公开', rejected: '未通过', archived: '已封存' }[status] || status; }
 async function react(review, reaction) {
   await store.reactToCommunityContent('review', review.id, review.viewerReaction === reaction ? null : reaction);
 }
@@ -149,6 +151,15 @@ async function editReview(review) {
   if (ratingText === null) return;
   try { await store.updateCommunityContent('review', review.id, { content, rating: Number(ratingText) }); }
   catch (editError) { window.alert(editError.message || '评价修改失败'); }
+}
+async function archiveReview(review) {
+  if (!window.confirm('封存后将从公开评价中隐藏，之后可以恢复。确认封存？')) return;
+  try { await store.setCommunityArchive('review', review.id, true); }
+  catch (error) { window.alert(error.message || '封存失败'); }
+}
+async function restoreReview(review) {
+  try { await store.setCommunityArchive('review', review.id, false); }
+  catch (error) { window.alert(error.message || '恢复失败'); }
 }
 async function deleteReview(review) {
   if (!window.confirm('删除后无法恢复，确认删除这条评价？')) return;

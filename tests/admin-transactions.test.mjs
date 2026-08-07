@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { createApp } from '../server/app.js';
 import { openDatabase, PgDatabase } from '../server/database.js';
+import { completePublicProfile } from './community-test-helpers.mjs';
 
 describe('PostgreSQL transaction adapter', () => {
   it('keeps SQLite initialization and PostgreSQL migration contracts aligned', () => {
@@ -100,6 +101,7 @@ describe('campus post moderation transaction rollback', () => {
   it('rolls back post, linked review, and audit state together', async () => {
     const adminLogin = await req('/api/auth/login', { method: 'POST', body: { username: 'admin', password: 'admin123' } });
     const studentLogin = await req('/api/auth/login', { method: 'POST', body: { username: '演示学生', password: 'student123' } });
+    await completePublicProfile(req, studentLogin.data.token, 'Transaction Student');
     const bootstrap = await req('/api/bootstrap');
     const dishId = bootstrap.data.dishes[0].id;
     const created = await req('/api/posts', {
@@ -111,18 +113,18 @@ describe('campus post moderation transaction rollback', () => {
 
     failAudit = true;
     const failed = await req(`/api/admin/posts/${created.data.post.id}/status`, {
-      method: 'PATCH', token: adminLogin.data.token, body: { status: 'approved' }
+      method: 'PATCH', token: adminLogin.data.token, body: { status: 'rejected' }
     });
     failAudit = false;
     assert.equal(failed.status, 500);
 
-    const posts = await req('/api/admin/posts?status=pending', { token: adminLogin.data.token });
+    const posts = await req('/api/admin/posts?status=approved', { token: adminLogin.data.token });
     const rolledBackPost = posts.data.posts.find((post) => post.id === created.data.post.id);
     assert.ok(rolledBackPost);
-    assert.equal(rolledBackPost.status, 'pending');
-    assert.equal(rolledBackPost.linkedReviewId, null);
+    assert.equal(rolledBackPost.status, 'approved');
+    assert.ok(rolledBackPost.linkedReviewId);
 
     const reviews = await req(`/api/reviews?targetType=dish&dishId=${encodeURIComponent(dishId)}&limit=200`, { token: studentLogin.data.token });
-    assert.ok(!reviews.data.reviews.some((review) => review.content === '事务失败时不得产生半完成评价'));
+    assert.equal(reviews.data.reviews.filter((review) => review.content === '事务失败时不得产生半完成评价').length, 1);
   });
 });

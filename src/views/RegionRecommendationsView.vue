@@ -18,9 +18,6 @@
           <p class="eyebrow">今天想吃哪一派</p>
           <h2 id="region-showcase-title">按风味逛一圈</h2>
         </div>
-        <div class="tab-bar region-type-bar" role="tablist" aria-label="目录分区">
-          <button v-for="option in itemTypeOptions" :key="option.value" class="tab" :class="{ active: selectedItemType === option.value }" type="button" @click="setItemType(option.value)">{{ option.label }}</button>
-        </div>
       </div>
 
       <div class="region-grid">
@@ -29,7 +26,7 @@
           :key="region.id"
           class="region-card"
           :class="[`tone-${region.tone}`, `delay-${index + 1}`, { 'is-pressed': pressedRegionId === region.id }]"
-          :to="{ path: '/regions', query: { region: region.id, itemType: selectedItemType, sort: 'forYou' } }"
+          :to="{ path: '/regions', query: { region: region.id, sort: 'forYou' } }"
           @pointerdown="pressRegion(region.id)"
           @pointerup="releaseRegion"
           @pointercancel="releaseRegion"
@@ -145,15 +142,13 @@ const route = useRoute();
 const router = useRouter();
 const pressedRegionId = ref('');
 
-const itemTypeOptions = [{ value: 'meal', label: '餐食' }, { value: 'snack', label: '小吃' }, { value: 'beverage', label: '饮品' }];
 const sortOptions = [{ value: 'forYou', label: '适合我' }, { value: 'rating', label: '评分优先' }, { value: 'hot', label: '热度优先' }, { value: 'price', label: '价格优先' }];
 const sortValues = new Set(sortOptions.map((option) => option.value));
-const itemTypeValues = new Set(itemTypeOptions.map((option) => option.value));
 const regionSummaries = ref([]);
 const selectedDishes = ref([]);
 const regionsLoading = ref(false);
 const regionsError = ref('');
-const selectedItemType = computed(() => itemTypeValues.has(String(route.query.itemType || '')) ? String(route.query.itemType) : 'meal');
+const selectedItemType = computed(() => ['meal','snack','beverage'].includes(String(route.query.itemType || '')) ? String(route.query.itemType) : '');
 const selectedRegionId = computed(() => String(route.query.region || ''));
 const selectedRegion = computed(() => regionSummaries.value.find((region) => region.id === selectedRegionId.value) || null);
 const selectedSort = computed(() => sortValues.has(route.query.sort) ? route.query.sort : 'forYou');
@@ -181,8 +176,7 @@ const REGION_EVIDENCE_FIELDS = {
 };
 
 function decorateRegion(region, index) {
-  const icons = { meal: '🍱', snack: '🥟', beverage: '🥤' };
-  return { ...region, icon: icons[selectedItemType.value] || '🍽️', tone: `tone-${(index % 4) + 1}` };
+  return { ...region, icon: '🍽️', tone: `tone-${(index % 4) + 1}` };
 }
 
 async function refreshRegions() {
@@ -271,7 +265,7 @@ function backToRegions() {
   router.replace({ query });
 }
 
-watch(() => [route.query.region, route.query.sort, route.query.itemType], refreshRegions);
+watch(() => [route.query.region, route.query.sort], refreshRegions);
 onMounted(refreshRegions);
 </script>
 

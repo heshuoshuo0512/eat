@@ -15,7 +15,10 @@ import {
 } from '../server/catalogIntroductions.js';
 
 const { Pool } = pg;
-const DEFAULT_SOURCE = 'data/real-catalog-introductions-deepseek-v4-dual-key-2026-07-29.sqlite';
+// The first exported DeepSeek copy has legacy hashes that include updatedAt.
+// Keep the validated stable-hash artifact as the safe default; the target
+// catalog snapshot is still checked before any PostgreSQL write.
+const DEFAULT_SOURCE = 'data/real-catalog-introductions-v4-stable-hash-2026-07-29.sqlite';
 const DEFAULT_EXPECTED_COUNT = 2715;
 const JSON_COLUMNS = Object.freeze([
   ['claim_evidence_json', 'array'],

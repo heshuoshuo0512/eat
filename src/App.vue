@@ -44,9 +44,14 @@
         <form v-show="currentView === 'login'" class="form-inner" @submit.prevent="handleLogin">
           <h1>login</h1>
           <p class="form-subtitle">统一账号入口</p>
-          <div class="input-group">
+          <div class="auth-method-tabs"><button type="button" :class="{ active: loginMethod==='password' }" @click="loginMethod='password'">密码登录</button><button type="button" :class="{ active: loginMethod==='code' }" @click="loginMethod='code'">验证码登录</button></div>
+          <div v-if="loginMethod==='password'" class="input-group">
             <input v-model.trim="loginForm.identifier" placeholder="手机号或账号" autocomplete="username">
             <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password">
+          </div>
+          <div v-else class="input-group">
+            <input v-model.trim="phoneLoginForm.phone" inputmode="numeric" maxlength="11" placeholder="手机号" autocomplete="tel">
+            <div class="code-row"><input v-model.trim="phoneLoginForm.verificationCode" inputmode="numeric" maxlength="6" placeholder="验证码"><button type="button" :disabled="codeSending" @click="sendCode('login')">{{ codeSending ? '发送中' : '获取验证码' }}</button></div>
           </div>
           <p v-if="authError || store.error" class="form-error">{{ authError || store.error }}</p>
           <button class="submit-btn" type="submit" :disabled="store.loading">{{ store.loading ? '登录中...' : '登录' }}</button>
@@ -230,7 +235,9 @@ function isNavActive(item) {
   return [...params.entries()].every(([key, value]) => route.query[key] === value);
 }
 const currentView = ref('login');   // 'login' | 'register' | 'forgot'
+const loginMethod = ref('password');
 const loginForm = reactive({ identifier: '', password: '' });
+const phoneLoginForm = reactive({ phone: '', verificationCode: '' });
 const registerForm = reactive({ phone: '', verificationCode: '', nickname: '', password: '', confirmPassword: '', agreementAccepted: false });
 const resetForm = reactive({ phone: '', verificationCode: '', password: '', confirmPassword: '' });
 const authError = ref('');
@@ -267,10 +274,12 @@ function handleNavClick(navigate, event) {
 }
 
 async function handleLogin() {
-  authError.value = validateLoginForm(loginForm);
+  authError.value = loginMethod.value === 'password'
+    ? validateLoginForm(loginForm)
+    : (!/^1[3-9]\d{9}$/.test(phoneLoginForm.phone) || !/^\d{6}$/.test(phoneLoginForm.verificationCode) ? '请输入有效手机号和 6 位验证码。' : '');
   if (authError.value) return;
   try {
-    const user = await store.login(loginForm);
+    const user = loginMethod.value === 'password' ? await store.login(loginForm) : await store.phoneLogin(phoneLoginForm);
     onboardingPromptDismissed.value = false;
     await router.push(landingPathForRole(user?.role));
   } catch (error) {
@@ -279,7 +288,7 @@ async function handleLogin() {
 }
 
 async function sendCode(purpose) {
-  const phone = purpose === 'register' ? registerForm.phone : resetForm.phone;
+  const phone = purpose === 'register' ? registerForm.phone : purpose === 'login' ? phoneLoginForm.phone : resetForm.phone;
   if (!/^1[3-9]\d{9}$/.test(phone)) { authError.value = '请输入有效的中国大陆手机号。'; return; }
   codeSending.value = true;
   authError.value = '';
@@ -326,6 +335,7 @@ async function deferOnboarding() {
 </script>
 
 <style scoped>
+.auth-method-tabs { display:grid; grid-template-columns:repeat(2,1fr); gap:4px; margin:8px 0; padding:4px; border-radius:8px; background:#f2f5f2; }.auth-method-tabs button { min-height:36px; border:0; color:var(--muted); background:transparent; }.auth-method-tabs button.active { color:var(--ink); background:#fff; box-shadow:0 1px 4px rgba(17,31,22,.08); }
 .onboarding-backdrop { position:fixed; inset:0; z-index:50; display:grid; place-items:center; padding:20px; background:rgba(17,31,22,.48); }
 .onboarding-dialog { width:min(100%,440px); border-radius:16px; background:#fff; padding:28px; box-shadow:0 26px 80px rgba(0,0,0,.22); }
 .onboarding-dialog h2 { margin:6px 0 10px; font-size:24px; }

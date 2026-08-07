@@ -65,7 +65,7 @@ import { useCanteenStore } from '../../stores/canteenStore.js';
 
 const store = useCanteenStore();
 const regionId = ref('');
-const itemType = ref('meal');
+const itemType = ref('');
 const sortBy = ref('rating');
 const region = ref(null);
 const dishes = ref([]);
@@ -113,7 +113,7 @@ async function loadDetail() {
 
 onLoad(async (options) => {
   regionId.value = String(options?.id || '');
-  itemType.value = String(options?.itemType || 'meal');
+  itemType.value = String(options?.itemType || '');
   if (options?.sort && sortOptions.some((item) => item.value === options.sort)) sortBy.value = options.sort;
   try {
     await store.refreshIfStale();

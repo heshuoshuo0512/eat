@@ -32,6 +32,7 @@ function apiError(response) {
   const error = new Error(payload?.message || data.error || data.message || `请求失败：${response.statusCode}`);
   error.statusCode = response.statusCode;
   error.code = payload?.code || data.code || '';
+  error.details = payload?.details || data.details || null;
   return error;
 }
 
@@ -105,6 +106,9 @@ async function request(path, options = {}) {
       if (!options._retried && await refreshSession()) return request(path, { ...options, _retried: true });
       handleUnauthorized(path);
     }
+    if (error.statusCode === 428 && error.code === 'PROFILE_REQUIRED' && path !== '/api/account/profile') {
+      uni.switchTab({ url: '/pages/profile/profile' });
+    }
     throw error;
   }
 }
@@ -134,13 +138,13 @@ export const apiClient = {
     return request(`/api/catalog/categories${queryString({ itemType })}`);
   },
   catalogRankings(params = {}) {
-    return request(`/api/catalog/rankings${queryString({ type: params.type || 'dishes', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
+    return request(`/api/catalog/rankings${queryString({ type: params.type || 'dishes', itemType: params.type === 'dishes' || !params.type ? (params.itemType || 'meal') : '', catalogCategory: params.catalogCategory || '', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
   },
   catalogRegions(params = {}) {
-    return request(`/api/catalog/regions${queryString({ itemType: params.itemType || 'meal' })}`);
+    return request(`/api/catalog/regions${queryString({ itemType: params.itemType || '' })}`);
   },
   catalogRegionDishes(regionId, params = {}) {
-    return request(`/api/catalog/regions/${encodeURIComponent(regionId)}/dishes${queryString({ itemType: params.itemType || 'meal', page: params.page || 1, pageSize: params.pageSize || 20, sort: params.sort || 'rating' })}`);
+    return request(`/api/catalog/regions/${encodeURIComponent(regionId)}/dishes${queryString({ itemType: params.itemType || '', page: params.page || 1, pageSize: params.pageSize || 20, sort: params.sort || 'rating' })}`);
   },
   savedCatalog(params = {}) {
     return request(`/api/catalog/saved${queryString({ kind: params.kind || 'favorite', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
@@ -153,6 +157,15 @@ export const apiClient = {
   },
   register(payload) {
     return authenticate('/api/auth/register', payload);
+  },
+  phoneLogin(payload) {
+    return authenticate('/api/auth/phone-login', payload);
+  },
+  bindPhone(payload) {
+    return request('/api/auth/phone/bind', { method: 'POST', body: payload });
+  },
+  updatePublicProfile(payload) {
+    return request('/api/account/profile', { method: 'PATCH', body: payload });
   },
   sendVerificationCode(payload) {
     return request('/api/auth/verification-codes', { method: 'POST', body: payload });
@@ -185,7 +198,7 @@ export const apiClient = {
     return request('/api/dishes/search', { method: 'POST', body: payload, timeoutMs: 60000 });
   },
   loadRankings(params = {}) {
-    return request(`/api/catalog/rankings${queryString({ type: params.type || 'dishes', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
+    return request(`/api/catalog/rankings${queryString({ type: params.type || 'dishes', itemType: params.type === 'dishes' || !params.type ? (params.itemType || 'meal') : '', catalogCategory: params.catalogCategory || '', page: params.page || 1, pageSize: params.pageSize || 20 })}`);
   },
   loadRecommendation() {
     return request('/api/recommend', { timeoutMs: 60000 });
@@ -235,11 +248,33 @@ export const apiClient = {
   createPostComment(id, content) {
     return request(`/api/posts/${encodeURIComponent(id)}/comments`, { method: 'POST', body: { content } });
   },
+  updatePostComment(postId, commentId, content) {
+    return request(`/api/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}`, { method: 'PATCH', body: { content } });
+  },
+  deletePostComment(postId, commentId) {
+    return request(`/api/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}`, { method: 'DELETE' });
+  },
+  reportPostComment(postId, commentId, payload = {}) {
+    return request(`/api/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(commentId)}/report`, { method: 'POST', body: payload });
+  },
+  archiveCommunityContent(type, id) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+  },
+  restoreCommunityContent(type, id) {
+    return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  },
   updateCommunityContent(type, id, payload) {
     return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload });
   },
   deleteCommunityContent(type, id) {
     return request(`/api/${type === 'post' ? 'posts' : 'reviews'}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+  listCommunityReports(params = {}) {
+    const query = Object.entries({ status: 'pending', limit: 50, offset: 0, ...params }).filter(([, value]) => value !== '' && value != null).map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&');
+    return request(`/api/admin/community/reports?${query}`);
+  },
+  updateCommunityReport(id, status) {
+    return request(`/api/admin/community/reports/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) });
   },
   uploadImage(payload) {
     return request('/api/uploads', { method: 'POST', body: payload, timeoutMs: 60000 });

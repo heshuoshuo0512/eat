@@ -279,8 +279,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     return savedCatalog.value[kind];
   }
 
-  async function loadCatalogRanking(type = 'dishes', { page = 1, pageSize = 20 } = {}) {
-    const result = await apiClient.catalogRankings({ type, page, pageSize });
+  async function loadCatalogRanking(type = 'dishes', { page = 1, pageSize = 20, itemType = 'meal', catalogCategory = '' } = {}) {
+    const result = await apiClient.catalogRankings({ type, itemType, catalogCategory, page, pageSize });
     const key = type === 'venues' ? 'canteens' : type;
     const previous = page > 1 ? remoteRankings.value[key] || [] : [];
     const entities = new Map(previous.map((item) => [String(item.id), item]));
@@ -341,6 +341,24 @@ export const useCanteenStore = defineStore('canteen', () => {
   async function register(payload) {
     const result = await apiClient.register(payload);
     await load();
+    return result.user;
+  }
+
+  async function phoneLogin(payload) {
+    const result = await apiClient.phoneLogin(payload);
+    await load();
+    return result.user;
+  }
+
+  async function bindPhone(payload) {
+    const result = await apiClient.bindPhone(payload);
+    state.value.session.user = result.user;
+    return result.user;
+  }
+
+  async function updatePublicProfile(payload) {
+    const result = await apiClient.updatePublicProfile(payload);
+    state.value.session.user = result.user;
     return result.user;
   }
 
@@ -654,6 +672,8 @@ export const useCanteenStore = defineStore('canteen', () => {
   const communityPostTotal = ref(0);
   const adminPosts = ref([]);
   const adminPostTotal = ref(0);
+  const adminCommunityReports = ref([]);
+  const adminCommunityReportTotal = ref(0);
 
 
 
@@ -880,6 +900,15 @@ export const useCanteenStore = defineStore('canteen', () => {
     return result;
   }
 
+  async function setCommunityArchive(type, id, archived) {
+    const result = archived
+      ? await apiClient.archiveCommunityContent(type, id)
+      : await apiClient.restoreCommunityContent(type, id);
+    const list = type === 'post' ? communityPosts : studentReviews;
+    list.value = list.value.map((item) => item.id === id ? { ...item, status: result.status } : item);
+    return result;
+  }
+
   async function loadPostsAdmin(limit = 50, offset = 0, status = '', filters = {}) {
     const result = await apiClient.listAdminPosts(limit, offset, status, filters);
     adminPosts.value = result.posts || [];
@@ -891,6 +920,19 @@ export const useCanteenStore = defineStore('canteen', () => {
     const result = await apiClient.updatePostStatus(id, status);
     adminPosts.value = adminPosts.value.map((post) => post.id === id ? result.post : post);
     return result.post;
+  }
+
+  async function loadCommunityReports(params = {}) {
+    const result = await apiClient.listCommunityReports(params);
+    adminCommunityReports.value = result.reports || [];
+    adminCommunityReportTotal.value = Number(result.total || 0);
+    return result;
+  }
+
+  async function updateCommunityReport(id, status) {
+    const result = await apiClient.updateCommunityReport(id, status);
+    adminCommunityReports.value = adminCommunityReports.value.map((report) => report.id === id ? { ...report, status: result.status } : report);
+    return result;
   }
 
   async function deleteReviewAdmin(id) {
@@ -990,6 +1032,9 @@ export const useCanteenStore = defineStore('canteen', () => {
     load,
     login,
     register,
+    phoneLogin,
+    bindPhone,
+    updatePublicProfile,
     sendVerificationCode,
     resetPassword,
     deferProfileOnboarding,
@@ -1097,6 +1142,8 @@ export const useCanteenStore = defineStore('canteen', () => {
     communityPostTotal,
     adminPosts,
     adminPostTotal,
+    adminCommunityReports,
+    adminCommunityReportTotal,
     loadUsers,
     updateUserRole,
     loadAuditLogs,
@@ -1134,9 +1181,12 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadReviewAnalytics,
     loadStudentReviews,
     loadCommunityPosts,
-    createCommunityPost, reactToCommunityContent, reportCommunityContent, updateCommunityContent, deleteCommunityContent,
+    createCommunityPost, reactToCommunityContent, reportCommunityContent, updateCommunityContent, deleteCommunityContent, setCommunityArchive,
     listPostComments: apiClient.listPostComments, createPostComment: apiClient.createPostComment,
+    updatePostComment: apiClient.updatePostComment, deletePostComment: apiClient.deletePostComment, reportPostComment: apiClient.reportPostComment,
     loadPostsAdmin,
-    updatePostStatusAdmin
+    updatePostStatusAdmin,
+    loadCommunityReports,
+    updateCommunityReport
   };
 });

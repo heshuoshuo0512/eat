@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
+import { completePublicProfile, imageFixtures } from './community-test-helpers.mjs';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -582,7 +583,7 @@ describe('POST /api/uploads', () => {
     const payload = {
       filename: 'test-image.png',
       contentType: 'image/png',
-      dataBase64: Buffer.from('fake-png-bytes').toString('base64'),
+      dataBase64: imageFixtures.png,
     };
     const { status, data } = await req('/api/uploads', {
       method: 'POST',
@@ -699,6 +700,7 @@ describe('Rankings invalidation after review', () => {
       body: { username: '演示学生', password: 'student123' },
     });
     studentToken = sLogin.token;
+    await completePublicProfile(req, studentToken, 'Enterprise Student');
 
     const { data: aLogin } = await req('/api/auth/login', {
       method: 'POST',
@@ -717,7 +719,7 @@ describe('Rankings invalidation after review', () => {
     const beforeDish = before.dishes.find((d) => d.id === dishId);
     const beforeScore = beforeDish.rankScore;
 
-    // Post a review with a different rating to perturb the score (created as pending)
+    // Post a valid review with a different rating to perturb the score.
     const lowRating = beforeDish.rating >= 3 ? 1 : 5;
     const { status: reviewStatus } = await req('/api/reviews', {
       method: 'POST',
@@ -729,17 +731,6 @@ describe('Rankings invalidation after review', () => {
       },
     });
     assert.equal(reviewStatus, 201, 'review posted');
-
-    // Retrieve the pending review via admin list and approve it
-    const { data: pendingList } = await req('/api/admin/reviews?status=pending', { token: adminToken });
-    const pending = pendingList.reviews.find((r) => r.targetId === dishId);
-    assert.ok(pending, 'pending review found in admin list');
-    const { status: approveStatus } = await req(`/api/admin/reviews/${pending.id}/status`, {
-      method: 'PUT',
-      token: adminToken,
-      body: { status: 'approved' },
-    });
-    assert.equal(approveStatus, 200, 'review approved');
 
     // Re-fetch rankings — score should now reflect the approved review
     const { data: after } = await req('/api/rankings');

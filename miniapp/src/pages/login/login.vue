@@ -16,11 +16,19 @@
 
           <view v-if="mode==='login'" class="auth-form">
             <text class="form-title">登录智慧食堂</text>
-            <button class="wechat-btn" open-type="getPhoneNumber" :loading="loadingMode==='wechat'" :disabled="Boolean(loadingMode)" @getphonenumber="loginWithWechat"><sc-icon name="user" :size="18" tone="current" /><text>微信授权手机号登录</text></button>
-            <view class="divider"><text></text><text>或使用手机号密码</text><text></text></view>
-            <label><text>手机号或账号</text><input v-model="loginForm.identifier" class="input" maxlength="32" placeholder="请输入手机号或账号" /></label>
-            <label><text>密码</text><input v-model="loginForm.password" class="input" password maxlength="72" placeholder="请输入密码" /></label>
-            <button class="primary-btn" :loading="loadingMode==='account'" :disabled="Boolean(loadingMode)" @tap="loginWithAccount">登录</button>
+            <button class="wechat-btn" :loading="loadingMode==='wechat'" :disabled="Boolean(loadingMode)" @tap="loginWithWechat"><sc-icon name="user" :size="18" tone="current" /><text>微信一键登录</text></button>
+            <view class="divider"><text></text><text>或使用手机号</text><text></text></view>
+            <view class="login-method"><button :class="{active:loginMethod==='password'}" @tap="loginMethod='password'">密码登录</button><button :class="{active:loginMethod==='code'}" @tap="loginMethod='code'">验证码登录</button></view>
+            <template v-if="loginMethod==='password'">
+              <label><text>手机号或账号</text><input v-model="loginForm.identifier" class="input" maxlength="32" placeholder="请输入手机号或账号" /></label>
+              <label><text>密码</text><input v-model="loginForm.password" class="input" password maxlength="72" placeholder="请输入密码" /></label>
+              <button class="primary-btn" :loading="loadingMode==='account'" :disabled="Boolean(loadingMode)" @tap="loginWithAccount">登录</button>
+            </template>
+            <template v-else>
+              <label><text>手机号</text><input v-model="phoneLoginForm.phone" class="input" type="number" maxlength="11" placeholder="请输入手机号" /></label>
+              <label><text>验证码</text><view class="code-row"><input v-model="phoneLoginForm.verificationCode" class="input" type="number" maxlength="6" placeholder="6 位验证码" /><button :disabled="codeSending" @tap="sendCode('login')"><view>{{ codeSending?'发送中':'获取验证码' }}</view></button></view></label>
+              <button class="primary-btn" :loading="loadingMode==='phone'" :disabled="Boolean(loadingMode)" @tap="loginWithPhoneCode">登录</button>
+            </template>
             <button class="text-action" @tap="switchMode('invite')">使用邀请码注册</button>
           </view>
 
@@ -75,7 +83,9 @@ import { useCanteenStore } from '../../stores/canteenStore.js';
 const store = useCanteenStore();
 const modes = [{value:'login',label:'登录'},{value:'register',label:'注册'},{value:'reset',label:'找回'}];
 const mode = ref('login');
+const loginMethod = ref('password');
 const loginForm = reactive({identifier:'',password:''});
+const phoneLoginForm = reactive({phone:'',verificationCode:''});
 const registerForm = reactive({phone:'',verificationCode:'',nickname:'',password:'',confirmPassword:''});
 const invitationForm = reactive({phone:'',invitationCode:'',nickname:'',password:'',confirmPassword:''});
 const resetForm = reactive({phone:'',verificationCode:'',password:'',confirmPassword:''});
@@ -85,9 +95,10 @@ onShow(async()=>{try{await store.refreshIfStale();if(store.user.value)uni.switch
 function switchMode(value){mode.value=value;message.value='';isError.value=false;}
 function requireConsent(){if(consentAccepted.value)return true;isError.value=true;message.value='请先同意隐私保护指引和用户服务协议。';return false;}
 async function runAuth(type,action){if(!requireConsent())return;loadingMode.value=type;message.value='';isError.value=false;try{await action();uni.switchTab({url:'/pages/home/home'});}catch(error){isError.value=true;message.value=error?.message||'操作失败，请稍后重试。';}finally{loadingMode.value='';}}
-function loginWithWechat(event){const phoneCode=event?.detail?.code||'';if(!phoneCode){mode.value='register';isError.value=true;message.value='未授权微信手机号，可改用手机号注册。';return;}return runAuth('wechat',()=>store.wechatLogin({phoneCode,agreementVersion:'2026-07'}));}
+function loginWithWechat(){return runAuth('wechat',()=>store.wechatLogin({agreementVersion:'2026-07'}));}
 function loginWithAccount(){const error=validateLoginForm(loginForm);if(error){isError.value=true;message.value=error;return;}return runAuth('account',()=>store.login({...loginForm}));}
-async function sendCode(purpose){if(!requireConsent())return;const phone=purpose==='register'?registerForm.phone:resetForm.phone;if(!/^1[3-9]\d{9}$/.test(phone)){isError.value=true;message.value='请输入有效的中国大陆手机号。';return;}codeSending.value=true;message.value='';try{await store.sendVerificationCode({phone,purpose});message.value='验证码已发送，请在 5 分钟内使用。';isError.value=false;}catch(error){isError.value=true;message.value=error.message;}finally{codeSending.value=false;}}
+function loginWithPhoneCode(){if(!/^1[3-9]\d{9}$/.test(phoneLoginForm.phone)||!/^\d{6}$/.test(phoneLoginForm.verificationCode)){isError.value=true;message.value='请输入有效手机号和 6 位验证码。';return;}return runAuth('phone',()=>store.phoneLogin({...phoneLoginForm}));}
+async function sendCode(purpose){if(!requireConsent())return;const phone=purpose==='register'?registerForm.phone:purpose==='login'?phoneLoginForm.phone:resetForm.phone;if(!/^1[3-9]\d{9}$/.test(phone)){isError.value=true;message.value='请输入有效的中国大陆手机号。';return;}codeSending.value=true;message.value='';try{await store.sendVerificationCode({phone,purpose});message.value='验证码已发送，请在 5 分钟内使用。';isError.value=false;}catch(error){isError.value=true;message.value=error.message;}finally{codeSending.value=false;}}
 function registerAccount(){const error=validatePhoneAuthForm(registerForm);if(error){isError.value=true;message.value=error;return;}return runAuth('register',()=>store.register({phone:registerForm.phone,verificationCode:registerForm.verificationCode,password:registerForm.password,nickname:registerForm.nickname||undefined,agreementVersion:'2026-07'}));}
 function registerWithInvitation(){const error=validateInvitationRegistrationForm(invitationForm);if(error){isError.value=true;message.value=error;return;}return runAuth('invite',()=>store.register({phone:invitationForm.phone,invitationCode:invitationForm.invitationCode,password:invitationForm.password,nickname:invitationForm.nickname||undefined,agreementVersion:'2026-07'}));}
 async function resetPassword(){if(!requireConsent())return;const error=validatePhoneAuthForm(resetForm);if(error){isError.value=true;message.value=error;return;}loadingMode.value='reset';try{await store.resetPassword({phone:resetForm.phone,verificationCode:resetForm.verificationCode,newPassword:resetForm.password});Object.assign(loginForm,{identifier:resetForm.phone,password:''});switchMode('login');message.value='密码已重设，请使用新密码登录。';}catch(err){isError.value=true;message.value=err.message;}finally{loadingMode.value='';}}
@@ -114,6 +125,7 @@ function openPrivacy(){uni.navigateTo({url:'/pages/privacy/privacy'});} function
 .wechat-btn { display:flex; min-height:44px; align-items:center; justify-content:center; gap:8px; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface-soft); font-size:14px; }.wechat-btn:active { background:var(--surface-strong); transform:translateY(1px); }
 .divider { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
 .divider text:first-child,.divider text:last-child { height:1px; flex:1; background:var(--line); }
+  .login-method { display:grid; grid-template-columns:repeat(2,1fr); gap:4px; padding:4px; border-radius:var(--radius); background:var(--surface-soft); }.login-method button { min-height:36px; color:var(--muted); background:transparent; font-size:14px; }.login-method button.active { color:var(--ink); background:var(--surface); }
 .code-row { display:grid; grid-template-columns:minmax(0,1fr) 112px; gap:8px; }
 .code-row button { display:flex; min-height:44px; align-items:center; padding:0; }
 .code-row button view { display:flex; width:100%; height:44px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:var(--radius); color:var(--ink); background:var(--surface-soft); font-size:12px; box-sizing:border-box; }

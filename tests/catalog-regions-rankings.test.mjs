@@ -93,6 +93,10 @@ describe('real catalog regions and rankings', () => {
     assert.ok(result.data.regions.every((region) => region.count >= MIN_CATALOG_REGION_ITEMS));
     assert.equal(
       result.data.regions.reduce((sum, region) => sum + region.count, 0) + result.data.meta.hiddenSmallItemCount,
+      result.data.meta.classifiedCount,
+    );
+    assert.equal(
+      result.data.meta.classifiedCount + result.data.meta.needsReviewCount + result.data.meta.excludedNonRegionalCount,
       result.data.meta.total,
     );
   });

@@ -29,6 +29,8 @@ function setup() {
     await db.prepare(
       "INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, created_at, updated_at) VALUES (?, 'default', ?, ?, '测试同学', 'student', datetime('now'), datetime('now'))"
     ).run(studentId, 'teststudent', hashPassword('student123'));
+    await db.prepare("UPDATE users SET avatar_url = 'upload://legacy-test-avatar', profile_completed_at = datetime('now') WHERE id IN (?, ?)")
+      .run(adminId, studentId);
     await db.prepare(
       "INSERT INTO health_profiles (user_id, tenant_id, goal, budget_max, meal_type, taste, halal_only, avoid_json, updated_at) VALUES (?, 'default', 'fatLoss', 25, 'lunch', '不限', 0, '[]', datetime('now'))"
     ).run(studentId);
@@ -256,20 +258,16 @@ describe('review and ranking contract', () => {
     studentToken = await loginStudent();
   });
 
-  it('POST /api/reviews creates a review; pending until admin approves', async () => {
+  it('POST /api/reviews creates and automatically approves valid content', async () => {
     const res = await post('/api/reviews', {
       token: studentToken,
       body: { targetId: 'dish-available', rating: 5, content: '非常好吃，强烈推荐！' }
     });
     assert.equal(res.status, 201);
-    // Pending reviews are hidden from public dish detail until approved.
-    const adminToken = await loginAdmin();
-    const { data: pending } = await get('/api/admin/reviews?status=pending', { token: adminToken });
-    const myReview = pending.reviews.find((r) => r.content === '非常好吃，强烈推荐！');
-    assert.ok(myReview, 'created review must appear in admin pending list');
-    assert.equal(myReview.status, 'pending');
-    assert.equal(myReview.rating, 5);
-    assert.ok(myReview.userId || myReview.user_id, 'review must have user id');
+    assert.equal(res.data.review.status, 'approved');
+    assert.equal(res.data.moderation.status, 'approved');
+    assert.equal(res.data.review.rating, 5);
+    assert.ok(res.data.review.userId, 'review must have user id');
   });
 
   it('POST /api/reviews requires authentication', async () => {

@@ -40,6 +40,7 @@
                 <option value="pending">待审核</option>
                 <option value="approved">已通过</option>
                 <option value="rejected">已驳回</option>
+                <option value="archived">已封存</option>
                 <option value="all">全部状态</option>
               </select>
             </label>
@@ -102,6 +103,7 @@
                       <button v-if="review.status !== 'approved'" class="ghost" type="button" :disabled="isReviewBusy(review.id)" @click="moderateReview(review.id, 'approved')">{{ review.status === 'rejected' ? '改为通过' : '通过' }}</button>
                       <button v-if="review.status !== 'rejected'" class="ghost danger" type="button" :disabled="isReviewBusy(review.id)" @click="moderateReview(review.id, 'rejected')">{{ review.status === 'approved' ? '改为驳回' : '驳回' }}</button>
                       <button v-if="review.status !== 'pending'" class="ghost" type="button" :disabled="isReviewBusy(review.id)" @click="moderateReview(review.id, 'pending')">重新审核</button>
+                      <button v-if="review.status !== 'archived'" class="ghost" type="button" :disabled="isReviewBusy(review.id)" @click="moderateReview(review.id, 'archived')">封存</button>
                     </div>
                   </td>
                 </tr>
@@ -129,6 +131,7 @@
                 <option value="pending">待审核</option>
                 <option value="approved">已通过</option>
                 <option value="rejected">已驳回</option>
+                <option value="archived">已封存</option>
                 <option value="all">全部状态</option>
               </select>
             </label>
@@ -170,7 +173,8 @@
               <div class="post-moderation-actions">
                 <button v-if="post.status !== 'approved'" class="ghost" type="button" :disabled="isPostBusy(post.id)" @click="moderatePost(post.id, 'approved')">{{ post.status === 'rejected' ? '重新通过' : '通过' }}</button>
                 <button v-if="post.status !== 'rejected'" class="ghost danger" type="button" :disabled="isPostBusy(post.id)" @click="moderatePost(post.id, 'rejected')">{{ post.status === 'approved' ? '改为驳回' : '驳回' }}</button>
-                <button v-if="post.status !== 'pending'" class="ghost" type="button" :disabled="isPostBusy(post.id)" @click="moderatePost(post.id, 'pending')">重新审核</button>
+                 <button v-if="post.status !== 'pending'" class="ghost" type="button" :disabled="isPostBusy(post.id)" @click="moderatePost(post.id, 'pending')">重新审核</button>
+                 <button v-if="post.status !== 'archived'" class="ghost" type="button" :disabled="isPostBusy(post.id)" @click="moderatePost(post.id, 'archived')">封存</button>
               </div>
             </article>
           </div>
@@ -184,6 +188,20 @@
       </template>
     </section>
   </template>
+
+  <section v-if="isAdmin && activePanel === 'reviews' && (canModeratePosts || canModerateReviews)" class="card admin-form report-queue">
+    <div class="section-title horizontal">
+      <div><p class="eyebrow">Community Reports</p><h2>举报队列</h2><p class="muted">举报只进入人工处置队列，不会绕过自动审核直接公开内容。</p></div>
+      <button class="ghost" type="button" :disabled="communityReportsLoading" @click="refreshCommunityReports">{{ communityReportsLoading ? '加载中...' : '刷新举报' }}</button>
+    </div>
+    <div v-if="!store.adminCommunityReports.length" class="moderation-empty"><strong>暂无待处理举报</strong><span>自动规则拒绝、举报和申诉可以在这里继续处理。</span></div>
+    <div v-else class="report-list">
+      <article v-for="report in store.adminCommunityReports" :key="report.id" class="report-row">
+        <div><strong>{{ report.targetType }} · {{ report.targetId }}</strong><p>{{ report.reason }}{{ report.detail ? `：${report.detail}` : '' }}</p><small class="muted">{{ report.reporter }} · {{ formatDateTime(report.createdAt) }}</small></div>
+        <div class="table-actions"><button class="ghost" type="button" @click="resolveCommunityReport(report, 'resolved')">处理完成</button><button class="ghost" type="button" @click="resolveCommunityReport(report, 'dismissed')">驳回举报</button></div>
+      </article>
+    </div>
+  </section>
 
   <template v-if="isAdmin && activePanel === 'data'">
     <section class="card admin-form data-overview-bar">
@@ -809,6 +827,7 @@ const menuItemForm = reactive(defaultMenuItemForm());
 const deploymentReadiness = ref(null);
 const databaseOverview = ref(null);
 const catalogOverview = ref(null);
+const communityReportsLoading = ref(false);
 
 // ===== 数据库驱动的餐饮场所层级 =====
 const fixedRegions = computed(() => {
@@ -2001,6 +2020,19 @@ function isPostBusy(id) {
   return postBusyIds.value.has(id);
 }
 
+async function refreshCommunityReports() {
+  if (!canModeratePosts.value && !canModerateReviews.value) return;
+  communityReportsLoading.value = true;
+  try { await store.loadCommunityReports({ status: 'pending', limit: 100 }); }
+  catch (error) { message.value = error.message || '举报队列加载失败'; }
+  finally { communityReportsLoading.value = false; }
+}
+
+async function resolveCommunityReport(report, status) {
+  try { await store.updateCommunityReport(report.id, status); }
+  catch (error) { message.value = error.message || '举报处理失败'; }
+}
+
 function toggleSetEntry(targetRef, id) {
   const next = new Set(targetRef.value);
   if (next.has(id)) next.delete(id);
@@ -2406,6 +2438,7 @@ async function initializeAdminPage() {
     moderationTab.value = route.query.tab === 'posts' ? 'posts' : 'reviews';
     if (moderationTab.value === 'posts') await refreshPosts();
     else await refreshReviews();
+    await refreshCommunityReports();
   }
 }
 
@@ -2434,6 +2467,11 @@ watch(() => [store.canteens.length, store.stalls.length, store.dishes.length], (
 .bulk-moderation-bar { display: flex; min-height: 3.5rem; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .625rem .75rem; border: 1px solid rgba(31,122,77,.14); border-radius: .5rem; background: #f8fbf6; }.bulk-moderation-bar span { margin-right: auto; color: var(--muted); font-size: .8125rem; font-weight: 700; }.bulk-moderation-bar button { min-height: 2.75rem; padding-inline: 1rem; }
 .moderation-empty { min-height: 9rem; display: grid; place-content: center; gap: 0.375rem; text-align: center; color: var(--muted); border: 1px dashed rgba(31, 122, 77, .2); border-radius: 0.5rem; background: rgba(255, 255, 255, .34); }
 .moderation-empty strong { color: var(--text); }
+.report-queue { margin-top: 1rem; }
+.report-list { display: grid; gap: .75rem; }
+.report-row { display: flex; justify-content: space-between; gap: 1rem; padding: .9rem 1rem; border: 1px solid rgba(31,122,77,.14); border-radius: .5rem; background: #fff; }
+.report-row p { margin: .3rem 0; }
+.report-row .table-actions { flex: 0 0 auto; align-self: center; }
 .moderation-table table { min-width: 62rem; }
 .moderation-table td { vertical-align: top; }
 .selection-column { width: 3.75rem; text-align: center; }.selection-column input, .post-selection input { width: 1.125rem; height: 1.125rem; accent-color: var(--primary); }

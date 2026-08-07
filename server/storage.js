@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve, sep } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import { createSignedUploadUrl } from './security.js';
 
 let S3ClientCtor, PutObjectCommandCtor, GetObjectCommandCtor, DeleteObjectCommandCtor;
@@ -41,12 +42,26 @@ function safeExtension(filename, contentType) {
   return '.bin';
 }
 
-function validateUpload({ filename, contentType, dataBase64 }) {
+async function validateUpload({ filename, contentType, dataBase64 }) {
   if (!filename || !contentType || !dataBase64) throw Object.assign(new Error('缺少上传字段'), { status: 400 });
   if (!allowedTypes.has(contentType)) throw Object.assign(new Error('仅支持图片上传'), { status: 415 });
   const buffer = Buffer.from(dataBase64, 'base64');
   if (!buffer.length) throw Object.assign(new Error('上传内容为空'), { status: 400 });
   if (buffer.length > maxBytes) throw Object.assign(new Error('图片不能超过 5MB'), { status: 413 });
+  let metadata;
+  try {
+    metadata = await sharp(buffer, { animated: true, limitInputPixels: 64 * 1024 * 1024 }).metadata();
+  } catch {
+    throw Object.assign(new Error('图片文件无法解码'), { status: 415, code: 'INVALID_IMAGE_DATA' });
+  }
+  const expectedFormat = contentType === 'image/jpeg' ? 'jpeg' : contentType.split('/')[1];
+  if (metadata.format !== expectedFormat) throw Object.assign(new Error('图片真实格式与声明类型不一致'), { status: 415, code: 'IMAGE_TYPE_MISMATCH' });
+  if (!metadata.width || !metadata.height || metadata.width > 8192 || metadata.height > 8192) {
+    throw Object.assign(new Error('图片尺寸无效或超过 8192 像素'), { status: 400, code: 'INVALID_IMAGE_DIMENSIONS' });
+  }
+  const digest = createHash('sha256').update(buffer).digest('hex');
+  const blockedHashes = new Set(String(process.env.COMMUNITY_IMAGE_HASH_BLOCKLIST || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean));
+  if (blockedHashes.has(digest)) throw Object.assign(new Error('图片未通过安全检查'), { status: 422, code: 'IMAGE_HASH_BLOCKED' });
   return buffer;
 }
 
@@ -119,8 +134,8 @@ async function storeS3(buffer, filename, contentType, tenantId = 'default', owne
   };
 }
 
-export function storeUpload({ filename, contentType, dataBase64, tenantId = 'default', ownerId = 'system' }) {
-  const buffer = validateUpload({ filename, contentType, dataBase64 });
+export async function storeUpload({ filename, contentType, dataBase64, tenantId = 'default', ownerId = 'system' }) {
+  const buffer = await validateUpload({ filename, contentType, dataBase64 });
   if (S3ClientCtor && process.env.S3_BUCKET) {
     return storeS3(buffer, filename, contentType, tenantId, ownerId);
   }

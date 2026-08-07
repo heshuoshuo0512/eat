@@ -3,13 +3,13 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { buildHealthPlan, calculateRanking, normalizeProfile } from '../src/domain/recommendation.js';
 import { isServingTierCatalogName, openDatabase, parseJson, rowToAiUsageLog, rowToAuditLog, rowToCanteen, rowToDish, rowToEnvironment, rowToMenu, rowToMenuItem, rowToPost, rowToPreference, rowToProfile, rowToReview, rowToStall, rowToTenant, rowToUser, serializeJson } from './database.js';
 import { assignableRoles, hasPermission, requirePermission } from './rbac.js';
-import { decryptSecret, encryptPhone, encryptSecret, hashPassword, normalizePhone, phoneLookupHash, publicUser, verifyPassword, verifySignedUploadUrl, verifyToken } from './security.js';
+import { decryptSecret, encryptPhone, encryptSecret, hashPassword, normalizePhone, phoneLookupHash, publicUser, resolveUploadReference, verifyPassword, verifySignedUploadUrl, verifyToken } from './security.js';
 import { deleteStoredUpload, readStoredUpload, storeUpload } from './storage.js';
 import { generateAgentToolCalls, generateDishSearchFilterSupplement, generateGroundedAgentAnswer, getAiProviderStatus, identifyDishFromImage, testAiProviderConnection, withAiRuntimeConfig } from './aiProvider.js';
 import { createCache, rankingCacheKey } from './cache.js';
 import { clientIpFromRequest } from './network.js';
 import { handleAuthSessionRoute } from './modules/auth/routes.js';
-import { syncLegacyUserIdentities } from './modules/auth/identityService.js';
+import { identityHash, syncLegacyUserIdentities, upsertIdentity } from './modules/auth/identityService.js';
 import { createAuthSession, revokeAllUserSessions, validateAccessSession } from './modules/auth/sessionService.js';
 import { getSmsProviderStatus, sendSmsVerificationCode } from './modules/auth/smsProvider.js';
 import {
@@ -42,6 +42,12 @@ import { createRuntimeMetrics } from './metrics.js';
 import { normalizeDishPricing, PRICING_MODES } from './dishPricing.js';
 import { CATALOG_CATEGORY_ORDER, RETIRED_MEAL_CATEGORIES, classifyCatalogItem } from './catalogClassification.js';
 import { MIN_CATALOG_REGION_ITEMS, PUBLIC_CATALOG_ITEM_TYPES, catalogTasteGroups, classifyCatalogTaste } from './catalogTasteGroups.js';
+import {
+  COMMUNITY_MODERATION_VERSION,
+  moderateCommunityContent,
+  moderationPublicResult,
+  saveModerationDecision,
+} from './communityModeration.js';
 import {
   RETRIEVAL_INDEX_VERSION,
   getRetrievalIndexStatus,
@@ -424,6 +430,7 @@ function fail(res, error, requestId) {
   send(res, status, {
     error: status === 500 ? '服务器内部错误' : error.message,
     ...(error.code ? { code: error.code } : {}),
+    ...(status < 500 && error.details ? { details: error.details } : {}),
     requestId
   }, { 'X-Request-Id': requestId });
 }
@@ -477,6 +484,34 @@ async function requireCapability(db, req, permission) {
   return requirePermission(await requireUser(db, req), permission);
 }
 
+function publicProfileState(user) {
+  const missingFields = [];
+  if (!String(user?.nickname || '').trim()) missingFields.push('nickname');
+  if (!String(user?.avatar_url || '').trim()) missingFields.push('avatarUrl');
+  return {
+    complete: Boolean(user?.profile_completed_at && missingFields.length === 0),
+    missingFields,
+  };
+}
+
+async function requirePublicProfile(db, req) {
+  const user = await requireUser(db, req);
+  assertPublicProfile(user);
+  return user;
+}
+
+function assertPublicProfile(user) {
+  const profile = publicProfileState(user);
+  if (!profile.complete) {
+    throw Object.assign(new Error('发布公开内容前请先完善头像和昵称'), {
+      status: 428,
+      code: 'PROFILE_REQUIRED',
+      details: { missingFields: profile.missingFields, profilePath: '/profile' },
+    });
+  }
+  return true;
+}
+
 async function requireAnyCapability(db, req, permissions) {
   const user = await requireUser(db, req);
   if (!permissions.some((permission) => hasPermission(user, permission))) {
@@ -512,7 +547,7 @@ async function assertAiQuota(db, user) {
   return quota;
 }
 
-const AUTH_CODE_PURPOSES = new Set(['register', 'reset_password', 'delete_account']);
+const AUTH_CODE_PURPOSES = new Set(['register', 'login', 'bind_phone', 'reset_password', 'delete_account']);
 const AUTH_CODE_TTL_MS = 5 * 60_000;
 const AUTH_CODE_RESEND_MS = 60_000;
 const AUTH_CODE_HOURLY_LIMIT = 5;
@@ -806,23 +841,25 @@ async function findOrCreateWechatUser(db, session, { profile = {}, phoneCode = '
   }
   const agreement = assertAgreementVersion(agreementVersion);
   const developmentPhone = process.env.NODE_ENV === 'production' ? '' : normalizePhone(profile.phone);
-  const phone = developmentPhone || await exchangeWechatPhone(phoneCode);
+  const phone = developmentPhone || (phoneCode ? await exchangeWechatPhone(phoneCode) : '');
   const hash = phoneLookupHash(phone);
-  const phoneUser = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', hash);
-  if (phoneUser) {
-    if (phoneUser.wechat_openid && phoneUser.wechat_openid !== openid) throw Object.assign(new Error('该手机号已绑定其他微信账号'), { status: 409, code: 'WECHAT_BINDING_CONFLICT' });
-    await db.prepare('UPDATE users SET wechat_openid = ?, phone_verified_at = COALESCE(phone_verified_at, ?), agreement_version = ?, agreement_accepted_at = COALESCE(agreement_accepted_at, ?), updated_at = ? WHERE id = ?')
-      .run(openid, now(), agreement, now(), now(), phoneUser.id);
-    return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(phoneUser.id), isNewUser: false };
+  if (hash) {
+    const phoneUser = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', hash);
+    if (phoneUser) {
+      if (phoneUser.wechat_openid && phoneUser.wechat_openid !== openid) throw Object.assign(new Error('该手机号已绑定其他微信账号'), { status: 409, code: 'WECHAT_BINDING_CONFLICT' });
+      await db.prepare('UPDATE users SET wechat_openid = ?, phone_verified_at = COALESCE(phone_verified_at, ?), agreement_version = ?, agreement_accepted_at = COALESCE(agreement_accepted_at, ?), updated_at = ? WHERE id = ?')
+        .run(openid, now(), agreement, now(), now(), phoneUser.id);
+      return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(phoneUser.id), isNewUser: false };
+    }
   }
   assertNewRegistrationAllowed(phone);
   const id = `u-${randomUUID()}`;
   const tenantId = 'default';
   const username = `student_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
-  const nickname = String(profile.nickname || profile.nickName || '微信用户').trim().slice(0, 32) || '微信用户';
+  const nickname = '';
   const timestamp = now();
   await db.prepare('INSERT INTO users (id, tenant_id, username, password_hash, nickname, role, wechat_openid, phone_hash, phone_encrypted, phone_verified_at, token_version, agreement_version, agreement_accepted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, tenantId, username, hashPassword(randomUUID()), nickname, 'student', openid, hash, encryptPhone(phone), timestamp, 0, agreement, timestamp, timestamp, timestamp);
+    .run(id, tenantId, username, hashPassword(randomUUID()), nickname, 'student', openid, hash || null, encryptPhone(phone) || null, phone ? timestamp : null, 0, agreement, timestamp, timestamp, timestamp);
   await createPendingHealthProfile(db, id, tenantId);
   return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(id), isNewUser: true };
 }
@@ -1246,6 +1283,7 @@ async function attachCommunityEngagement(db, tenantId, currentUserId, targetType
 function communityTargetTable(targetType) {
   if (targetType === 'post') return 'campus_posts';
   if (targetType === 'review') return 'reviews';
+  if (targetType === 'comment') return 'post_comments';
   throw Object.assign(new Error('不支持的互动对象'), { status: 400 });
 }
 
@@ -1255,6 +1293,78 @@ async function requireCommunityTarget(db, tenantId, targetType, targetId, { appr
   if (!row) throw Object.assign(new Error(targetType === 'post' ? '帖子不存在' : '评价不存在'), { status: 404 });
   if (approved && row.status !== 'approved') throw Object.assign(new Error('只能互动已公开内容'), { status: 409 });
   return row;
+}
+
+function canModerateCommunity(user) {
+  return Boolean(user && (
+    hasPermission(user, 'post:moderate')
+    || hasPermission(user, 'review:moderate')
+    || user.role === 'super_admin'
+  ));
+}
+
+function commentResponse(row, viewerId) {
+  const user = row.nickname || row.username || '匿名用户';
+  return {
+    id: row.id,
+    postId: row.post_id,
+    content: row.content,
+    status: row.status || 'approved',
+    user,
+    userId: row.user_id,
+    author: {
+      id: row.user_id,
+      name: user,
+      nickname: row.nickname || null,
+      username: row.username || null,
+      avatarUrl: resolveUploadReference(row.avatar_url) || '',
+    },
+    isOwn: row.user_id === viewerId,
+    archivedAt: row.archived_at || null,
+    restoredAt: row.restored_at || null,
+    moderationVersion: row.moderation_version || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function syncPostLinkedReview(db, post, status, moderationVersion = COMMUNITY_MODERATION_VERSION) {
+  let linkedReviewId = post.linked_review_id || null;
+  if (post.target_type !== 'dish' || post.rating == null) {
+    if (linkedReviewId) await db.prepare('DELETE FROM reviews WHERE tenant_id = ? AND id = ?').run(post.tenant_id, linkedReviewId);
+    return null;
+  }
+  linkedReviewId ||= `post-review-${post.id}`;
+  await db.prepare(`INSERT INTO reviews
+    (id, tenant_id, user_id, target_type, target_id, rating, content, status, moderation_version, created_at)
+    VALUES (?, ?, ?, 'dish', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      tenant_id=excluded.tenant_id,
+      user_id=excluded.user_id,
+      target_type=excluded.target_type,
+      target_id=excluded.target_id,
+      rating=excluded.rating,
+      content=excluded.content,
+      status=excluded.status,
+      moderation_version=excluded.moderation_version`)
+    .run(linkedReviewId, post.tenant_id, post.user_id, post.target_id, Number(post.rating), post.content, status, moderationVersion, post.created_at);
+  return linkedReviewId;
+}
+
+async function deletePostUploadIfUnreferenced(db, tenantId, userId, imageUrl) {
+  const reference = persistentUploadReference(imageUrl);
+  if (!reference.startsWith('upload://')) return;
+  const uploadId = reference.slice('upload://'.length);
+  const upload = await db.prepare('SELECT * FROM uploads WHERE tenant_id = ? AND owner_id = ? AND id = ?').get(tenantId, userId, uploadId);
+  if (!upload) return;
+  const [postReference, profileReference, dishReference] = await Promise.all([
+    db.prepare('SELECT id FROM campus_posts WHERE tenant_id = ? AND image_url = ? LIMIT 1').get(tenantId, reference),
+    db.prepare('SELECT id FROM users WHERE tenant_id = ? AND avatar_url = ? LIMIT 1').get(tenantId, reference),
+    db.prepare('SELECT id FROM dishes WHERE tenant_id = ? AND image_url = ? LIMIT 1').get(tenantId, reference),
+  ]);
+  if (postReference || profileReference || dishReference) return;
+  await deleteStoredUpload(upload);
+  await db.prepare('DELETE FROM uploads WHERE tenant_id = ? AND id = ?').run(tenantId, uploadId);
 }
 
 async function dishDetail(db, id, tenantId = 'default') {
@@ -1898,6 +2008,21 @@ async function catalogStats(db, tenantId) {
   return { venues: Number(venues?.count || 0), stalls: Number(stalls?.count || 0), dishes: Number(dishes?.count || 0), imported: Number(dishes?.count || 0) > 0 };
 }
 
+async function catalogRevision(db, tenantId) {
+  const [dishes, stalls, venues] = await Promise.all([
+    db.prepare('SELECT COUNT(*) AS count, MAX(updated_at) AS updated_at FROM dishes WHERE tenant_id = ?').get(tenantId),
+    db.prepare('SELECT COUNT(*) AS count, MAX(updated_at) AS updated_at FROM stalls WHERE tenant_id = ?').get(tenantId),
+    db.prepare('SELECT COUNT(*) AS count, MAX(updated_at) AS updated_at FROM canteens WHERE tenant_id = ?').get(tenantId),
+  ]);
+  const fingerprint = [
+    tenantId,
+    Number(dishes?.count || 0), dishes?.updated_at || '',
+    Number(stalls?.count || 0), stalls?.updated_at || '',
+    Number(venues?.count || 0), venues?.updated_at || '',
+  ].join('|');
+  return `catalog-${createHash('sha256').update(fingerprint).digest('hex').slice(0, 16)}`;
+}
+
 async function bootstrapSnapshot(db, user = null) {
   const tenantId = tenantIdFor(user);
   return {
@@ -1988,7 +2113,7 @@ function catalogDishPresentation(row) {
   };
 }
 
-async function searchCatalogDishes(db, tenantId, body = {}) {
+async function searchCatalogDishes(db, tenantId, body = {}, retrievalUser = null) {
   const page = positivePage(body.page, 1);
   const pageSize = positivePage(body.pageSize, positivePage(body.limit, 20, 50), 50);
   const offset = body.offset == null ? (page - 1) * pageSize : Math.max(Number(body.offset) || 0, 0);
@@ -2091,6 +2216,30 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
       c.name AS canteen_name, c.venue_kind, ${relevanceSql} AS relevance_score ${from} WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
     .all(...relevanceValues, ...values, pageSize, offset);
   const items = await applyApprovedIntroductions(db, tenantId, 'dish', rows.map(catalogDishPresentation));
+  const revision = await catalogRevision(db, tenantId);
+  let knowledge = { results: [], degradedReasons: [], trace: { routing: null, sources: [] } };
+  if (rawQuery && body.includeKnowledge !== false) {
+    const knowledgeUser = retrievalUser || { id: '', tenant_id: tenantId, role: 'student' };
+    knowledge = await retrieveRoutedKnowledge({ query: rawQuery, tenantId, limit: 5 }, {
+      knowledgeSearch: (request) => retrievalIndexQuery(db, knowledgeUser, request),
+      foodCompositionLookup: lookupFoodCompositionReferences,
+    });
+  }
+  const knowledgeAnswer = buildKnowledgeAnswer({ query: rawQuery, results: knowledge.results });
+  const dishEvidence = items.map((item) => ({
+    id: `dish:${tenantId}:${item.id}`,
+    sourceId: item.id,
+    sourceType: 'dish',
+    title: item.name,
+    snippet: `${item.canteenName || '食堂'} · ${item.stallName || '档口'} · ${item.priceDisplay || `¥${item.price}`}`,
+    score: Number(item.relevanceScore || 0),
+    metadata: {
+      tenantId,
+      evidenceType: 'tenant_dish_fact',
+      catalogItemType: item.catalogItemType,
+      catalogCategory: item.catalogCategory,
+    },
+  }));
   const suggestedRelaxations = total || !keyword ? [] : [...publicItemTypes]
     .filter((itemType) => itemType !== effectiveItemType)
     .map((itemType) => ({
@@ -2103,12 +2252,15 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
     interpreted: parsedQuery.interpreted,
     items,
     dishes: items,
+    evidence: { dishes: dishEvidence, knowledge: knowledgeAnswer.citations },
+    knowledgeSummary: knowledgeAnswer.answer,
     availability: { orderableCount: items.filter((item) => item.availability.orderable).length, totalCount: total },
     page: { page: Math.floor(offset / pageSize) + 1, pageSize, limit: pageSize, offset, total, hasMore: offset + items.length < total },
     warnings: [],
     suggestedRelaxations,
     meta: {
       source: 'stable_catalog',
+      catalogRevision: revision,
       vectorSearchMode: 'shadow',
       itemType: effectiveItemType,
       partition: {
@@ -2117,6 +2269,8 @@ async function searchCatalogDishes(db, tenantId, body = {}) {
         inferred: partitionInferred,
         relaxableItemTypes: suggestedRelaxations.map((item) => item.value),
       },
+      retrievalTrace: { knowledge: knowledge.trace },
+      degradedReasons: knowledge.degradedReasons,
     },
   };
 }
@@ -2145,6 +2299,7 @@ async function listCatalogCategories(db, tenantId, params) {
   return {
     itemType,
     categories,
+    catalogRevision: await catalogRevision(db, tenantId),
   };
 }
 
@@ -2256,9 +2411,15 @@ function summarizeCatalogRegion(group, items) {
 }
 
 async function listCatalogRegions(db, tenantId, params, regionId = '') {
-  const itemType = publicCatalogItemType(params.get('itemType') || 'meal');
-  const rows = await loadPublicCatalogTasteRows(db, tenantId, itemType);
-  const classifiedItems = rows.map(catalogRegionItem);
+  const requestedItemType = String(params.get('itemType') || '').trim().toLowerCase();
+  const itemType = requestedItemType ? publicCatalogItemType(requestedItemType) : 'all';
+  const itemTypes = itemType === 'all' ? PUBLIC_CATALOG_ITEM_TYPES : [itemType];
+  const rows = (await Promise.all(itemTypes.map((value) => loadPublicCatalogTasteRows(db, tenantId, value)))).flat();
+  const analyzedItems = rows.map(catalogRegionItem);
+  const classifiedItems = analyzedItems.filter((item) => item.regionKind === 'regional' && item.regionConfidence !== 'unresolved' && item.regionEvidence?.length);
+  const excludedNonRegionalItems = analyzedItems.filter((item) => item.regionKind === 'style');
+  const needsReviewItems = analyzedItems.filter((item) => item.regionKind !== 'style'
+    && !(item.regionKind === 'regional' && item.regionConfidence !== 'unresolved' && item.regionEvidence?.length));
   const grouped = new Map();
   for (const item of classifiedItems) {
     if (!grouped.has(item.regionId)) grouped.set(item.regionId, { id: item.regionId, label: item.regionLabel, source: item.regionSource, confidence: item.regionConfidence, kind: item.regionKind, description: item.regionDescription, itemType, items: [] });
@@ -2267,7 +2428,7 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
   }
   const hiddenSmallGroups = [...grouped.values()].filter((group) => group.items.length < MIN_CATALOG_REGION_ITEMS);
   const visibleGrouped = new Map([...grouped.entries()].filter(([, group]) => group.items.length >= MIN_CATALOG_REGION_ITEMS));
-  const defined = catalogTasteGroups(itemType);
+  const defined = catalogTasteGroups('meal').filter((group) => group.kind === 'regional');
   const order = new Map(defined.map((group, index) => [group.id, index]));
   const regions = [...visibleGrouped.values()]
     .map((group) => ({
@@ -2282,7 +2443,6 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
       const items = catalogRegionSort(group.items).slice(0, 3);
       return { ...region, heroDish: (await applyApprovedIntroductions(db, tenantId, 'dish', items))[0] || null, previewItems: await applyApprovedIntroductions(db, tenantId, 'dish', items) };
     }));
-    const needsReviewCount = classifiedItems.filter((item) => item.regionConfidence === 'unresolved').length;
     return {
       itemType,
       regions: preview,
@@ -2291,10 +2451,13 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
         confidence: 'inferred',
         classification: 'dish_level',
         total: rows.length,
-        needsReviewCount,
+        classifiedCount: classifiedItems.length,
+        needsReviewCount: needsReviewItems.length,
+        excludedNonRegionalCount: excludedNonRegionalItems.length,
         minRegionItems: MIN_CATALOG_REGION_ITEMS,
         hiddenSmallGroupCount: hiddenSmallGroups.length,
         hiddenSmallItemCount: hiddenSmallGroups.reduce((sum, group) => sum + group.items.length, 0),
+        catalogRevision: await catalogRevision(db, tenantId),
       },
     };
   }
@@ -2315,9 +2478,13 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
       confidence: 'inferred',
       classification: 'dish_level',
       total: rows.length,
+      classifiedCount: classifiedItems.length,
+      needsReviewCount: needsReviewItems.length,
+      excludedNonRegionalCount: excludedNonRegionalItems.length,
       minRegionItems: MIN_CATALOG_REGION_ITEMS,
       hiddenSmallGroupCount: hiddenSmallGroups.length,
       hiddenSmallItemCount: hiddenSmallGroups.reduce((sum, group) => sum + group.items.length, 0),
+      catalogRevision: await catalogRevision(db, tenantId),
     },
   };
 }
@@ -2502,6 +2669,151 @@ async function listCatalogRankings(db, tenantId, params) {
   };
 }
 
+async function listRealCatalogRankings(db, tenantId, params) {
+  const type = ['dishes', 'stalls', 'venues'].includes(String(params.get('type') || '')) ? String(params.get('type')) : 'dishes';
+  const page = positivePage(params.get('page'), 1);
+  const pageSize = positivePage(params.get('pageSize'), 20, 50);
+  const offset = (page - 1) * pageSize;
+  const itemType = publicCatalogItemType(params.get('itemType') || 'meal');
+  const category = normalizeCatalogFilter(params.get('catalogCategory') || '');
+  const publicRows = await db.prepare(`SELECT d.*, s.name AS stall_name, s.canteen_id,
+      s.reservation_enabled AS stall_reservation_enabled, c.name AS canteen_name, c.venue_kind,
+      c.parent_id AS canteen_parent_id, COALESCE(parent.id, c.id) AS top_canteen_id
+    FROM dishes d
+    JOIN stalls s ON s.id = d.stall_id AND s.tenant_id = d.tenant_id
+    JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = d.tenant_id
+    LEFT JOIN canteens parent ON parent.id = c.parent_id AND parent.tenant_id = c.tenant_id
+    WHERE d.tenant_id = ? AND d.status = 'active' AND d.review_status = 'approved' AND d.retrieval_eligible = 1
+      AND d.catalog_item_type IN ('meal','snack','beverage')
+      AND s.review_status = 'approved' AND s.retrieval_eligible = 1
+      AND c.review_status = 'approved' AND c.retrieval_eligible = 1 AND c.operating_status = 'open'
+      AND (parent.id IS NULL OR (parent.review_status = 'approved' AND parent.retrieval_eligible = 1 AND parent.operating_status = 'open'))`).all(tenantId);
+  const rankingRows = type === 'dishes'
+    ? publicRows.filter((row) => row.catalog_item_type === itemType && (!category || normalizeCatalogFilter(row.catalog_category) === category))
+    : publicRows;
+  const dishById = new Map(publicRows.map((row) => [row.id, row]));
+  const publicCanteenIds = new Set(publicRows.flatMap((row) => [row.canteen_id, row.top_canteen_id]).filter(Boolean));
+  const reviews = (await db.prepare("SELECT * FROM reviews WHERE tenant_id = ? AND status = 'approved' AND target_type IN ('dish','canteen')").all(tenantId))
+    .filter((review) => review.target_type === 'dish' ? dishById.has(review.target_id) : publicCanteenIds.has(review.target_id));
+  const preferences = await db.prepare('SELECT dish_id, SUM(eaten_count) AS eaten_count FROM user_dish_preferences WHERE tenant_id = ? GROUP BY dish_id').all(tenantId);
+  const eatenByDish = new Map(preferences.map((row) => [row.dish_id, Number(row.eaten_count || 0)]));
+  const allRatings = reviews.map((review) => Number(review.rating)).filter((rating) => Number.isFinite(rating) && rating > 0);
+  const priorMean = allRatings.length ? allRatings.reduce((sum, rating) => sum + rating, 0) / allRatings.length : 0;
+  const minimumReviews = 3;
+  const score = (ratings) => {
+    const mean = ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+    return Number((((ratings.length / (ratings.length + minimumReviews)) * mean)
+      + ((minimumReviews / (ratings.length + minimumReviews)) * priorMean)).toFixed(4));
+  };
+  const ratingGroups = new Map();
+  const addRating = (id, rating) => {
+    if (!id || !Number.isFinite(Number(rating))) return;
+    if (!ratingGroups.has(id)) ratingGroups.set(id, []);
+    ratingGroups.get(id).push(Number(rating));
+  };
+  let candidateCount = 0;
+  let ranked = [];
+
+  if (type === 'dishes') {
+    candidateCount = rankingRows.length;
+    const allowed = new Set(rankingRows.map((row) => row.id));
+    for (const review of reviews) if (review.target_type === 'dish' && allowed.has(review.target_id)) addRating(review.target_id, review.rating);
+    ranked = rankingRows.flatMap((row) => {
+      const ratings = ratingGroups.get(row.id) || [];
+      if (ratings.length < minimumReviews) return [];
+      const eatenCount = eatenByDish.get(row.id) || 0;
+      return [{
+        ...catalogDishPresentation(row),
+        rating: Number((ratings.reduce((sum, value) => sum + value, 0) / ratings.length).toFixed(2)),
+        reviewCount: ratings.length,
+        rankScore: score(ratings),
+        eatenCount,
+        sales: Number(row.sales || 0),
+      }];
+    });
+  } else if (type === 'stalls') {
+    const stallIds = new Set(publicRows.map((row) => row.stall_id));
+    candidateCount = stallIds.size;
+    for (const review of reviews) {
+      if (review.target_type !== 'dish') continue;
+      const dish = dishById.get(review.target_id);
+      if (dish) addRating(dish.stall_id, review.rating);
+    }
+    const stallRows = await db.prepare(`SELECT s.*, c.name AS canteen_name FROM stalls s
+      JOIN canteens c ON c.id = s.canteen_id AND c.tenant_id = s.tenant_id
+      WHERE s.tenant_id = ? AND s.review_status = 'approved' AND s.retrieval_eligible = 1`).all(tenantId);
+    ranked = stallRows.filter((row) => stallIds.has(row.id)).flatMap((row) => {
+      const ratings = ratingGroups.get(row.id) || [];
+      if (ratings.length < minimumReviews) return [];
+      const dishes = publicRows.filter((dish) => dish.stall_id === row.id);
+      return [{
+        ...rowToStall(row),
+        canteenName: row.canteen_name || '',
+        dishCount: dishes.length,
+        rating: Number((ratings.reduce((sum, value) => sum + value, 0) / ratings.length).toFixed(2)),
+        reviewCount: ratings.length,
+        rankScore: score(ratings),
+        eatenCount: dishes.reduce((sum, dish) => sum + (eatenByDish.get(dish.id) || 0), 0),
+        sales: dishes.reduce((sum, dish) => sum + Number(dish.sales || 0), 0),
+      }];
+    });
+  } else {
+    const venueIds = new Set(publicRows.map((row) => row.top_canteen_id));
+    candidateCount = venueIds.size;
+    const canteens = await db.prepare("SELECT * FROM canteens WHERE tenant_id = ? AND review_status = 'approved' AND retrieval_eligible = 1 AND operating_status = 'open'").all(tenantId);
+    const topVenueId = new Map(canteens.map((row) => [row.id, row.parent_id || row.id]));
+    for (const review of reviews) {
+      if (review.target_type === 'dish') {
+        const dish = dishById.get(review.target_id);
+        if (dish) addRating(dish.top_canteen_id, review.rating);
+      } else {
+        addRating(topVenueId.get(review.target_id), review.rating);
+      }
+    }
+    ranked = canteens.filter((row) => !row.parent_id && venueIds.has(row.id)).flatMap((row) => {
+      const ratings = ratingGroups.get(row.id) || [];
+      if (ratings.length < minimumReviews) return [];
+      const dishes = publicRows.filter((dish) => dish.top_canteen_id === row.id);
+      const stallCount = new Set(dishes.map((dish) => dish.stall_id)).size;
+      return [{
+        ...rowToCanteen(row),
+        stallCount,
+        rating: Number((ratings.reduce((sum, value) => sum + value, 0) / ratings.length).toFixed(2)),
+        reviewCount: ratings.length,
+        rankScore: score(ratings),
+        eatenCount: dishes.reduce((sum, dish) => sum + (eatenByDish.get(dish.id) || 0), 0),
+        sales: dishes.reduce((sum, dish) => sum + Number(dish.sales || 0), 0),
+      }];
+    });
+  }
+
+  ranked.sort((left, right) => Number(right.rankScore) - Number(left.rankScore)
+    || Number(right.reviewCount) - Number(left.reviewCount)
+    || (Number(right.eatenCount) + Number(right.sales)) - (Number(left.eatenCount) + Number(left.sales))
+    || String(left.id).localeCompare(String(right.id)));
+  const total = ranked.length;
+  const selected = ranked.slice(offset, offset + pageSize);
+  const entityType = type === 'dishes' ? 'dish' : type === 'stalls' ? 'stall' : 'canteen';
+  const items = await applyApprovedIntroductions(db, tenantId, entityType, selected);
+  return {
+    type,
+    ...(type === 'dishes' ? { itemType, catalogCategory: category || null } : {}),
+    items,
+    ranking: {
+      available: total > 0,
+      reason: total > 0 ? null : 'INSUFFICIENT_REAL_SIGNALS',
+      candidateCount,
+      signalCount: total,
+      ratedCount: total,
+      salesCount: ranked.filter((item) => Number(item.sales || 0) > 0 || Number(item.eatenCount || 0) > 0).length,
+      minimumReviews,
+      method: 'bayesian_approved_reviews',
+    },
+    page: { page, pageSize, total, hasMore: offset + items.length < total },
+    meta: { catalogRevision: await catalogRevision(db, tenantId) },
+  };
+}
+
 async function listSavedCatalogDishes(db, user, params) {
   const tenantId = tenantIdFor(user);
   const kind = ['favorite', 'eaten'].includes(String(params.get('kind') || '')) ? String(params.get('kind')) : 'favorite';
@@ -2540,6 +2852,7 @@ async function listCommunityDishOptions(db, tenantId, params) {
     page: params.get('page') || 1,
     pageSize: params.get('pageSize') || 30,
     itemType: 'all',
+    includeKnowledge: false,
   });
   const options = result.items
     .filter((dish) => ['meal', 'beverage', 'snack'].includes(dish.catalogItemType) && !isServingTierCatalogName(dish.name))
@@ -3903,6 +4216,17 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         return send(res, 200, await authenticatedSessionResponse(db, req, found));
       }
 
+      if (method === 'POST' && url.pathname === '/api/auth/phone-login') {
+        const body = await readBody(req);
+        requireFields(body, ['phone', 'verificationCode']);
+        const phone = normalizePhone(body.phone);
+        if (!phone) throw Object.assign(new Error('请输入有效的中国大陆手机号'), { status: 400, code: 'INVALID_PHONE' });
+        const found = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND phone_hash = ?').get('default', phoneLookupHash(phone));
+        if (!found) throw Object.assign(new Error('手机号或验证码错误'), { status: 401, code: 'INVALID_PHONE_LOGIN' });
+        await consumeVerificationCode(db, phone, 'login', body.verificationCode);
+        return send(res, 200, await authenticatedSessionResponse(db, req, found));
+      }
+
       if (method === 'POST' && url.pathname === '/api/auth/wechat-login') {
         const body = await readBody(req);
         requireFields(body, ['code']);
@@ -3954,7 +4278,52 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
       if (method === 'GET' && pathParts[0] === 'api' && pathParts[1] === 'catalog' && pathParts[2] === 'regions' && pathParts[3] && pathParts[4] === 'dishes') {
         return send(res, 200, await listCatalogRegions(db, tenantIdFor(user), url.searchParams, decodeURIComponent(pathParts[3])));
       }
-      if (method === 'GET' && url.pathname === '/api/catalog/rankings') return send(res, 200, await listCatalogRankings(db, tenantIdFor(user), url.searchParams));
+
+      if (method === 'POST' && url.pathname === '/api/auth/phone/bind') {
+        const activeUser = await requireUser(db, req);
+        const body = await readBody(req);
+        requireFields(body, ['phone', 'verificationCode']);
+        const phone = normalizePhone(body.phone);
+        if (!phone) throw Object.assign(new Error('请输入有效的中国大陆手机号'), { status: 400, code: 'INVALID_PHONE' });
+        const hash = phoneLookupHash(phone);
+        const existing = await db.prepare('SELECT id FROM users WHERE tenant_id = ? AND phone_hash = ?').get(tenantIdFor(activeUser), hash);
+        if (existing && existing.id !== activeUser.id) throw Object.assign(new Error('该手机号已绑定其他账号'), { status: 409, code: 'PHONE_BINDING_CONFLICT' });
+        if (activeUser.phone_hash && activeUser.phone_hash !== hash) throw Object.assign(new Error('当前账号已绑定其他手机号'), { status: 409, code: 'PHONE_ALREADY_BOUND' });
+        await consumeVerificationCode(db, phone, 'bind_phone', body.verificationCode);
+        const timestamp = now();
+        await db.prepare('UPDATE users SET phone_hash = ?, phone_encrypted = ?, phone_verified_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
+          .run(hash, encryptPhone(phone), timestamp, timestamp, tenantIdFor(activeUser), activeUser.id);
+        await upsertIdentity(db, {
+          tenantId: tenantIdFor(activeUser), userId: activeUser.id, provider: 'phone',
+          subjectHash: identityHash('phone', phone), subjectEncrypted: encryptPhone(phone), verifiedAt: timestamp,
+          metadata: { source: 'phone_bind' },
+        });
+        const updated = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), activeUser.id);
+        await audit(db, activeUser, 'BIND_PHONE', 'user', activeUser.id);
+        return send(res, 200, { user: publicUser(updated) });
+      }
+
+      if (method === 'PATCH' && url.pathname === '/api/account/profile') {
+        const activeUser = await requireUser(db, req);
+        const body = await readBody(req);
+        const nickname = String(body.nickname ?? activeUser.nickname ?? '').normalize('NFKC').trim().slice(0, 32);
+        const avatarUrl = persistentUploadReference(body.avatarUrl ?? activeUser.avatar_url ?? '');
+        if (!nickname || nickname.length < 2) throw Object.assign(new Error('昵称需要填写 2-32 个字符'), { status: 400, code: 'INVALID_NICKNAME' });
+        if (!avatarUrl.startsWith('upload://')) throw Object.assign(new Error('请上传有效头像'), { status: 400, code: 'INVALID_AVATAR' });
+        const uploadId = avatarUrl.slice('upload://'.length);
+        const upload = await db.prepare('SELECT id, content_type FROM uploads WHERE tenant_id = ? AND owner_id = ? AND id = ?').get(tenantIdFor(activeUser), activeUser.id, uploadId);
+        if (!upload || !String(upload.content_type || '').startsWith('image/')) throw Object.assign(new Error('头像必须使用当前账号上传的图片'), { status: 400, code: 'INVALID_AVATAR' });
+        const moderation = await moderateCommunityContent(db, activeUser, { targetType: 'profile', targetId: activeUser.id, content: nickname });
+        await saveModerationDecision(db, moderation);
+        if (moderation.outcome !== 'approved') throw Object.assign(new Error('昵称未通过自动审核，请修改后重试'), { status: 422, code: 'PROFILE_MODERATION_REJECTED', details: moderationPublicResult(moderation) });
+        const timestamp = now();
+        await db.prepare('UPDATE users SET nickname = ?, avatar_url = ?, profile_completed_at = ?, profile_version = profile_version + 1, updated_at = ? WHERE tenant_id = ? AND id = ?')
+          .run(nickname, avatarUrl, timestamp, timestamp, tenantIdFor(activeUser), activeUser.id);
+        const updated = await db.prepare('SELECT * FROM users WHERE tenant_id = ? AND id = ?').get(tenantIdFor(activeUser), activeUser.id);
+        await audit(db, activeUser, 'UPDATE_PUBLIC_PROFILE', 'user', activeUser.id, { profileVersion: updated.profile_version });
+        return send(res, 200, { user: publicUser(updated) });
+      }
+      if (method === 'GET' && url.pathname === '/api/catalog/rankings') return send(res, 200, await listRealCatalogRankings(db, tenantIdFor(user), url.searchParams));
       if (method === 'GET' && url.pathname === '/api/catalog/saved') {
         const activeUser = await requireUser(db, req);
         return send(res, 200, await listSavedCatalogDishes(db, activeUser, url.searchParams));
@@ -3964,7 +4333,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         return send(res, 200, await listCommunityDishOptions(db, tenantIdFor(activeUser), url.searchParams));
       }
       if (method === 'POST' && url.pathname === '/api/dishes/search') {
-        const result = await searchCatalogDishes(db, tenantIdFor(user), await readBody(req));
+        const result = await searchCatalogDishes(db, tenantIdFor(user), await readBody(req), user);
         return send(res, 200, result);
       }
       if (method === 'GET' && url.pathname === '/api/dishes') return send(res, 200, await executeLegacyDishList(db, user, url.searchParams));
@@ -4300,8 +4669,8 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const tenantId = tenantIdFor(activeUser);
         const includeMine = url.searchParams.get('includeMine') === 'true';
         const rows = includeMine
-          ? await db.prepare("SELECT reviews.*, users.nickname, users.username, (SELECT campus_posts.id FROM campus_posts WHERE campus_posts.tenant_id = reviews.tenant_id AND campus_posts.linked_review_id = reviews.id LIMIT 1) AS linked_post_id FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND (reviews.status = 'approved' OR reviews.user_id = ?)").all(tenantId, activeUser.id)
-          : await db.prepare("SELECT reviews.*, users.nickname, users.username, (SELECT campus_posts.id FROM campus_posts WHERE campus_posts.tenant_id = reviews.tenant_id AND campus_posts.linked_review_id = reviews.id LIMIT 1) AS linked_post_id FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND reviews.status = 'approved'").all(tenantId);
+          ? await db.prepare("SELECT reviews.*, users.nickname, users.username, users.avatar_url, (SELECT campus_posts.id FROM campus_posts WHERE campus_posts.tenant_id = reviews.tenant_id AND campus_posts.linked_review_id = reviews.id LIMIT 1) AS linked_post_id FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND (reviews.status = 'approved' OR reviews.user_id = ?)").all(tenantId, activeUser.id)
+          : await db.prepare("SELECT reviews.*, users.nickname, users.username, users.avatar_url, (SELECT campus_posts.id FROM campus_posts WHERE campus_posts.tenant_id = reviews.tenant_id AND campus_posts.linked_review_id = reviews.id LIMIT 1) AS linked_post_id FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND reviews.status = 'approved'").all(tenantId);
         const catalog = await reviewCatalog(db, tenantId);
         const targetType = String(url.searchParams.get('targetType') || '').trim();
         const canteenId = String(url.searchParams.get('canteenId') || '').trim();
@@ -4351,24 +4720,30 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const body = await readBody(req);
         requireFields(body, ['targetId', 'rating', 'content']);
         const targetType = body.targetType === 'canteen' ? 'canteen' : 'dish';
-        await requirePublishedCatalogTarget(db, tenantIdFor(activeUser), targetType, body.targetId);
         const rating = Number(body.rating);
         const content = String(body.content).trim();
         if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw Object.assign(new Error('评分需要在 1-5 分之间。'), { status: 400 });
         if (content.length < 2 || content.length > 240) throw Object.assign(new Error('评价内容长度需要在 2-240 个字符之间。'), { status: 400 });
+        assertPublicProfile(activeUser);
+        await requirePublishedCatalogTarget(db, tenantIdFor(activeUser), targetType, body.targetId);
         const id = `r-${randomUUID()}`;
-        await db.prepare('INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, tenantIdFor(activeUser), activeUser.id, targetType, body.targetId, rating, content, 'pending', businessDate());
-        await audit(db, activeUser, 'CREATE', 'review', id);
+        const moderation = await moderateCommunityContent(db, activeUser, { targetType: 'review', targetId: id, content });
+        await withTransaction(db, async (tx) => {
+          await tx.prepare('INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, moderation_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, tenantIdFor(activeUser), activeUser.id, targetType, body.targetId, rating, moderation.normalizedContent, moderation.outcome, moderation.ruleVersion, now());
+          await saveModerationDecision(tx, moderation);
+          await audit(tx, activeUser, 'CREATE', 'review', id, { moderation: moderationPublicResult(moderation) });
+        });
         await invalidateRankings();
-        if (targetType === 'dish') return send(res, 201, await dishDetail(db, body.targetId, tenantIdFor(activeUser)));
-        return send(res, 201, { review: { id, targetType, targetId: body.targetId, user: activeUser.nickname, rating, content, createdAt: businessDate() } });
+        const created = await db.prepare('SELECT reviews.*, users.nickname, users.username, users.avatar_url FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND reviews.id = ?').get(tenantIdFor(activeUser), id);
+        const catalog = await reviewCatalog(db, tenantIdFor(activeUser));
+        return send(res, 201, { review: enrichReview(rowToReview(created), catalog, activeUser.id), moderation: moderationPublicResult(moderation) });
       }
 
       if (method === 'GET' && url.pathname === '/api/posts') {
         const activeUser = await requireUser(db, req);
         const tenantId = tenantIdFor(activeUser);
-        const rows = await db.prepare("SELECT campus_posts.*, users.nickname, users.username FROM campus_posts JOIN users ON users.id = campus_posts.user_id WHERE campus_posts.tenant_id = ? AND (campus_posts.status = 'approved' OR campus_posts.user_id = ?) ORDER BY campus_posts.created_at DESC").all(tenantId, activeUser.id);
+        const rows = await db.prepare("SELECT campus_posts.*, users.nickname, users.username, users.avatar_url FROM campus_posts JOIN users ON users.id = campus_posts.user_id WHERE campus_posts.tenant_id = ? AND (campus_posts.status = 'approved' OR campus_posts.user_id = ?) ORDER BY campus_posts.created_at DESC").all(tenantId, activeUser.id);
         const catalog = await reviewCatalog(db, tenantId);
         const targetType = String(url.searchParams.get('targetType') || '').trim();
         const canteenId = String(url.searchParams.get('canteenId') || '').trim();
@@ -4396,7 +4771,8 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
       }
 
       if (method === 'POST' && url.pathname === '/api/posts') {
-        const activeUser = await requireCapability(db, req, 'post:create');
+        const activeUser = await requireUser(db, req);
+        requirePermission(activeUser, 'post:create');
         const tenantId = tenantIdFor(activeUser);
         const body = await readBody(req);
         const targetType = body.targetType === 'canteen' ? 'canteen' : body.targetType === 'dish' ? 'dish' : '';
@@ -4404,6 +4780,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const content = String(body.content || '').trim();
         if (!targetType || !targetId) throw Object.assign(new Error('请选择帖子关联的食堂或菜品'), { status: 400 });
         if (content.length < 2 || content.length > 600) throw Object.assign(new Error('帖子内容长度需要在 2-600 个字符之间'), { status: 400 });
+        assertPublicProfile(activeUser);
         await requirePublishedCatalogTarget(db, tenantId, targetType, targetId);
         let rating = null;
         if (body.rating != null && body.rating !== '') {
@@ -4418,12 +4795,70 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         }
         const timestamp = now();
         const id = `post-${randomUUID()}`;
-        await db.prepare('INSERT INTO campus_posts (id, tenant_id, user_id, target_type, target_id, content, image_url, rating, status, linked_review_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, tenantId, activeUser.id, targetType, targetId, content, imageUrl || null, rating, 'pending', null, timestamp, timestamp);
-        await audit(db, activeUser, 'CREATE', 'campus_post', id);
+        const moderation = await moderateCommunityContent(db, activeUser, { targetType: 'post', targetId: id, content });
+        await withTransaction(db, async (tx) => {
+          const post = {
+            id, tenant_id: tenantId, user_id: activeUser.id, target_type: targetType, target_id: targetId,
+            content: moderation.normalizedContent, rating, linked_review_id: null, created_at: timestamp,
+          };
+          const linkedReviewId = await syncPostLinkedReview(tx, post, moderation.outcome, moderation.ruleVersion);
+          await tx.prepare('INSERT INTO campus_posts (id, tenant_id, user_id, target_type, target_id, content, image_url, rating, status, linked_review_id, moderation_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, tenantId, activeUser.id, targetType, targetId, moderation.normalizedContent, imageUrl || null, rating, moderation.outcome, linkedReviewId, moderation.ruleVersion, timestamp, timestamp);
+          await saveModerationDecision(tx, moderation);
+          await audit(tx, activeUser, 'CREATE', 'campus_post', id, { moderation: moderationPublicResult(moderation), linkedReviewId });
+        });
+        if (rating != null) await invalidateRankings();
         const catalog = await reviewCatalog(db, tenantId);
-        const created = rowToPost(await db.prepare('SELECT campus_posts.*, users.nickname, users.username FROM campus_posts JOIN users ON users.id = campus_posts.user_id WHERE campus_posts.tenant_id = ? AND campus_posts.id = ?').get(tenantId, id));
-        return send(res, 201, { post: enrichPost(created, catalog, activeUser.id) });
+        const created = rowToPost(await db.prepare('SELECT campus_posts.*, users.nickname, users.username, users.avatar_url FROM campus_posts JOIN users ON users.id = campus_posts.user_id WHERE campus_posts.tenant_id = ? AND campus_posts.id = ?').get(tenantId, id));
+        return send(res, 201, { post: enrichPost(created, catalog, activeUser.id), moderation: moderationPublicResult(moderation) });
+      }
+
+      if (method === 'POST' && pathParts[0] === 'api' && ['posts', 'reviews'].includes(pathParts[1]) && pathParts[2] && ['archive', 'restore'].includes(pathParts[3])) {
+        const activeUser = await requireUser(db, req);
+        const tenantId = tenantIdFor(activeUser);
+        const targetType = pathParts[1] === 'posts' ? 'post' : 'review';
+        const targetId = decodeURIComponent(pathParts[2]);
+        const action = pathParts[3];
+        const target = await requireCommunityTarget(db, tenantId, targetType, targetId);
+        if (target.user_id !== activeUser.id && !canModerateCommunity(activeUser)) {
+          throw Object.assign(new Error('只能管理自己发布的内容'), { status: 403 });
+        }
+        if (action === 'archive' && target.status === 'archived') return send(res, 200, { id: targetId, status: 'archived' });
+        if (action === 'restore' && target.status !== 'archived') throw Object.assign(new Error('只有已封存内容可以恢复'), { status: 409 });
+        const timestamp = now();
+        let moderation = null;
+        let nextStatus = 'archived';
+        if (action === 'restore') {
+          moderation = await moderateCommunityContent(db, { ...activeUser, id: target.user_id }, {
+            targetType,
+            targetId,
+            content: target.content,
+            excludeTargetId: targetId,
+          });
+          nextStatus = moderation.outcome;
+        }
+        await withTransaction(db, async (tx) => {
+          if (targetType === 'post') {
+            const linkedReviewId = await syncPostLinkedReview(tx, target, nextStatus, moderation?.ruleVersion || target.moderation_version || COMMUNITY_MODERATION_VERSION);
+            await tx.prepare(`UPDATE campus_posts SET status = ?, linked_review_id = ?, archived_by = ?, archived_at = ?, restored_at = ?, moderation_version = ?, updated_at = ? WHERE tenant_id = ? AND id = ?`)
+              .run(nextStatus, linkedReviewId, action === 'archive' ? activeUser.id : null, action === 'archive' ? timestamp : null,
+                action === 'restore' ? timestamp : target.restored_at, moderation?.ruleVersion || target.moderation_version || COMMUNITY_MODERATION_VERSION,
+                timestamp, tenantId, targetId);
+          } else {
+            await tx.prepare(`UPDATE reviews SET status = ?, archived_by = ?, archived_at = ?, restored_at = ?, moderation_version = ? WHERE tenant_id = ? AND id = ?`)
+              .run(nextStatus, action === 'archive' ? activeUser.id : null, action === 'archive' ? timestamp : null,
+                action === 'restore' ? timestamp : target.restored_at, moderation?.ruleVersion || target.moderation_version || COMMUNITY_MODERATION_VERSION,
+                tenantId, targetId);
+          }
+          if (moderation) await saveModerationDecision(tx, moderation);
+          await audit(tx, activeUser, action === 'archive' ? 'ARCHIVE' : 'RESTORE', targetType, targetId, {
+            fromStatus: target.status,
+            toStatus: nextStatus,
+            ...(moderation ? { moderation: moderationPublicResult(moderation) } : {}),
+          });
+        });
+        await invalidateRankings();
+        return send(res, 200, { id: targetId, status: nextStatus, ...(moderation ? { moderation: moderationPublicResult(moderation) } : {}) });
       }
 
       if (method === 'PUT' && pathParts[0] === 'api' && ['posts', 'reviews'].includes(pathParts[1]) && pathParts[2] && pathParts[3] === 'reaction') {
@@ -4464,23 +4899,20 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         return send(res, 200, { reported: true });
       }
 
-      if (method === 'GET' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts[3] === 'comments') {
+      if (method === 'GET' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts[3] === 'comments' && pathParts.length === 4) {
         const activeUser = await requireUser(db, req);
         const tenantId = tenantIdFor(activeUser);
         const postId = decodeURIComponent(pathParts[2]);
         await requireCommunityTarget(db, tenantId, 'post', postId, { approved: true });
-        const comments = await db.prepare(`SELECT post_comments.*, users.nickname, users.username FROM post_comments
+        const comments = await db.prepare(`SELECT post_comments.*, users.nickname, users.username, users.avatar_url FROM post_comments
           JOIN users ON users.id = post_comments.user_id
-          WHERE post_comments.tenant_id = ? AND post_comments.post_id = ? AND post_comments.status = 'approved'
-          ORDER BY post_comments.created_at ASC`).all(tenantId, postId);
-        return send(res, 200, { comments: comments.map((row) => ({
-          id: row.id, postId: row.post_id, content: row.content,
-          user: row.nickname || row.username || '匿名用户', userId: row.user_id,
-          isOwn: row.user_id === activeUser.id, createdAt: row.created_at, updatedAt: row.updated_at
-        })) });
+          WHERE post_comments.tenant_id = ? AND post_comments.post_id = ?
+            AND (post_comments.status = 'approved' OR post_comments.user_id = ?)
+          ORDER BY post_comments.created_at ASC`).all(tenantId, postId, activeUser.id);
+        return send(res, 200, { comments: comments.map((row) => commentResponse(row, activeUser.id)) });
       }
 
-      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts[3] === 'comments') {
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts[3] === 'comments' && pathParts.length === 4) {
         const activeUser = await requireUser(db, req);
         const tenantId = tenantIdFor(activeUser);
         const postId = decodeURIComponent(pathParts[2]);
@@ -4489,38 +4921,101 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         if (content.length < 1 || content.length > 300) throw Object.assign(new Error('评论内容长度需要在 1-300 个字符之间'), { status: 400 });
         const id = `comment-${randomUUID()}`;
         const timestamp = now();
-        await db.prepare('INSERT INTO post_comments (id, tenant_id, post_id, user_id, content, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-          .run(id, tenantId, postId, activeUser.id, content, 'approved', timestamp, timestamp);
-        return send(res, 201, { comment: { id, postId, content, user: activeUser.nickname || activeUser.username, userId: activeUser.id, isOwn: true, createdAt: timestamp, updatedAt: timestamp } });
+        const moderation = await moderateCommunityContent(db, activeUser, { targetType: 'comment', targetId: id, content });
+        await withTransaction(db, async (tx) => {
+          await tx.prepare('INSERT INTO post_comments (id, tenant_id, post_id, user_id, content, status, moderation_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, tenantId, postId, activeUser.id, moderation.normalizedContent, moderation.outcome, moderation.ruleVersion, timestamp, timestamp);
+          await saveModerationDecision(tx, moderation);
+          await audit(tx, activeUser, 'CREATE', 'comment', id, { postId, moderation: moderationPublicResult(moderation) });
+        });
+        const row = await db.prepare('SELECT post_comments.*, users.nickname, users.username, users.avatar_url FROM post_comments JOIN users ON users.id = post_comments.user_id WHERE post_comments.tenant_id = ? AND post_comments.id = ?').get(tenantId, id);
+        return send(res, 201, { comment: commentResponse(row, activeUser.id), moderation: moderationPublicResult(moderation) });
+      }
+
+      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts[3] === 'comments' && pathParts[4]) {
+        const activeUser = await requirePublicProfile(db, req);
+        const tenantId = tenantIdFor(activeUser);
+        const postId = decodeURIComponent(pathParts[2]);
+        const commentId = decodeURIComponent(pathParts[4]);
+        await requireCommunityTarget(db, tenantId, 'post', postId, { approved: true });
+        const comment = await requireCommunityTarget(db, tenantId, 'comment', commentId);
+        if (comment.post_id !== postId) throw Object.assign(new Error('评论不存在'), { status: 404 });
+        if (comment.user_id !== activeUser.id) throw Object.assign(new Error('只能修改自己的评论'), { status: 403 });
+        if (comment.status === 'archived') throw Object.assign(new Error('已封存评论不能修改'), { status: 409 });
+        const content = String((await readBody(req)).content || '').trim();
+        if (content.length < 1 || content.length > 300) throw Object.assign(new Error('评论内容长度需要在 1-300 个字符之间'), { status: 400 });
+        assertPublicProfile(activeUser);
+        const moderation = await moderateCommunityContent(db, activeUser, { targetType: 'comment', targetId: commentId, content, excludeTargetId: commentId });
+        await withTransaction(db, async (tx) => {
+          await tx.prepare('UPDATE post_comments SET content = ?, status = ?, moderation_version = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
+            .run(moderation.normalizedContent, moderation.outcome, moderation.ruleVersion, now(), tenantId, commentId);
+          await saveModerationDecision(tx, moderation);
+          await audit(tx, activeUser, 'UPDATE', 'comment', commentId, { postId, moderation: moderationPublicResult(moderation) });
+        });
+        const row = await db.prepare('SELECT post_comments.*, users.nickname, users.username, users.avatar_url FROM post_comments JOIN users ON users.id = post_comments.user_id WHERE post_comments.tenant_id = ? AND post_comments.id = ?').get(tenantId, commentId);
+        return send(res, 200, { comment: commentResponse(row, activeUser.id), moderation: moderationPublicResult(moderation) });
+      }
+
+      if (method === 'DELETE' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts[3] === 'comments' && pathParts[4]) {
+        const activeUser = await requireUser(db, req);
+        const tenantId = tenantIdFor(activeUser);
+        const postId = decodeURIComponent(pathParts[2]);
+        const commentId = decodeURIComponent(pathParts[4]);
+        const comment = await requireCommunityTarget(db, tenantId, 'comment', commentId);
+        if (comment.post_id !== postId) throw Object.assign(new Error('评论不存在'), { status: 404 });
+        if (comment.user_id !== activeUser.id && !canModerateCommunity(activeUser)) throw Object.assign(new Error('只能删除自己的评论'), { status: 403 });
+        await withTransaction(db, async (tx) => {
+          await tx.prepare("DELETE FROM content_reports WHERE tenant_id = ? AND target_type = 'comment' AND target_id = ?").run(tenantId, commentId);
+          await tx.prepare('DELETE FROM post_comments WHERE tenant_id = ? AND id = ?').run(tenantId, commentId);
+          await audit(tx, activeUser, 'DELETE', 'comment', commentId, { postId });
+        });
+        return send(res, 200, { deleted: true, id: commentId });
+      }
+
+      if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts[3] === 'comments' && pathParts[4] && pathParts[5] === 'report') {
+        const activeUser = await requireUser(db, req);
+        const tenantId = tenantIdFor(activeUser);
+        const postId = decodeURIComponent(pathParts[2]);
+        const commentId = decodeURIComponent(pathParts[4]);
+        await requireCommunityTarget(db, tenantId, 'post', postId, { approved: true });
+        const target = await requireCommunityTarget(db, tenantId, 'comment', commentId, { approved: true });
+        if (target.post_id !== postId) throw Object.assign(new Error('评论不存在'), { status: 404 });
+        if (target.user_id === activeUser.id) throw Object.assign(new Error('不能举报自己发布的内容'), { status: 400 });
+        const body = await readBody(req);
+        const reason = String(body.reason || 'other').trim().slice(0, 40) || 'other';
+        const detail = String(body.detail || '').trim().slice(0, 300);
+        const timestamp = now();
+        await db.prepare(`INSERT INTO content_reports (id, tenant_id, reporter_id, target_type, target_id, reason, detail, status, created_at, updated_at)
+          VALUES (?, ?, ?, 'comment', ?, ?, ?, 'pending', ?, ?) ON CONFLICT DO NOTHING`)
+          .run(`report-${randomUUID()}`, tenantId, activeUser.id, commentId, reason, detail, timestamp, timestamp);
+        return send(res, 200, { reported: true });
       }
 
       if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts.length === 3) {
-        const activeUser = await requireUser(db, req);
+        const activeUser = await requirePublicProfile(db, req);
         const tenantId = tenantIdFor(activeUser);
         const postId = decodeURIComponent(pathParts[2]);
         const post = await requireCommunityTarget(db, tenantId, 'post', postId);
         if (post.user_id !== activeUser.id) throw Object.assign(new Error('只能修改自己发布的帖子'), { status: 403 });
+        if (post.status === 'archived') throw Object.assign(new Error('已封存帖子不能修改，请先恢复'), { status: 409 });
         const body = await readBody(req);
         const content = body.content === undefined ? post.content : String(body.content || '').trim();
         if (content.length < 2 || content.length > 600) throw Object.assign(new Error('帖子内容长度需要在 2-600 个字符之间'), { status: 400 });
         let rating = body.rating === undefined ? post.rating : (body.rating === null || body.rating === '' ? null : Number(body.rating));
         if (rating !== null && (post.target_type !== 'dish' || !Number.isInteger(rating) || rating < 1 || rating > 5)) throw Object.assign(new Error('菜品帖子评分需要在 1-5 分之间'), { status: 400 });
+        const moderation = await moderateCommunityContent(db, activeUser, { targetType: 'post', targetId: postId, content, excludeTargetId: postId });
         await withTransaction(db, async (tx) => {
-          let linkedReviewId = post.linked_review_id || null;
-          if (linkedReviewId && rating === null) {
-            await tx.prepare('DELETE FROM reviews WHERE tenant_id = ? AND id = ?').run(tenantId, linkedReviewId);
-            linkedReviewId = null;
-          } else if (linkedReviewId) {
-            await tx.prepare("UPDATE reviews SET rating = ?, content = ?, status = 'pending' WHERE tenant_id = ? AND id = ?").run(rating, content, tenantId, linkedReviewId);
-          }
-          await tx.prepare("UPDATE campus_posts SET content = ?, rating = ?, status = 'pending', linked_review_id = ?, updated_at = ? WHERE tenant_id = ? AND id = ?")
-            .run(content, rating, linkedReviewId, now(), tenantId, postId);
-          await audit(tx, activeUser, 'UPDATE', 'campus_post', postId, { resetToPending: true });
+          const updatedPost = { ...post, content: moderation.normalizedContent, rating };
+          const linkedReviewId = await syncPostLinkedReview(tx, updatedPost, moderation.outcome, moderation.ruleVersion);
+          await tx.prepare('UPDATE campus_posts SET content = ?, rating = ?, status = ?, linked_review_id = ?, moderation_version = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
+            .run(moderation.normalizedContent, rating, moderation.outcome, linkedReviewId, moderation.ruleVersion, now(), tenantId, postId);
+          await saveModerationDecision(tx, moderation);
+          await audit(tx, activeUser, 'UPDATE', 'campus_post', postId, { moderation: moderationPublicResult(moderation), linkedReviewId });
         });
         await invalidateRankings();
         const catalog = await reviewCatalog(db, tenantId);
-        const row = rowToPost(await db.prepare('SELECT campus_posts.*, users.nickname, users.username FROM campus_posts JOIN users ON users.id = campus_posts.user_id WHERE campus_posts.tenant_id = ? AND campus_posts.id = ?').get(tenantId, postId));
-        return send(res, 200, { post: enrichPost(row, catalog, activeUser.id) });
+        const row = rowToPost(await db.prepare('SELECT campus_posts.*, users.nickname, users.username, users.avatar_url FROM campus_posts JOIN users ON users.id = campus_posts.user_id WHERE campus_posts.tenant_id = ? AND campus_posts.id = ?').get(tenantId, postId));
+        return send(res, 200, { post: enrichPost(row, catalog, activeUser.id), moderation: moderationPublicResult(moderation) });
       }
 
       if (method === 'DELETE' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts.length === 3) {
@@ -4528,7 +5023,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const tenantId = tenantIdFor(activeUser);
         const postId = decodeURIComponent(pathParts[2]);
         const post = await requireCommunityTarget(db, tenantId, 'post', postId);
-        if (post.user_id !== activeUser.id) throw Object.assign(new Error('只能删除自己发布的帖子'), { status: 403 });
+        if (post.user_id !== activeUser.id && !canModerateCommunity(activeUser)) throw Object.assign(new Error('只能删除自己发布的帖子'), { status: 403 });
         await withTransaction(db, async (tx) => {
           await tx.prepare("DELETE FROM content_reactions WHERE tenant_id = ? AND ((target_type = 'post' AND target_id = ?) OR (target_type = 'review' AND target_id = ?))").run(tenantId, postId, post.linked_review_id || '');
           await tx.prepare("DELETE FROM content_reports WHERE tenant_id = ? AND ((target_type = 'post' AND target_id = ?) OR (target_type = 'review' AND target_id = ?))").run(tenantId, postId, post.linked_review_id || '');
@@ -4536,16 +5031,18 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
           await tx.prepare('DELETE FROM campus_posts WHERE tenant_id = ? AND id = ?').run(tenantId, postId);
           await audit(tx, activeUser, 'DELETE', 'campus_post', postId);
         });
+        await deletePostUploadIfUnreferenced(db, tenantId, post.user_id, post.image_url);
         await invalidateRankings();
         return send(res, 200, { deleted: true, id: postId });
       }
 
       if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'reviews' && pathParts[2] && pathParts.length === 3) {
-        const activeUser = await requireUser(db, req);
+        const activeUser = await requirePublicProfile(db, req);
         const tenantId = tenantIdFor(activeUser);
         const reviewId = decodeURIComponent(pathParts[2]);
         const review = await requireCommunityTarget(db, tenantId, 'review', reviewId);
         if (review.user_id !== activeUser.id) throw Object.assign(new Error('只能修改自己的评价'), { status: 403 });
+        if (review.status === 'archived') throw Object.assign(new Error('已封存评价不能修改，请先恢复'), { status: 409 });
         const linkedPost = await db.prepare('SELECT id FROM campus_posts WHERE tenant_id = ? AND linked_review_id = ?').get(tenantId, reviewId);
         if (linkedPost) throw Object.assign(new Error('该评价由帖子生成，请在“我的帖子”中修改'), { status: 409, code: 'EDIT_LINKED_POST' });
         const body = await readBody(req);
@@ -4553,12 +5050,17 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const rating = body.rating === undefined ? Number(review.rating) : Number(body.rating);
         if (content.length < 2 || content.length > 240) throw Object.assign(new Error('评价内容长度需要在 2-240 个字符之间'), { status: 400 });
         if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw Object.assign(new Error('评分需要在 1-5 分之间'), { status: 400 });
-        await db.prepare("UPDATE reviews SET content = ?, rating = ?, status = 'pending' WHERE tenant_id = ? AND id = ?").run(content, rating, tenantId, reviewId);
-        await audit(db, activeUser, 'UPDATE', 'review', reviewId, { resetToPending: true });
+        const moderation = await moderateCommunityContent(db, activeUser, { targetType: 'review', targetId: reviewId, content, excludeTargetId: reviewId });
+        await withTransaction(db, async (tx) => {
+          await tx.prepare('UPDATE reviews SET content = ?, rating = ?, status = ?, moderation_version = ? WHERE tenant_id = ? AND id = ?')
+            .run(moderation.normalizedContent, rating, moderation.outcome, moderation.ruleVersion, tenantId, reviewId);
+          await saveModerationDecision(tx, moderation);
+          await audit(tx, activeUser, 'UPDATE', 'review', reviewId, { moderation: moderationPublicResult(moderation) });
+        });
         await invalidateRankings();
         const catalog = await reviewCatalog(db, tenantId);
-        const row = rowToReview(await db.prepare('SELECT reviews.*, users.nickname, users.username FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND reviews.id = ?').get(tenantId, reviewId));
-        return send(res, 200, { review: enrichReview(row, catalog, activeUser.id) });
+        const row = rowToReview(await db.prepare('SELECT reviews.*, users.nickname, users.username, users.avatar_url FROM reviews JOIN users ON users.id = reviews.user_id WHERE reviews.tenant_id = ? AND reviews.id = ?').get(tenantId, reviewId));
+        return send(res, 200, { review: enrichReview(row, catalog, activeUser.id), moderation: moderationPublicResult(moderation) });
       }
 
       if (method === 'DELETE' && pathParts[0] === 'api' && pathParts[1] === 'reviews' && pathParts[2] && pathParts.length === 3) {
@@ -4566,7 +5068,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const tenantId = tenantIdFor(activeUser);
         const reviewId = decodeURIComponent(pathParts[2]);
         const review = await requireCommunityTarget(db, tenantId, 'review', reviewId);
-        if (review.user_id !== activeUser.id) throw Object.assign(new Error('只能删除自己的评价'), { status: 403 });
+        if (review.user_id !== activeUser.id && !canModerateCommunity(activeUser)) throw Object.assign(new Error('只能删除自己的评价'), { status: 403 });
         await withTransaction(db, async (tx) => {
           await tx.prepare('UPDATE campus_posts SET rating = NULL, linked_review_id = NULL, updated_at = ? WHERE tenant_id = ? AND linked_review_id = ?').run(now(), tenantId, reviewId);
           await tx.prepare("DELETE FROM content_reactions WHERE tenant_id = ? AND target_type = 'review' AND target_id = ?").run(tenantId, reviewId);
@@ -4870,7 +5372,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const canteenId = String(url.searchParams.get('canteenId') || '').trim();
         const stallId = String(url.searchParams.get('stallId') || '').trim();
         const dishId = String(url.searchParams.get('dishId') || '').trim();
-        if (!['pending', 'approved', 'rejected', 'all'].includes(status)) throw Object.assign(new Error('不支持的评价状态'), { status: 400 });
+        if (!['pending', 'approved', 'rejected', 'archived', 'all'].includes(status)) throw Object.assign(new Error('不支持的评价状态'), { status: 400 });
         if (targetType && !['dish', 'canteen'].includes(targetType)) throw Object.assign(new Error('targetType 必须是 dish 或 canteen'), { status: 400 });
         const whereClauses = ['reviews.tenant_id = ?'];
         const whereParams = [tenantId];
@@ -4885,7 +5387,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
         const where = whereClauses.join(' AND ');
-        const rows = await db.prepare(`SELECT reviews.*, users.nickname, users.username FROM reviews LEFT JOIN users ON users.id = reviews.user_id WHERE ${where} ORDER BY reviews.created_at DESC, reviews.id DESC`).all(...whereParams);
+        const rows = await db.prepare(`SELECT reviews.*, users.nickname, users.username, users.avatar_url FROM reviews LEFT JOIN users ON users.id = reviews.user_id WHERE ${where} ORDER BY reviews.created_at DESC, reviews.id DESC`).all(...whereParams);
         const catalog = await reviewCatalog(db, tenantId);
         const reviews = rows.map(rowToReview).map((review) => enrichReview(review, catalog)).filter((review) => {
           if (canteenId && review.canteen?.id !== canteenId) return false;
@@ -4901,12 +5403,15 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const reviewId = decodeURIComponent(pathParts[3]);
         const body = await readBody(req);
         const newStatus = String(body.status || '');
-        if (!['approved', 'pending', 'rejected'].includes(newStatus)) throw Object.assign(new Error('status 必须是 approved、pending 或 rejected'), { status: 400 });
+        if (!['approved', 'pending', 'rejected', 'archived'].includes(newStatus)) throw Object.assign(new Error('status 必须是 approved、pending、rejected 或 archived'), { status: 400 });
         const tenantId = tenantIdFor(activeUser);
         await withTransaction(db, async (tx) => {
           const existing = await tx.prepare('SELECT id, status, target_type, target_id FROM reviews WHERE tenant_id = ? AND id = ?').get(tenantId, reviewId);
           if (!existing) throw Object.assign(new Error('评价不存在'), { status: 404 });
-          await tx.prepare('UPDATE reviews SET status = ? WHERE tenant_id = ? AND id = ?').run(newStatus, tenantId, reviewId);
+          const timestamp = now();
+          await tx.prepare('UPDATE reviews SET status = ?, archived_by = ?, archived_at = ?, restored_at = ? WHERE tenant_id = ? AND id = ?')
+            .run(newStatus, newStatus === 'archived' ? activeUser.id : null, newStatus === 'archived' ? timestamp : null,
+              existing.status === 'archived' && newStatus !== 'archived' ? timestamp : null, tenantId, reviewId);
           await audit(tx, activeUser, 'MODERATE_REVIEW', 'review', reviewId, {
             fromStatus: existing.status,
             toStatus: newStatus,
@@ -4927,7 +5432,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const canteenId = String(url.searchParams.get('canteenId') || '').trim();
         const stallId = String(url.searchParams.get('stallId') || '').trim();
         const dishId = String(url.searchParams.get('dishId') || '').trim();
-        if (status && !['pending', 'approved', 'rejected', 'all'].includes(status)) throw Object.assign(new Error('不支持的帖子状态'), { status: 400 });
+        if (status && !['pending', 'approved', 'rejected', 'archived', 'all'].includes(status)) throw Object.assign(new Error('不支持的帖子状态'), { status: 400 });
         if (targetType && !['dish', 'canteen'].includes(targetType)) throw Object.assign(new Error('targetType 必须是 dish 或 canteen'), { status: 400 });
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
@@ -4935,7 +5440,7 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const params = [tenantId];
         if (status && status !== 'all') { whereClauses.push('campus_posts.status = ?'); params.push(status); }
         if (targetType) { whereClauses.push('campus_posts.target_type = ?'); params.push(targetType); }
-        const rows = await db.prepare(`SELECT campus_posts.*, users.nickname, users.username, reviews.status AS linked_review_status FROM campus_posts LEFT JOIN users ON users.id = campus_posts.user_id LEFT JOIN reviews ON reviews.tenant_id = campus_posts.tenant_id AND reviews.id = campus_posts.linked_review_id WHERE ${whereClauses.join(' AND ')} ORDER BY campus_posts.created_at DESC, campus_posts.id DESC`).all(...params);
+        const rows = await db.prepare(`SELECT campus_posts.*, users.nickname, users.username, users.avatar_url, reviews.status AS linked_review_status FROM campus_posts LEFT JOIN users ON users.id = campus_posts.user_id LEFT JOIN reviews ON reviews.tenant_id = campus_posts.tenant_id AND reviews.id = campus_posts.linked_review_id WHERE ${whereClauses.join(' AND ')} ORDER BY campus_posts.created_at DESC, campus_posts.id DESC`).all(...params);
         const catalog = await reviewCatalog(db, tenantId);
         const posts = rows.map(rowToPost).map((post) => enrichPost(post, catalog)).filter((post) => {
           if (canteenId && post.canteen?.id !== canteenId) return false;
@@ -4951,25 +5456,16 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const tenantId = tenantIdFor(activeUser);
         const postId = decodeURIComponent(pathParts[3]);
         const status = String((await readBody(req)).status || '').trim();
-        if (!['pending', 'approved', 'rejected'].includes(status)) throw Object.assign(new Error('status 必须是 approved、pending 或 rejected'), { status: 400 });
+        if (!['pending', 'approved', 'rejected', 'archived'].includes(status)) throw Object.assign(new Error('status 必须是 approved、pending、rejected 或 archived'), { status: 400 });
         let updatedRow;
         await withTransaction(db, async (tx) => {
           const post = await tx.prepare('SELECT * FROM campus_posts WHERE tenant_id = ? AND id = ?').get(tenantId, postId);
           if (!post) throw Object.assign(new Error('帖子不存在'), { status: 404 });
-          let linkedReviewId = post.linked_review_id || null;
-          if (post.target_type === 'dish' && post.rating != null) {
-            if (status === 'approved') {
-              linkedReviewId ||= `post-review-${post.id}`;
-              await tx.prepare(`INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at) VALUES (?, ?, ?, 'dish', ?, ?, ?, 'approved', ?)
-                ON CONFLICT(id) DO UPDATE SET tenant_id=excluded.tenant_id, user_id=excluded.user_id, target_type=excluded.target_type, target_id=excluded.target_id, rating=excluded.rating, content=excluded.content, status='approved'`)
-                .run(linkedReviewId, tenantId, post.user_id, post.target_id, Number(post.rating), post.content, post.created_at);
-            } else if (linkedReviewId) {
-              await tx.prepare('UPDATE reviews SET status = ? WHERE tenant_id = ? AND id = ?').run(status, tenantId, linkedReviewId);
-            }
-            await invalidateRankings();
-          }
-          await tx.prepare('UPDATE campus_posts SET status = ?, linked_review_id = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
-            .run(status, linkedReviewId, now(), tenantId, postId);
+          const linkedReviewId = await syncPostLinkedReview(tx, post, status, post.moderation_version || COMMUNITY_MODERATION_VERSION);
+          const timestamp = now();
+          await tx.prepare('UPDATE campus_posts SET status = ?, linked_review_id = ?, archived_by = ?, archived_at = ?, restored_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ?')
+            .run(status, linkedReviewId, status === 'archived' ? activeUser.id : null, status === 'archived' ? timestamp : null,
+              post.status === 'archived' && status !== 'archived' ? timestamp : null, timestamp, tenantId, postId);
           await audit(tx, activeUser, 'MODERATE_POST', 'campus_post', postId, {
             fromStatus: post.status,
             toStatus: status,
@@ -4977,11 +5473,64 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
             targetType: post.target_type,
             targetId: post.target_id
           });
-          updatedRow = await tx.prepare('SELECT campus_posts.*, users.nickname, users.username, reviews.status AS linked_review_status FROM campus_posts LEFT JOIN users ON users.id = campus_posts.user_id LEFT JOIN reviews ON reviews.tenant_id = campus_posts.tenant_id AND reviews.id = campus_posts.linked_review_id WHERE campus_posts.tenant_id = ? AND campus_posts.id = ?').get(tenantId, postId);
+          updatedRow = await tx.prepare('SELECT campus_posts.*, users.nickname, users.username, users.avatar_url, reviews.status AS linked_review_status FROM campus_posts LEFT JOIN users ON users.id = campus_posts.user_id LEFT JOIN reviews ON reviews.tenant_id = campus_posts.tenant_id AND reviews.id = campus_posts.linked_review_id WHERE campus_posts.tenant_id = ? AND campus_posts.id = ?').get(tenantId, postId);
         });
+        await invalidateRankings();
         const catalog = await reviewCatalog(db, tenantId);
         const updated = rowToPost(updatedRow);
         return send(res, 200, { post: enrichPost(updated, catalog) });
+      }
+
+      if (method === 'GET' && url.pathname === '/api/admin/community/reports') {
+        const activeUser = await requireAnyCapability(db, req, ['post:moderate', 'review:moderate']);
+        const tenantId = tenantIdFor(activeUser);
+        const status = String(url.searchParams.get('status') || 'pending').trim();
+        const targetType = String(url.searchParams.get('targetType') || '').trim();
+        if (!['pending', 'resolved', 'dismissed', 'all'].includes(status)) throw Object.assign(new Error('不支持的举报状态'), { status: 400 });
+        if (targetType && !['post', 'review', 'comment'].includes(targetType)) throw Object.assign(new Error('不支持的举报对象'), { status: 400 });
+        const clauses = ['reports.tenant_id = ?'];
+        const params = [tenantId];
+        if (status !== 'all') { clauses.push('reports.status = ?'); params.push(status); }
+        if (targetType) { clauses.push('reports.target_type = ?'); params.push(targetType); }
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 200);
+        const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+        const rows = await db.prepare(`SELECT reports.*, users.nickname AS reporter_nickname, users.username AS reporter_username
+          FROM content_reports reports LEFT JOIN users ON users.id = reports.reporter_id
+          WHERE ${clauses.join(' AND ')} ORDER BY reports.created_at DESC, reports.id DESC`).all(...params);
+        const reports = rows.slice(offset, offset + limit).map((row) => ({
+          id: row.id,
+          targetType: row.target_type,
+          targetId: row.target_id,
+          reason: row.reason,
+          detail: row.detail,
+          status: row.status,
+          reporter: row.reporter_nickname || row.reporter_username || '匿名用户',
+          reporterId: row.reporter_id,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }));
+        return send(res, 200, { reports, total: rows.length, limit, offset });
+      }
+
+      if (method === 'PATCH' && pathParts[0] === 'api' && pathParts[1] === 'admin' && pathParts[2] === 'community' && pathParts[3] === 'reports' && pathParts[4]) {
+        const activeUser = await requireAnyCapability(db, req, ['post:moderate', 'review:moderate']);
+        const tenantId = tenantIdFor(activeUser);
+        const reportId = decodeURIComponent(pathParts[4]);
+        const body = await readBody(req);
+        const status = String(body.status || '').trim();
+        if (!['resolved', 'dismissed'].includes(status)) throw Object.assign(new Error('status 必须是 resolved 或 dismissed'), { status: 400 });
+        const report = await db.prepare('SELECT * FROM content_reports WHERE tenant_id = ? AND id = ?').get(tenantId, reportId);
+        if (!report) throw Object.assign(new Error('举报不存在'), { status: 404 });
+        await withTransaction(db, async (tx) => {
+          await tx.prepare('UPDATE content_reports SET status = ?, updated_at = ? WHERE tenant_id = ? AND id = ?').run(status, now(), tenantId, reportId);
+          await audit(tx, activeUser, 'RESOLVE_REPORT', 'content_report', reportId, {
+            fromStatus: report.status,
+            toStatus: status,
+            targetType: report.target_type,
+            targetId: report.target_id,
+          });
+        });
+        return send(res, 200, { id: reportId, status });
       }
 
       if (method === 'GET' && url.pathname === '/api/admin/reviews/analytics') {

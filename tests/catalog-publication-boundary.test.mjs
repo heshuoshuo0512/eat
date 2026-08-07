@@ -1,6 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { completePublicProfile } from './community-test-helpers.mjs';
 
 let db;
 let server;
@@ -93,6 +94,7 @@ describe('catalog publication boundary', () => {
     });
     assert.equal(registered.status, 201, JSON.stringify(registered.data));
     studentToken = registered.data.token;
+    await completePublicProfile(request, studentToken, 'Publication Student');
   });
 
   after(async () => {

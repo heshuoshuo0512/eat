@@ -188,6 +188,9 @@ function migrate(db) {
       token_version INTEGER NOT NULL DEFAULT 0,
       agreement_version TEXT NOT NULL DEFAULT '',
       agreement_accepted_at TEXT,
+      avatar_url TEXT,
+      profile_completed_at TEXT,
+      profile_version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -532,8 +535,12 @@ function migrate(db) {
       content TEXT NOT NULL,
       image_url TEXT,
       rating INTEGER CHECK(rating BETWEEN 1 AND 5),
-      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','archived')),
       linked_review_id TEXT REFERENCES reviews(id) ON DELETE SET NULL,
+      archived_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      archived_at TEXT,
+      restored_at TEXT,
+      moderation_version TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -556,7 +563,11 @@ function migrate(db) {
       post_id TEXT NOT NULL REFERENCES campus_posts(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       content TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('approved','hidden')),
+      status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('pending','approved','rejected','archived')),
+      archived_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      archived_at TEXT,
+      restored_at TEXT,
+      moderation_version TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -572,6 +583,20 @@ function migrate(db) {
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','resolved','dismissed')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS community_moderation_decisions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      target_type TEXT NOT NULL CHECK(target_type IN ('profile','post','review','comment')),
+      target_id TEXT,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      input_hash TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('approved','rejected','pending')),
+      reason_codes_json TEXT NOT NULL DEFAULT '[]',
+      rule_version TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS health_profiles (
@@ -592,7 +617,7 @@ function migrate(db) {
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'default',
       phone_hash TEXT NOT NULL,
-      purpose TEXT NOT NULL CHECK(purpose IN ('register','reset_password','delete_account')),
+      purpose TEXT NOT NULL CHECK(purpose IN ('register','login','bind_phone','reset_password','delete_account')),
       code_hash TEXT NOT NULL,
       requested_ip TEXT NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -939,6 +964,9 @@ function migrate(db) {
   try { db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN agreement_version TEXT NOT NULL DEFAULT ''"); } catch {}
   try { db.exec('ALTER TABLE users ADD COLUMN agreement_accepted_at TEXT'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN profile_completed_at TEXT'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN profile_version INTEGER NOT NULL DEFAULT 1'); } catch {}
   try { db.exec("ALTER TABLE uploads ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'"); } catch {}
   try { db.exec("ALTER TABLE uploads ADD COLUMN storage_provider TEXT NOT NULL DEFAULT 'local'"); } catch {}
   try { db.exec("ALTER TABLE uploads ADD COLUMN object_version TEXT NOT NULL DEFAULT 'v1'"); } catch {}
@@ -1036,6 +1064,22 @@ function migrate(db) {
   try { db.exec("ALTER TABLE health_profiles ADD COLUMN allergy_status TEXT NOT NULL DEFAULT 'none'"); } catch {}
   // Review moderation status
   try { db.exec("ALTER TABLE reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'"); } catch {}
+  for (const [table, definition] of [
+    ['campus_posts', 'archived_by TEXT REFERENCES users(id) ON DELETE SET NULL'],
+    ['campus_posts', 'archived_at TEXT'],
+    ['campus_posts', 'restored_at TEXT'],
+    ['campus_posts', "moderation_version TEXT NOT NULL DEFAULT ''"],
+    ['reviews', 'archived_by TEXT REFERENCES users(id) ON DELETE SET NULL'],
+    ['reviews', 'archived_at TEXT'],
+    ['reviews', 'restored_at TEXT'],
+    ['reviews', "moderation_version TEXT NOT NULL DEFAULT ''"],
+    ['post_comments', 'archived_by TEXT REFERENCES users(id) ON DELETE SET NULL'],
+    ['post_comments', 'archived_at TEXT'],
+    ['post_comments', 'restored_at TEXT'],
+    ['post_comments', "moderation_version TEXT NOT NULL DEFAULT ''"],
+  ]) {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`); } catch {}
+  }
   const reviewSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reviews'").get()?.sql || '';
   if (!reviewSchema.includes("'canteen'")) {
     db.exec(`
@@ -1051,14 +1095,62 @@ function migrate(db) {
         rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
         content TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'approved',
+        archived_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+        archived_at TEXT,
+        restored_at TEXT,
+        moderation_version TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
       );
-      INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at)
-      SELECT id, tenant_id, user_id, target_type, target_id, rating, content, status, created_at FROM reviews_dish_only;
+      INSERT INTO reviews (id, tenant_id, user_id, target_type, target_id, rating, content, status, archived_by, archived_at, restored_at, moderation_version, created_at)
+      SELECT id, tenant_id, user_id, target_type, target_id, rating, content, status, archived_by, archived_at, restored_at, moderation_version, created_at FROM reviews_dish_only;
       DROP TABLE reviews_dish_only;
       CREATE INDEX idx_reviews_target ON reviews(target_type, target_id);
       CREATE INDEX idx_reviews_tenant_target ON reviews(tenant_id, target_type, target_id);
     `);
+  }
+  // Existing SQLite databases may still carry the original CHECK constraints
+  // (`approved/hidden` or no `archived`). Rebuild only those legacy tables so
+  // archive and restore remain compatible without touching row IDs or content.
+  const lifecycleTables = [
+    {
+      name: 'campus_posts',
+      create: `CREATE TABLE campus_posts_lifecycle_new (
+        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default',
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        target_type TEXT NOT NULL CHECK(target_type IN ('dish','canteen')),
+        target_id TEXT NOT NULL, content TEXT NOT NULL, image_url TEXT,
+        rating INTEGER CHECK(rating BETWEEN 1 AND 5),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','archived')),
+        linked_review_id TEXT REFERENCES reviews(id) ON DELETE SET NULL,
+        archived_by TEXT REFERENCES users(id) ON DELETE SET NULL, archived_at TEXT, restored_at TEXT,
+        moderation_version TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT
+      )`,
+      columns: 'id, tenant_id, user_id, target_type, target_id, content, image_url, rating, status, linked_review_id, archived_by, archived_at, restored_at, moderation_version, created_at, updated_at'
+    },
+    {
+      name: 'post_comments',
+      create: `CREATE TABLE post_comments_lifecycle_new (
+        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'default',
+        post_id TEXT NOT NULL REFERENCES campus_posts(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('pending','approved','rejected','archived')),
+        archived_by TEXT REFERENCES users(id) ON DELETE SET NULL, archived_at TEXT, restored_at TEXT,
+        moderation_version TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT
+      )`,
+      columns: 'id, tenant_id, post_id, user_id, content, status, archived_by, archived_at, restored_at, moderation_version, created_at, updated_at'
+    }
+  ];
+  for (const table of lifecycleTables) {
+    const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table.name)?.sql || '';
+    if (!schema || schema.includes("'archived'")) continue;
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.exec(table.create);
+      db.exec(`INSERT INTO ${table.name}_lifecycle_new (${table.columns}) SELECT ${table.columns} FROM ${table.name}`);
+      db.exec(`DROP TABLE ${table.name}; ALTER TABLE ${table.name}_lifecycle_new RENAME TO ${table.name}`);
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
   }
   // Order payment tracking
   try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'unpaid'"); } catch {}
@@ -1114,10 +1206,13 @@ function migrate(db) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid ON users(wechat_openid) WHERE wechat_openid IS NOT NULL AND wechat_openid != '';
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_tenant_phone_hash ON users(tenant_id, phone_hash) WHERE phone_hash IS NOT NULL AND phone_hash != '';
       CREATE INDEX IF NOT EXISTS idx_users_tenant_username ON users(tenant_id, username);
+      CREATE INDEX IF NOT EXISTS idx_users_tenant_profile_completed ON users(tenant_id, profile_completed_at);
       CREATE INDEX IF NOT EXISTS idx_content_reactions_target ON content_reactions(tenant_id, target_type, target_id);
       CREATE INDEX IF NOT EXISTS idx_post_comments_post ON post_comments(tenant_id, post_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_content_reports_target ON content_reports(tenant_id, target_type, target_id, status);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_content_reports_pending_unique ON content_reports(tenant_id, reporter_id, target_type, target_id) WHERE status = 'pending';
+      CREATE INDEX IF NOT EXISTS idx_community_moderation_target ON community_moderation_decisions(tenant_id, target_type, target_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_community_moderation_outcome ON community_moderation_decisions(tenant_id, outcome, created_at);
     CREATE INDEX IF NOT EXISTS idx_auth_codes_phone_created ON auth_verification_codes(tenant_id, phone_hash, purpose, created_at);
     CREATE INDEX IF NOT EXISTS idx_canteens_tenant ON canteens(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_stalls_tenant_canteen ON stalls(tenant_id, canteen_id);
@@ -1433,11 +1528,14 @@ export function rowToReview(row) {
     targetId: row.target_id,
     userId: row.user_id,
     user,
-    author: { id: row.user_id, name: user, username: row.username || null, nickname: row.nickname || null },
+    author: { id: row.user_id, name: user, username: row.username || null, nickname: row.nickname || null, avatarUrl: resolveUploadReference(row.avatar_url) || '' },
     rating: row.rating,
     content: row.content,
     status: row.status || 'approved',
     linkedPostId: row.linked_post_id || null,
+    archivedAt: row.archived_at || null,
+    restoredAt: row.restored_at || null,
+    moderationVersion: row.moderation_version || '',
     createdAt: row.created_at
   };
 }
@@ -1450,13 +1548,16 @@ export function rowToPost(row) {
     targetId: row.target_id,
     userId: row.user_id,
     user,
-    author: { id: row.user_id, name: user, username: row.username || null, nickname: row.nickname || null },
+    author: { id: row.user_id, name: user, username: row.username || null, nickname: row.nickname || null, avatarUrl: resolveUploadReference(row.avatar_url) || '' },
     content: row.content,
     imageUrl: resolveUploadReference(row.image_url),
     rating: row.rating == null ? null : Number(row.rating),
     status: row.status || 'pending',
     linkedReviewId: row.linked_review_id || null,
     linkedReviewStatus: row.linked_review_status || null,
+    archivedAt: row.archived_at || null,
+    restoredAt: row.restored_at || null,
+    moderationVersion: row.moderation_version || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -1486,6 +1587,10 @@ export function rowToUser(row) {
     id: row.id,
     username: row.username,
     nickname: row.nickname,
+    avatarUrl: resolveUploadReference(row.avatar_url) || '',
+    profileComplete: Boolean(row.profile_completed_at && row.nickname && row.avatar_url),
+    profileCompletedAt: row.profile_completed_at || null,
+    profileVersion: Number(row.profile_version || 1),
     role: row.role,
     tenantId: row.tenant_id || 'default',
     createdAt: row.created_at,

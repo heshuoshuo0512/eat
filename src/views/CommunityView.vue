@@ -1,6 +1,6 @@
 <template>
   <section class="page-heading community-heading">
-    <div><p class="eyebrow">Campus Community</p><h1>校园帖子</h1><p>分享真实用餐体验，关联食堂或菜品后提交审核。</p></div>
+    <div><p class="eyebrow">Campus Community</p><h1>校园帖子</h1><p>分享真实用餐体验，内容会先经过自动规则检查。</p></div>
     <button class="primary" type="button" @click="composerOpen = !composerOpen">{{ composerOpen ? '收起发布' : '发布帖子' }}</button>
   </section>
 
@@ -22,7 +22,7 @@
       <img v-if="imagePreview" :src="imagePreview" alt="帖子图片预览" />
       <button v-if="imageFile" class="ghost" type="button" @click="clearImage">移除图片</button>
     </div>
-    <div class="composer-actions"><button class="primary" type="submit" :disabled="submitting">{{ submitting ? '提交中…' : '提交审核' }}</button><span class="muted">审核通过后会出现在公开动态中。</span></div>
+    <div class="composer-actions"><button class="primary" type="submit" :disabled="submitting">{{ submitting ? '发布中…' : '发布帖子' }}</button><span class="muted">规则通过后会立即公开，异常内容会保留为未通过。</span></div>
     <p v-if="composerMessage" class="form-message" :class="{ danger: composerError }">{{ composerMessage }}</p>
   </form>
 
@@ -52,11 +52,13 @@
         <button type="button" :disabled="post.status !== 'approved'" @click="toggleComments(post)">评论 {{ post.engagement?.comments || 0 }}</button>
         <button v-if="!post.isOwn" type="button" :disabled="post.status !== 'approved' || post.viewerReported" @click="report(post)">{{ post.viewerReported ? '已举报' : '举报' }}</button>
         <button v-if="post.canEdit" type="button" @click="editPost(post)">修改</button>
+        <button v-if="post.canEdit && post.status !== 'archived'" type="button" @click="archivePost(post)">封存</button>
+        <button v-if="post.canEdit && post.status === 'archived'" type="button" @click="restorePost(post)">恢复</button>
         <button v-if="post.canDelete" type="button" class="danger-text" @click="deletePost(post)">删除</button>
       </div>
       <section v-if="openCommentsId === post.id" class="comment-panel">
         <p v-if="commentsLoading">正在加载评论…</p>
-        <div v-for="comment in commentsByPost[post.id] || []" :key="comment.id" class="comment-row"><strong>{{ comment.user }}</strong><span>{{ comment.content }}</span><time>{{ formatDate(comment.createdAt) }}</time></div>
+        <div v-for="comment in commentsByPost[post.id] || []" :key="comment.id" class="comment-row"><strong>{{ comment.user }}</strong><span>{{ comment.content }}</span><time>{{ formatDate(comment.createdAt) }}</time><div class="comment-actions"><button v-if="comment.isOwn" type="button" @click="editComment(post, comment)">修改</button><button v-if="comment.isOwn" type="button" @click="deleteComment(post, comment)">删除</button><button v-if="!comment.isOwn" type="button" @click="reportComment(post, comment)">举报</button></div></div>
         <form class="comment-form" @submit.prevent="submitComment(post)"><input v-model.trim="commentDrafts[post.id]" maxlength="300" placeholder="写评论"><button class="primary" type="submit">发布</button></form>
       </section>
     </article>
@@ -206,7 +208,7 @@ async function submitPost() {
       imageUrl = upload.reference || upload.url;
     }
     await store.createCommunityPost({ targetType: form.targetType, targetId, content: form.content, imageUrl, rating: form.targetType === 'dish' && form.rating ? form.rating : null });
-    composerMessage.value = '帖子已提交审核，你可以在动态中查看审核状态。';
+    composerMessage.value = '帖子已发布，自动规则通过后会立即公开。';
     form.content = ''; form.rating = 0; form.targetId = ''; selectedCanteenId.value = ''; selectedStallId.value = ''; clearImage();
     await loadPosts();
   } catch (error) { composerError.value = true; composerMessage.value = error.message || '帖子发布失败'; }
@@ -233,7 +235,7 @@ async function loadPosts() {
 }
 function targetLink(post) { return post.dish ? { name: 'dish-detail', params: { id: post.dish.id } } : { path: '/canteens', query: { canteen: post.canteen?.id } }; }
 function formatDate(value) { return String(value || '').replace('T', ' ').slice(0, 16); }
-function statusLabel(status) { return { pending: '审核中', approved: '已公开', rejected: '未通过' }[status] || status; }
+function statusLabel(status) { return { pending: '审核中', approved: '已公开', rejected: '未通过', archived: '已封存' }[status] || status; }
 async function react(post, reaction) { await store.reactToCommunityContent('post', post.id, post.viewerReaction === reaction ? null : reaction); }
 async function report(post) { if (window.confirm('确认举报这条帖子？')) await store.reportCommunityContent('post', post.id, { reason: 'inappropriate' }); }
 async function toggleComments(post) {
@@ -261,6 +263,35 @@ async function editPost(post) {
   }
   try { await store.updateCommunityContent('post', post.id, { content, rating }); }
   catch (editError) { window.alert(editError.message || '帖子修改失败'); }
+}
+async function archivePost(post) {
+  if (!window.confirm('封存后将从公开动态隐藏，之后可以恢复。确认封存？')) return;
+  try { await store.setCommunityArchive('post', post.id, true); }
+  catch (error) { window.alert(error.message || '封存失败'); }
+}
+async function restorePost(post) {
+  try { await store.setCommunityArchive('post', post.id, false); }
+  catch (error) { window.alert(error.message || '恢复失败'); }
+}
+async function editComment(post, comment) {
+  const content = window.prompt('修改评论，修改后会重新检查', comment.content);
+  if (content === null || !content.trim()) return;
+  try {
+    const result = await store.updatePostComment(post.id, comment.id, content.trim());
+    Object.assign(comment, result.comment);
+  } catch (error) { window.alert(error.message || '评论修改失败'); }
+}
+async function deleteComment(post, comment) {
+  if (!window.confirm('删除后无法恢复，确认删除评论？')) return;
+  try {
+    await store.deletePostComment(post.id, comment.id);
+    commentsByPost[post.id] = (commentsByPost[post.id] || []).filter((item) => item.id !== comment.id);
+  } catch (error) { window.alert(error.message || '评论删除失败'); }
+}
+async function reportComment(post, comment) {
+  if (!window.confirm('确认举报这条评论？')) return;
+  try { await store.reportPostComment(post.id, comment.id, { reason: 'inappropriate' }); }
+  catch (error) { window.alert(error.message || '评论举报失败'); }
 }
 async function deletePost(post) { if (window.confirm('删除后无法恢复，确认删除这条帖子？')) await store.deleteCommunityContent('post', post.id); }
 onMounted(loadPosts);

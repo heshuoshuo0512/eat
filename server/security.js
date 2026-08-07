@@ -204,10 +204,16 @@ export function verifyToken(token) {
 export function publicUser(row) {
   if (!row) return null;
   const phone = decryptSecret(row.phone_encrypted || row.phoneEncrypted || '');
+  const avatarUrl = resolveUploadReference(row.avatar_url || row.avatarUrl || '');
+  const nickname = String(row.nickname || '').trim();
   return {
     id: row.id,
     username: row.username,
-    nickname: row.nickname,
+    nickname,
+    avatarUrl,
+    profileComplete: Boolean(nickname && avatarUrl && (row.profile_completed_at || row.profileCompletedAt)),
+    profileCompletedAt: row.profile_completed_at || row.profileCompletedAt || null,
+    profileVersion: Number(row.profile_version || row.profileVersion || 1),
     role: row.role,
     tenantId: row.tenant_id || row.tenantId || 'default',
     maskedPhone: maskedPhone(phone),
