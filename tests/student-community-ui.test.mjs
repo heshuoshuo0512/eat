@@ -85,12 +85,13 @@ describe('student community and workspace UI contracts', () => {
     assert.match(miniSaved, /eatenDishTotal/);
   });
 
-  it('uses full-width ranking actions and grouped region dishes', () => {
+  it('uses full-width ranking actions and displays per-dish regional evidence', () => {
     assert.equal((rankings.match(/rank-expand-button/g) || []).length >= 6, true);
     assert.match(regions, /selectedDishGroups/);
-    assert.match(regions, /数据库中的原始分类/);
-    assert.match(miniRegion, /dishGroups/);
-    assert.match(miniRegion, /数据库中的原始分类/);
+    assert.match(regions, /region-evidence/);
+    assert.match(regions, /catalogCategory/);
+    assert.match(miniRegion, /region-analysis/);
+    assert.match(miniRegion, /regionEvidenceText/);
     assert.match(healthProfile, /overflow-wrap:\s*anywhere/);
   });
 

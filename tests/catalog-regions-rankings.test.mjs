@@ -35,15 +35,40 @@ after(async () => {
 });
 
 describe('real catalog regions and rankings', () => {
-  it('uses stable business groups and keeps explicit regional labels auditable', () => {
-    assert.ok(catalogTasteGroups('meal').some((group) => group.label === '米饭套餐'));
-    assert.equal(classifyCatalogTaste({ itemType: 'meal', catalogCategory: '家常热菜' }).label, '家常热菜');
-    const inferred = classifyCatalogTaste({ itemType: 'meal', catalogCategory: '其他餐食' });
-    assert.equal(inferred.source, 'derived');
-    assert.equal(inferred.confidence, 'inferred');
-    const verified = classifyCatalogTaste({ itemType: 'meal', regionalTaste: '微辣' });
-    assert.equal(verified.id.startsWith('regional-'), true);
+  it('classifies each dish by regional evidence instead of meal category', () => {
+    const groups = new Set(catalogTasteGroups('meal').map((group) => group.id));
+    assert.equal(groups.has('cantonese'), true);
+    assert.equal(groups.has('northeast'), true);
+    assert.equal(groups.has('sichuan-hunan'), true);
+    assert.equal(groups.has('rice'), false);
+
+    const cases = [
+      ['\u80a0\u7c89', 'cantonese'],
+      ['\u5730\u4e09\u9c9c', 'northeast'],
+      ['\u9c7c\u9999\u8089\u4e1d', 'sichuan-hunan'],
+      ['\u51c9\u76ae', 'northwest'],
+      ['\u8001\u5317\u4eac\u70b8\u9171\u9762', 'beijing-shandong'],
+      ['\u996d\u56e2', 'japanese'],
+      ['\u6c49\u5821', 'western-fast-food'],
+      ['\u9ebb\u8fa3\u70eb', 'hotpot'],
+    ];
+    for (const [name, expectedId] of cases) {
+      const result = classifyCatalogTaste({ itemType: 'meal', name });
+      assert.equal(result.id, expectedId, name);
+      assert.equal(result.evidence[0].field, 'name', name);
+      assert.equal(result.evidence[0].rule, 'dish_name_cue', name);
+    }
+
+    const unresolved = classifyCatalogTaste({ itemType: 'meal', name: '\u897f\u7ea2\u67ff\u9e21\u86cb\u9762', taste: '\u5fae\u8fa3' });
+    assert.equal(unresolved.id.startsWith('regional-'), true);
+    assert.equal(unresolved.confidence, 'unresolved');
+    assert.deepEqual(unresolved.evidence, []);
+
+    const verified = classifyCatalogTaste({ itemType: 'meal', regionalTaste: '\u7ca4\u83dc' });
+    assert.equal(verified.id, 'cantonese');
     assert.equal(verified.source, 'regional_taste');
+    assert.equal(verified.confidence, 'verified');
+    assert.equal(verified.evidence[0].field, 'regionalTaste');
   });
 
   it('returns an explicit ranking empty state instead of zero-score ranks', async () => {

@@ -2191,15 +2191,47 @@ function catalogRegionItem(row) {
   const item = catalogDishPresentation(row);
   const group = classifyCatalogTaste({
     itemType: item.catalogItemType,
+    name: item.name,
+    aliases: item.aliases,
+    cuisine: item.cuisine,
+    taste: item.taste,
     catalogCategory: item.catalogCategory,
     regionalTaste: item.regionalTaste,
+    tags: item.tags,
+    semanticLabels: item.semanticLabels,
+    ingredients: item.ingredients,
+    stallName: item.stallName,
+    canteenName: item.canteenName,
+    sourceRef: item.sourceRef,
   });
-  return { ...item, regionId: group.id, regionLabel: group.label, regionSource: group.source, regionConfidence: group.confidence };
+  return {
+    ...item,
+    regionId: group.id,
+    regionLabel: group.label,
+    regionSource: group.source,
+    regionConfidence: group.confidence,
+    regionKind: group.kind,
+    regionDescription: group.description,
+    regionEvidence: group.evidence,
+    regionScore: group.score,
+    regionAnalysis: {
+      label: group.label,
+      kind: group.kind,
+      source: group.source,
+      confidence: group.confidence,
+      score: group.score,
+      evidence: group.evidence,
+    },
+  };
 }
 
 function summarizeCatalogRegion(group, items) {
   const priced = items.map((item) => Number(item.price)).filter((value) => Number.isFinite(value) && value >= 0);
   const rated = items.filter((item) => Number(item.reviewCount || 0) > 0 && Number(item.rating || 0) > 0);
+  const verifiedCount = items.filter((item) => item.regionSource === 'regional_taste').length;
+  const needsReviewCount = items.filter((item) => item.regionConfidence === 'unresolved').length;
+  const source = verifiedCount === items.length && items.length ? 'regional_taste' : needsReviewCount === items.length ? 'unresolved' : 'derived';
+  const confidence = needsReviewCount === items.length ? 'unresolved' : verifiedCount === items.length ? 'verified' : 'inferred';
   return {
     id: group.id,
     name: group.label,
@@ -2207,32 +2239,40 @@ function summarizeCatalogRegion(group, items) {
     subtitle: group.source === 'regional_taste' ? '数据库口味标签' : '真实目录聚合',
     description: group.description,
     itemType: group.itemType,
-    source: group.source,
-    confidence: group.confidence,
+    source,
+    confidence,
     count: items.length,
     averagePrice: priced.length ? Number((priced.reduce((sum, value) => sum + value, 0) / priced.length).toFixed(2)) : 0,
     priceRange: priced.length ? { min: Math.min(...priced), max: Math.max(...priced) } : { min: 0, max: 0 },
     ratedCount: rated.length,
     averageRating: rated.length ? Number((rated.reduce((sum, item) => sum + Number(item.rating || 0), 0) / rated.length).toFixed(1)) : 0,
     totalSales: items.reduce((sum, item) => sum + Number(item.sales || 0), 0),
+    classifiedCount: items.length - needsReviewCount,
+    needsReviewCount,
+    verifiedCount,
+    inferredCount: items.length - verifiedCount - needsReviewCount,
+    evidenceCount: items.reduce((sum, item) => sum + (item.regionEvidence?.length || 0), 0),
   };
 }
 
 async function listCatalogRegions(db, tenantId, params, regionId = '') {
   const itemType = publicCatalogItemType(params.get('itemType') || 'meal');
   const rows = await loadPublicCatalogTasteRows(db, tenantId, itemType);
+  const classifiedItems = rows.map(catalogRegionItem);
   const grouped = new Map();
-  for (const row of rows) {
-    const item = catalogRegionItem(row);
-    if (!grouped.has(item.regionId)) grouped.set(item.regionId, { id: item.regionId, label: item.regionLabel, source: item.regionSource, confidence: item.regionConfidence, description: '', itemType, items: [] });
+  for (const item of classifiedItems) {
+    if (!grouped.has(item.regionId)) grouped.set(item.regionId, { id: item.regionId, label: item.regionLabel, source: item.regionSource, confidence: item.regionConfidence, kind: item.regionKind, description: item.regionDescription, itemType, items: [] });
     const group = grouped.get(item.regionId);
-    group.description = classifyCatalogTaste({ itemType, catalogCategory: item.catalogCategory, regionalTaste: item.regionalTaste }).description;
     group.items.push(item);
   }
   const defined = catalogTasteGroups(itemType);
   const order = new Map(defined.map((group, index) => [group.id, index]));
   const regions = [...grouped.values()]
-    .map((group) => ({ ...summarizeCatalogRegion(group, group.items), items: undefined }))
+    .map((group) => ({
+      ...summarizeCatalogRegion(group, group.items),
+      kind: group.kind,
+      items: undefined,
+    }))
     .sort((left, right) => (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER) || left.name.localeCompare(right.name, 'zh-CN'));
   if (!regionId) {
     const preview = await Promise.all(regions.map(async (region) => {
@@ -2240,7 +2280,8 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
       const items = catalogRegionSort(group.items).slice(0, 3);
       return { ...region, heroDish: (await applyApprovedIntroductions(db, tenantId, 'dish', items))[0] || null, previewItems: await applyApprovedIntroductions(db, tenantId, 'dish', items) };
     }));
-    return { itemType, regions: preview, meta: { source: 'derived', confidence: 'inferred', total: rows.length } };
+    const needsReviewCount = classifiedItems.filter((item) => item.regionConfidence === 'unresolved').length;
+    return { itemType, regions: preview, meta: { source: 'derived', confidence: 'inferred', classification: 'dish_level', total: rows.length, needsReviewCount } };
   }
   const selected = grouped.get(regionId);
   if (!selected) throw Object.assign(new Error('口味分组不存在'), { status: 404, code: 'CATALOG_REGION_NOT_FOUND' });
@@ -2254,7 +2295,7 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
     region: summarizeCatalogRegion(selected, selected.items),
     items,
     page: { page, pageSize, total: sorted.length, hasMore: offset + items.length < sorted.length },
-    meta: { source: 'derived', confidence: 'inferred', total: rows.length },
+    meta: { source: 'derived', confidence: 'inferred', classification: 'dish_level', total: rows.length },
   };
 }
 

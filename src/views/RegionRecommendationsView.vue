@@ -5,6 +5,12 @@
     <p>{{ selectedRegion ? selectedRegion.description : '从校园餐单里找到更合口味的那一片，打开区域就能继续挑菜。' }}</p>
   </section>
 
+  <div v-if="regionsLoading" class="region-status muted">正在逐条分析菜品地域证据…</div>
+  <div v-else-if="regionsError" class="region-status region-status-error">
+    <span>{{ regionsError }}</span>
+    <button class="pill" type="button" @click="refreshRegions">重试</button>
+  </div>
+
   <template v-if="!selectedRegion">
     <section class="region-showcase" aria-labelledby="region-showcase-title">
       <div class="section-title horizontal">
@@ -23,7 +29,7 @@
           :key="region.id"
           class="region-card"
           :class="[`tone-${region.tone}`, `delay-${index + 1}`, { 'is-pressed': pressedRegionId === region.id }]"
-          :to="{ path: '/regions', query: { region: region.id, sort: 'forYou' } }"
+          :to="{ path: '/regions', query: { region: region.id, itemType: selectedItemType, sort: 'forYou' } }"
           @pointerdown="pressRegion(region.id)"
           @pointerup="releaseRegion"
           @pointercancel="releaseRegion"
@@ -105,7 +111,8 @@
               <RouterLink class="region-dish-name" :to="{ path: '/dishes', query: { dish: dish.id } }">{{ dish.name }}</RouterLink>
               <span class="rating">{{ dishRatingText(dish) }}</span>
             </div>
-            <small class="muted">{{ dish.cuisine }} · {{ dish.taste || '口味待核验' }} · {{ dishPriceText(dish) }}</small>
+            <small class="muted">餐型参考：{{ dish.catalogCategory || '待核验' }} · {{ dish.cuisine || '菜系待核验' }} · {{ dishPriceText(dish) }}</small>
+            <small class="muted region-evidence"><strong>地域判定：{{ dishRegionLabel(dish) }}</strong> · {{ regionEvidenceText(dish) }}</small>
             <small class="muted">{{ dishStallLabel(dish) }}</small>
             <div class="region-dish-meta">
               <span class="pill">热度 {{ formatSales(dish.sales) }}</span>
@@ -151,15 +158,27 @@ const selectedRegionId = computed(() => String(route.query.region || ''));
 const selectedRegion = computed(() => regionSummaries.value.find((region) => region.id === selectedRegionId.value) || null);
 const selectedSort = computed(() => sortValues.has(route.query.sort) ? route.query.sort : 'forYou');
 const selectedDishGroups = computed(() => {
-  const groups = new Map();
-  for (const dish of selectedDishes.value) {
-    const id = String(dish.catalogCategory || '其他');
-    if (!groups.has(id)) groups.set(id, { id, label: id, description: '数据库中的原始分类', items: [] });
-    groups.get(id).items.push(dish);
-  }
-  return [...groups.values()];
+  if (!selectedDishes.value.length) return [];
+  const region = selectedRegion.value;
+  return [{
+    id: region?.id || 'selected-region',
+    label: region?.name || selectedDishes.value[0].regionLabel || '地域风味',
+    description: '每条菜品按菜名、菜系、标签、档口和来源逐条分析；餐型仅作辅助信息。',
+    items: selectedDishes.value,
+  }];
 });
 const todayMenuMap = computed(() => new Map(store.todayMenu.dishes.map((dish) => [dish.id, dish])));
+const REGION_EVIDENCE_FIELDS = {
+  regionalTaste: '地域标签',
+  name: '菜名',
+  cuisine: '菜系字段',
+  semanticLabels: '语义标签',
+  tags: '标签',
+  stallName: '档口名称',
+  canteenName: '食堂名称',
+  ingredients: '食材',
+  sourceRef: '来源文本',
+};
 
 function decorateRegion(region, index) {
   const icons = { meal: '🍱', snack: '🥟', beverage: '🥤' };
@@ -203,6 +222,19 @@ function dishStallLabel(dish) {
   return canteen ? `${stall.name} · ${canteen.name}` : stall.name;
 }
 
+function dishRegionLabel(dish) {
+  return dish.regionLabel || selectedRegion.value?.name || '其他地域风味（待核验）';
+}
+
+function regionEvidenceText(dish) {
+  const evidence = Array.isArray(dish.regionEvidence) ? dish.regionEvidence : [];
+  if (!evidence.length) return '暂无明确地域证据，待人工核验';
+  return evidence.map((item) => {
+    const field = REGION_EVIDENCE_FIELDS[item.field] || item.field || '字段';
+    return `${field}“${item.value}”匹配“${item.cue}”`;
+  }).join('；');
+}
+
 function supplyState(dish) {
   const menuDish = todayMenuMap.value.get(dish.id);
   return dishSupplyPresentation(dish, menuDish || null);
@@ -239,6 +271,9 @@ onMounted(refreshRegions);
 
 <style scoped>
 .region-page-heading { margin-bottom: 1.25rem; }
+.region-status { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin: 0 0 1rem; padding: .75rem 1rem; border: 1px solid rgba(31,122,77,.14); border-radius: .75rem; background: rgba(255,255,255,.58); }
+.region-status-error { color: #9a3d2f; border-color: rgba(154,61,47,.18); background: rgba(255,247,244,.8); }
+.region-status-error .pill { flex: 0 0 auto; min-height: 2.25rem; cursor: pointer; }
 .region-showcase, .region-menu { display: grid; gap: 1.125rem; }
 .region-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.125rem; }
 .region-card { position: relative; display: grid; overflow: hidden; min-width: 0; border: 1px solid rgba(255,255,255,.72); border-radius: 1.5rem; background: linear-gradient(145deg, rgba(255,255,255,.86), rgba(244,250,239,.7)); color: inherit; text-decoration: none; box-shadow: var(--shadow-soft); cursor: pointer; user-select: none; animation: region-float 7s ease-in-out infinite; transition: transform .24s var(--ease), box-shadow .24s var(--ease), border-color .24s var(--ease); }
@@ -291,6 +326,8 @@ onMounted(refreshRegions);
 .region-dish-name:hover { color: var(--primary); }
 .region-dish-title .rating { flex-shrink: 0; margin-left: auto; }
 .region-dish-content small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.region-evidence { display: block; max-width: 100%; color: var(--primary-dark); line-height: 1.5; white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+.region-evidence strong { font-weight: 760; }
 .region-dish-meta { display: flex; flex-wrap: wrap; gap: .375rem; margin-top: .25rem; }
 .region-dish-meta .pill { padding: .25rem .45rem; font-size: .6875rem; }
 .region-dish-footer { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .25rem; }

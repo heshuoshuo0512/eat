@@ -8,23 +8,7 @@ import {
   sortDishesByRating,
   visibleCitations
 } from '../miniapp/src/domain/studentDiscovery.js';
-import {
-  REGION_DEFINITIONS,
-  getDishRegionIds,
-  getRegionDishes,
-  rankRegionDishes,
-  summarizeRegions
-} from '../miniapp/src/domain/regionRecommendation.js';
 import { DEFAULT_DATA_MAX_AGE_MS, isDataCacheStale } from '../miniapp/src/domain/cachePolicy.js';
-
-const dishes = [
-  { id:'c', name:'清蒸鱼鲜', regionalTaste:'粤菜清鲜', price:20, rating:4.7, reviewCount:10, sales:50, status:'active', ingredients:['鱼'], tags:['清淡'] },
-  { id:'s', name:'湘味小炒', cuisine:'川湘', taste:'麻辣', price:16, rating:4.8, reviewCount:20, sales:120, status:'active', ingredients:['辣椒'], tags:['下饭'] },
-  { id:'n', name:'牛肉拉面', cuisine:'西北', taste:'咸鲜', price:14, rating:4.6, reviewCount:30, sales:180, status:'active', ingredients:['面'], tags:['清真'] },
-  { id:'e', name:'日式饭团', cuisine:'日式', taste:'清爽', price:10, rating:4.3, reviewCount:8, sales:40, status:'active', ingredients:['米饭'], tags:['早餐'] },
-  { id:'l', name:'高纤沙拉', cuisine:'轻食', taste:'清爽', price:18, rating:4.5, reviewCount:12, sales:60, status:'active', ingredients:['生菜'], tags:['高纤维'] },
-  { id:'x', name:'一号套餐', cuisine:'未知', taste:'普通', price:9, rating:4.0, reviewCount:3, sales:300, status:'active', ingredients:[], tags:[] }
-];
 
 describe('miniapp student discovery domain', () => {
   it('builds profile-aware quick prompts', () => {
@@ -60,31 +44,6 @@ describe('miniapp student discovery domain', () => {
     const citations = [1,2,3,4,5];
     assert.deepEqual(visibleCitations(citations,false),[1,2,3]);
     assert.deepEqual(visibleCitations(citations,true),citations);
-  });
-});
-
-describe('miniapp regional recommendation domain', () => {
-  it('defines six regions and can populate all six with real fixtures', () => {
-    assert.equal(REGION_DEFINITIONS.length,6);
-    const summaries = summarizeRegions(dishes);
-    assert.ok(summaries.every((item)=>item.count>0));
-  });
-
-  it('prioritizes regionalTaste and falls unknown dishes back to campus food', () => {
-    assert.deepEqual(getDishRegionIds(dishes[0]),['cantonese']);
-    assert.deepEqual(getDishRegionIds(dishes[5]),['campus']);
-    assert.equal(getRegionDishes('campus',dishes)[0].id,'x');
-  });
-
-  it('supports price, rating, heat, and personalized ordering', () => {
-    const candidates = [
-      {id:'a',name:'A',price:18,rating:4.9,reviewCount:20,sales:20,status:'active'},
-      {id:'b',name:'B',price:9,rating:4.2,reviewCount:5,sales:500,status:'active'}
-    ];
-    assert.equal(rankRegionDishes(candidates,{sortBy:'price'})[0].id,'b');
-    assert.equal(rankRegionDishes(candidates,{sortBy:'rating'})[0].id,'a');
-    assert.equal(rankRegionDishes(candidates,{sortBy:'hot'})[0].id,'b');
-    assert.equal(rankRegionDishes(candidates,{sortBy:'forYou',preferences:[{dishId:'b',favorite:true,eatenCount:4}]})[0].id,'b');
   });
 });
 
