@@ -650,6 +650,9 @@ function pilotRuntimeConfig(env = process.env) {
     ...defaultDisabled,
     ...String(env.PILOT_DISABLED_FEATURES || '').split(',').map((value) => value.trim()).filter(Boolean)
   ]);
+  for (const feature of String(env.PILOT_ENABLED_FEATURES || '').split(',').map((value) => value.trim()).filter(Boolean)) {
+    disabled.delete(feature);
+  }
   const allowedPhoneHashes = new Set(
     String(env.PILOT_ALLOWED_PHONE_HASHES || '').split(',').map((value) => value.trim()).filter(Boolean)
   );

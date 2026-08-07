@@ -11,6 +11,7 @@ const ENV_KEYS = [
   'SMS_PROVIDER',
   'PILOT_MODE',
   'PILOT_DISABLED_FEATURES',
+  'PILOT_ENABLED_FEATURES',
   'PILOT_ALLOWED_PHONE_HASHES'
 ];
 
@@ -60,6 +61,7 @@ describe('closed pilot and self-service account controls', { concurrency: false 
     process.env.SMS_PROVIDER = 'disabled';
     process.env.PILOT_MODE = 'open';
     process.env.PILOT_DISABLED_FEATURES = '';
+    process.env.PILOT_ENABLED_FEATURES = '';
     db = openDatabase(':memory:');
     server = createServer(createApp({ db }).handler);
     server.listen(0);
@@ -99,6 +101,15 @@ describe('closed pilot and self-service account controls', { concurrency: false 
     });
     assert.equal(post.status, 403);
     assert.equal(post.data.code, 'PILOT_FEATURE_DISABLED');
+    process.env.PILOT_ENABLED_FEATURES = 'community_write';
+    const enabledPost = await request('/api/posts', {
+      method: 'POST',
+      token: existing.data.accessToken,
+      body: {}
+    });
+    assert.notEqual(enabledPost.data.code, 'PILOT_FEATURE_DISABLED');
+    assert.notEqual(enabledPost.status, 403);
+    process.env.PILOT_ENABLED_FEATURES = '';
     process.env.PILOT_MODE = 'open';
   });
 
