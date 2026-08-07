@@ -41,7 +41,7 @@ import { enqueueOutboxEvent, outboxBacklog } from './outbox.js';
 import { createRuntimeMetrics } from './metrics.js';
 import { normalizeDishPricing, PRICING_MODES } from './dishPricing.js';
 import { CATALOG_CATEGORY_ORDER, RETIRED_MEAL_CATEGORIES, classifyCatalogItem } from './catalogClassification.js';
-import { PUBLIC_CATALOG_ITEM_TYPES, catalogTasteGroups, classifyCatalogTaste } from './catalogTasteGroups.js';
+import { MIN_CATALOG_REGION_ITEMS, PUBLIC_CATALOG_ITEM_TYPES, catalogTasteGroups, classifyCatalogTaste } from './catalogTasteGroups.js';
 import {
   RETRIEVAL_INDEX_VERSION,
   getRetrievalIndexStatus,
@@ -2265,9 +2265,11 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
     const group = grouped.get(item.regionId);
     group.items.push(item);
   }
+  const hiddenSmallGroups = [...grouped.values()].filter((group) => group.items.length < MIN_CATALOG_REGION_ITEMS);
+  const visibleGrouped = new Map([...grouped.entries()].filter(([, group]) => group.items.length >= MIN_CATALOG_REGION_ITEMS));
   const defined = catalogTasteGroups(itemType);
   const order = new Map(defined.map((group, index) => [group.id, index]));
-  const regions = [...grouped.values()]
+  const regions = [...visibleGrouped.values()]
     .map((group) => ({
       ...summarizeCatalogRegion(group, group.items),
       kind: group.kind,
@@ -2276,14 +2278,27 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
     .sort((left, right) => (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER) || left.name.localeCompare(right.name, 'zh-CN'));
   if (!regionId) {
     const preview = await Promise.all(regions.map(async (region) => {
-      const group = grouped.get(region.id);
+      const group = visibleGrouped.get(region.id);
       const items = catalogRegionSort(group.items).slice(0, 3);
       return { ...region, heroDish: (await applyApprovedIntroductions(db, tenantId, 'dish', items))[0] || null, previewItems: await applyApprovedIntroductions(db, tenantId, 'dish', items) };
     }));
     const needsReviewCount = classifiedItems.filter((item) => item.regionConfidence === 'unresolved').length;
-    return { itemType, regions: preview, meta: { source: 'derived', confidence: 'inferred', classification: 'dish_level', total: rows.length, needsReviewCount } };
+    return {
+      itemType,
+      regions: preview,
+      meta: {
+        source: 'derived',
+        confidence: 'inferred',
+        classification: 'dish_level',
+        total: rows.length,
+        needsReviewCount,
+        minRegionItems: MIN_CATALOG_REGION_ITEMS,
+        hiddenSmallGroupCount: hiddenSmallGroups.length,
+        hiddenSmallItemCount: hiddenSmallGroups.reduce((sum, group) => sum + group.items.length, 0),
+      },
+    };
   }
-  const selected = grouped.get(regionId);
+  const selected = visibleGrouped.get(regionId);
   if (!selected) throw Object.assign(new Error('口味分组不存在'), { status: 404, code: 'CATALOG_REGION_NOT_FOUND' });
   const page = positivePage(params.get('page'), 1);
   const pageSize = positivePage(params.get('pageSize'), 20, 50);
@@ -2295,7 +2310,15 @@ async function listCatalogRegions(db, tenantId, params, regionId = '') {
     region: summarizeCatalogRegion(selected, selected.items),
     items,
     page: { page, pageSize, total: sorted.length, hasMore: offset + items.length < sorted.length },
-    meta: { source: 'derived', confidence: 'inferred', classification: 'dish_level', total: rows.length },
+    meta: {
+      source: 'derived',
+      confidence: 'inferred',
+      classification: 'dish_level',
+      total: rows.length,
+      minRegionItems: MIN_CATALOG_REGION_ITEMS,
+      hiddenSmallGroupCount: hiddenSmallGroups.length,
+      hiddenSmallItemCount: hiddenSmallGroups.reduce((sum, group) => sum + group.items.length, 0),
+    },
   };
 }
 

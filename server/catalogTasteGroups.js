@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export const PUBLIC_CATALOG_ITEM_TYPES = Object.freeze(['meal', 'snack', 'beverage']);
+export const MIN_CATALOG_REGION_ITEMS = 3;
 
 const UNKNOWN_VALUES = new Set([
   '',

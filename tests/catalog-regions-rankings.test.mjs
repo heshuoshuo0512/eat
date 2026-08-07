@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { openDatabase } from '../server/database.js';
-import { catalogTasteGroups, classifyCatalogTaste } from '../server/catalogTasteGroups.js';
+import { MIN_CATALOG_REGION_ITEMS, catalogTasteGroups, classifyCatalogTaste } from '../server/catalogTasteGroups.js';
 
 let db;
 let server;
@@ -87,5 +87,13 @@ describe('real catalog regions and rankings', () => {
     assert.ok(Array.isArray(result.data.regions));
     assert.equal(result.data.meta.source, 'derived');
     assert.equal(result.data.meta.confidence, 'inferred');
+    assert.equal(result.data.meta.minRegionItems, MIN_CATALOG_REGION_ITEMS);
+    assert.ok(result.data.meta.hiddenSmallGroupCount >= 0);
+    assert.ok(result.data.meta.hiddenSmallItemCount >= 0);
+    assert.ok(result.data.regions.every((region) => region.count >= MIN_CATALOG_REGION_ITEMS));
+    assert.equal(
+      result.data.regions.reduce((sum, region) => sum + region.count, 0) + result.data.meta.hiddenSmallItemCount,
+      result.data.meta.total,
+    );
   });
 });
