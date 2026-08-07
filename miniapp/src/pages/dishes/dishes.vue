@@ -20,6 +20,8 @@
           <text v-if="message" class="page-message" :class="{ error:isError }">{{ message }}</text>
         </view>
         <view id="dish-results-top" class="result-column">
+          <view v-if="listLoading && !visibleDishes.length" class="dish-skeleton-list" role="status" aria-live="polite"><view v-for="index in 6" :key="`dish-skeleton-${index}`" class="dish-skeleton-card"><view class="skeleton-block skeleton-thumb"></view><view class="skeleton-lines"><text></text><text></text><text></text></view></view></view>
+          <view v-if="listLoading && visibleDishes.length" class="dish-loading-mask" role="status" aria-live="polite"><view class="loading-spinner"></view><text>{{ loadingPageLabel }}</text></view>
           <sc-segmented-control v-if="!searchResult" :model-value="catalogItemType" :options="catalogItemTypeOptions" block density="compact" class="catalog-type-control" @update:model-value="selectCatalogItemType" />
           <scroll-view v-if="!searchResult" class="catalog-category-track" scroll-x enable-flex show-scrollbar="false"><view class="catalog-category-row"><button v-for="option in catalogCategoryOptions" :key="option.value||'all'" :class="{ active:catalogCategory===option.value }" :disabled="catalogLoadingMore" @tap="selectCatalogCategory(option.value)"><text>{{ option.label }}</text><text v-if="option.count!=null" class="category-count">{{ option.count }}</text></button></view></scroll-view>
           <view class="result-head"><view><text class="result-eyebrow">{{ searchResult ? '检索结果' : catalogItemTypeTitle }}</text><text class="result-title">{{ resultCountLabel }}</text></view><sc-segmented-control v-model="sortDirection" :options="sortOptions" density="compact" /></view>
@@ -83,6 +85,8 @@ const ratingMap=computed(()=>createRatingMap(store.rankings.value.dishes));
 const sourceDishes=computed(()=>searchResult.value?.items || store.dishes.value.filter((dish)=>dish.status!=='archived'&&dish.status!=='inactive'));
 const sortedDishes=computed(()=>sortDishesByRating(sourceDishes.value,ratingMap.value,sortDirection.value));
 const visibleDishes=computed(()=>sortedDishes.value);
+const listLoading=computed(()=>searchResult.value ? searchLoadingMore.value : catalogLoadingMore.value || searching.value || (store.loading.value&&!store.loaded.value));
+const loadingPageLabel=computed(()=>`正在加载第 ${searchResult.value ? searchPage.value : catalogPage.value} 页`);
 const searchTotal=computed(()=>Number(searchResult.value?.page?.total??searchResult.value?.availability?.totalCount??searchResult.value?.items?.length??0));
 const searchPage=computed(()=>Number(searchResult.value?.page?.page||1));
 const searchPageCount=computed(()=>Math.max(1,Math.ceil(searchTotal.value/Number(searchResult.value?.page?.pageSize||searchPageSize))));
@@ -102,7 +106,7 @@ watch(sortDirection, async () => {
   catalogLoadingMore.value = true;
   message.value = '';
   isError.value = false;
-  try { await store.loadCatalogDishes({ page: 1, pageSize: catalogPageSize, ...catalogBrowseFilters() }); }
+  try { const result = await store.loadCatalogDishes({ page: 1, pageSize: catalogPageSize, ...catalogBrowseFilters() }); preloadCatalogNext(result); }
   catch (error) { message.value = error.message || '菜品排序加载失败，请重试。'; isError.value = true; }
   finally { catalogLoadingMore.value = false; }
 });
@@ -150,6 +154,14 @@ function openCitation(source){const id=source.sourceId||source.dishId||source.id
 function isOrderAction(action){return String(action.type||'').includes('order')||String(action.actionType||'').includes('order');}
 async function confirmAction(action){try{await store.confirmAgentAction(action.id);pendingActions.value=pendingActions.value.filter((item)=>item.id!==action.id);recommendMessage.value='操作已确认。';recommendError.value=false;}catch(error){recommendMessage.value=error.message;recommendError.value=true;}}
 async function rejectAction(action){try{await store.rejectAgentAction(action.id);pendingActions.value=pendingActions.value.filter((item)=>item.id!==action.id);recommendMessage.value='操作已拒绝。';recommendError.value=false;}catch(error){recommendMessage.value=error.message;recommendError.value=true;}}
+function preloadCatalogNext(result){const page=result?.page||result||store.catalogPage.value;const nextPage=Number(page?.page||1)+1;const pageCount=Math.ceil(Number(page?.total||0)/Number(page?.pageSize||catalogPageSize));if(!page?.hasMore||nextPage>pageCount)return;void store.prefetchCatalogDishes({page:nextPage,pageSize:catalogPageSize,...catalogBrowseFilters()}).catch(()=>{});}
+function preloadSearchNext(result){const page=result?.page;const nextPage=Number(page?.page||1)+1;const pageCount=Math.ceil(Number(page?.total||0)/Number(page?.pageSize||searchPageSize));if(!page?.hasMore||nextPage>pageCount)return;void store.prefetchSearchDishes(searchPayload(nextPage)).catch(()=>{});}
+watch(() => [store.catalogPage.value.page, store.catalogPage.value.total, catalogItemType.value, catalogCategory.value, sortDirection.value], () => {
+  if (!searchResult.value && store.catalogPage.value.page) preloadCatalogNext(store.catalogPage.value);
+});
+watch(() => [searchResult.value?.page?.page, searchResult.value?.page?.total, query.value, catalogItemType.value, catalogCategory.value, sortDirection.value], () => {
+  if (searchResult.value) preloadSearchNext(searchResult.value);
+});
 </script>
 
 <style scoped>
@@ -184,6 +196,16 @@ async function rejectAction(action){try{await store.rejectAgentAction(action.id)
 .result-eyebrow { color:var(--muted); font-size:12px; font-weight:600; }
 .result-title { margin-top:3px; color:var(--ink); font-size:16px; font-weight:600; }
 .dish-list,.recommend-list { display:flex; flex-direction:column; gap:0; margin-bottom:16px; padding:0 12px; border-radius:var(--radius-large); background:var(--surface); }
+.dish-skeleton-list { display:flex; flex-direction:column; gap:10px; margin-bottom:16px; padding:12px; border-radius:var(--radius-large); background:var(--surface); }
+.dish-skeleton-card { display:flex; min-height:82px; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); }
+.skeleton-block,.skeleton-lines text { display:block; background:#edf2ee; animation:dish-skeleton-in 180ms ease-out both; }
+.skeleton-thumb { width:52px; height:52px; flex:0 0 auto; border-radius:12px; }
+.skeleton-lines { display:flex; flex:1; flex-direction:column; gap:8px; }
+.skeleton-lines text { width:72%; height:9px; border-radius:5px; }.skeleton-lines text:nth-child(2){width:48%;}.skeleton-lines text:nth-child(3){width:62%;}
+.dish-loading-mask { display:flex; min-height:70px; align-items:center; justify-content:center; gap:8px; margin-bottom:12px; border-radius:var(--radius-large); color:var(--discover); background:rgba(255,255,255,.86); font-size:12px; font-weight:600; }
+.loading-spinner { width:18px; height:18px; border:2px solid rgba(31,122,77,.2); border-top-color:var(--discover); border-radius:50%; animation:dish-loading-in 180ms ease-out both; }
+@keyframes dish-skeleton-in { from { opacity:.55; } to { opacity:1; } }
+@keyframes dish-loading-in { from { opacity:.55; transform:scale(.88); } to { opacity:1; transform:none; } }
 .dish-list :deep(.dish-card),.recommend-list :deep(.dish-card) { animation:dish-enter var(--motion-base) var(--ease-standard) both; }
 .dish-list :deep(.dish-card:nth-child(2)),.recommend-list :deep(.dish-card:nth-child(2)) { animation-delay:35ms; }.dish-list :deep(.dish-card:nth-child(3)),.recommend-list :deep(.dish-card:nth-child(3)) { animation-delay:70ms; }.dish-list :deep(.dish-card:nth-child(4)),.recommend-list :deep(.dish-card:nth-child(4)) { animation-delay:105ms; }.dish-list :deep(.dish-card:nth-child(5)),.recommend-list :deep(.dish-card:nth-child(5)) { animation-delay:140ms; }.dish-list :deep(.dish-card:nth-child(6)),.recommend-list :deep(.dish-card:nth-child(6)) { animation-delay:175ms; }.dish-list :deep(.dish-card:nth-child(7)),.recommend-list :deep(.dish-card:nth-child(7)) { animation-delay:210ms; }.dish-list :deep(.dish-card:nth-child(8)),.recommend-list :deep(.dish-card:nth-child(8)) { animation-delay:245ms; }
 .recommend-list { gap:10px; padding:14px 12px; }

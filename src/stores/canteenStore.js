@@ -128,6 +128,11 @@ export const useCanteenStore = defineStore('canteen', () => {
   const dishSearchResult = ref(emptyDishSearchResult());
   const dishSearchLoading = ref(false);
   let dishSearchRequestId = 0;
+  const catalogPageCache = new Map();
+  const catalogPageInflight = new Map();
+  const searchPageCache = new Map();
+  const searchPageInflight = new Map();
+  const PAGE_CACHE_LIMIT = 24;
   const recommendationLoading = ref(false);
   const contextualRecommendation = ref(emptyContextualRecommendation());
   const healthPlan = ref(null);
@@ -142,6 +147,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   async function load() {
     loading.value = true;
     error.value = '';
+    clearPageCaches();
     try {
       const bootstrap = await apiClient.bootstrap();
       const [venuesResult, firstStalls, dishesResult, dishRanks, stallRanks, venueRanks] = await Promise.all([
@@ -187,6 +193,59 @@ export const useCanteenStore = defineStore('canteen', () => {
   const rankings = computed(() => remoteRankings.value);
   const recommendation = computed(() => buildMealPlan(todayMenu.value.dishes.length ? todayMenu.value.dishes : state.value.dishes, state.value.profile));
 
+  function stablePageKey(value) {
+    if (Array.isArray(value)) return value.map(stablePageKey);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stablePageKey(value[key])]));
+    }
+    return value == null ? null : value;
+  }
+
+  function requestKey(value) {
+    return JSON.stringify(stablePageKey(value));
+  }
+
+  function rememberPage(cache, key, result) {
+    if (cache.has(key)) cache.delete(key);
+    cache.set(key, result);
+    while (cache.size > PAGE_CACHE_LIMIT) cache.delete(cache.keys().next().value);
+    return result;
+  }
+
+  function clearPageCaches() {
+    catalogPageCache.clear();
+    catalogPageInflight.clear();
+    searchPageCache.clear();
+    searchPageInflight.clear();
+  }
+
+  async function fetchCatalogPage(payload, { force = false } = {}) {
+    const key = requestKey(payload);
+    if (!force && catalogPageCache.has(key)) return catalogPageCache.get(key);
+    if (!force && catalogPageInflight.has(key)) return catalogPageInflight.get(key);
+    const pending = apiClient.dishesSearch(payload).then((result) => rememberPage(catalogPageCache, key, result));
+    catalogPageInflight.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      if (catalogPageInflight.get(key) === pending) catalogPageInflight.delete(key);
+    }
+  }
+
+  async function fetchSearchPage(payload, { force = false, request = null } = {}) {
+    const key = requestKey(payload);
+    if (!force && searchPageCache.has(key)) return searchPageCache.get(key);
+    if (!force && searchPageInflight.has(key)) return searchPageInflight.get(key);
+    const pending = (request ? request() : apiClient.dishesSearch(payload))
+      .then((result) => rememberPage(searchPageCache, key, result));
+    searchPageInflight.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      if (searchPageInflight.get(key) === pending) searchPageInflight.delete(key);
+    }
+  }
+
   async function loadRecommendation() {
     recommendationLoading.value = true;
     try {
@@ -221,7 +280,9 @@ export const useCanteenStore = defineStore('canteen', () => {
     const previous = append ? dishSearchResult.value : emptyDishSearchResult();
     if (!append) dishSearchResult.value = { ...previous, query: String(payload?.query || '').trim() };
     try {
-      const result = await apiClient.dishesSearch(payload);
+      const result = await fetchSearchPage(payload, {
+        request: () => apiClient.dishesSearch(payload)
+      });
       if (requestId !== dishSearchRequestId) return result;
       const entities = new Map((append ? previous.items : []).map((item) => [String(item.id), item]));
       for (const item of result.items || []) entities.set(String(item.id), item);
@@ -247,12 +308,20 @@ export const useCanteenStore = defineStore('canteen', () => {
     }
   }
 
-  async function loadCatalogDishes({ page = 1, pageSize = 20, ...filters } = {}) {
-    const result = await apiClient.dishesSearch({ page, pageSize, ...filters });
+  async function loadCatalogDishes({ page = 1, pageSize = 20, force = false, ...filters } = {}) {
+    const result = await fetchCatalogPage({ page, pageSize, ...filters }, { force });
     // Pagination owns the visible catalog page; do not retain previous pages.
     mergeDishes(result.items || [], { replace: true });
     catalogPage.value = result.page || { page, pageSize, total: state.value.dishes.length, hasMore: false };
     return result;
+  }
+
+  async function prefetchCatalogDishes({ page = 1, pageSize = 20, ...filters } = {}) {
+    return fetchCatalogPage({ page, pageSize, ...filters });
+  }
+
+  async function prefetchSearchDishes(payload) {
+    return fetchSearchPage(payload);
   }
 
   async function loadCatalogCategories(itemType = 'meal', { force = false } = {}) {
@@ -1093,6 +1162,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadRetrievalIndexStatus,
     rebuildRetrievalIndex,
     searchDishes,
+    prefetchSearchDishes,
     catalogCategories,
     catalogRegions,
     catalogRegionDetails,
@@ -1100,6 +1170,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     adminCatalogOverview,
     loadCatalogCategories,
     loadCatalogDishes,
+    prefetchCatalogDishes,
     loadMoreCatalog,
     fetchDishDetail,
     loadSavedCatalog,

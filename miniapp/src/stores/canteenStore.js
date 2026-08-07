@@ -45,12 +45,18 @@ const runtimeUni = typeof uni !== 'undefined' ? uni : globalThis?.uni;
 const motionReduced = ref(runtimeUni?.getStorageSync?.(MOTION_KEY) === '1');
 const searchFilters = reactive({ keyword: '', maxPrice: 999, taste: '不限', halalOnly: false });
 let loadPromise = null;
+const catalogPageCache = new Map();
+const catalogPageInflight = new Map();
+const searchPageCache = new Map();
+const searchPageInflight = new Map();
+const PAGE_CACHE_LIMIT = 24;
 
 function applyCatalogRevision(revision) {
   const next = String(revision || '');
   if (!next) return;
   const previous = String(runtimeUni?.getStorageSync?.(CATALOG_REVISION_KEY) || '');
   if (previous && previous !== next) {
+    clearPageCaches();
     catalogCategories.value = { meal: [], snack: [], beverage: [] };
     catalogRegions.value = { all: [], meal: [], snack: [], beverage: [] };
     catalogRegionDetails.value = {};
@@ -80,6 +86,58 @@ function mergeDishes(items = [], { replace = false } = {}) {
   const entities = new Map((replace ? [] : state.value.dishes).map((dish) => [String(dish.id), dish]));
   for (const dish of items) entities.set(String(dish.id), { ...(entities.get(String(dish.id)) || {}), ...dish });
   state.value.dishes = [...entities.values()];
+}
+
+function stablePageKey(value) {
+  if (Array.isArray(value)) return value.map(stablePageKey);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stablePageKey(value[key])]));
+  }
+  return value == null ? null : value;
+}
+
+function requestKey(value) {
+  return JSON.stringify(stablePageKey(value));
+}
+
+function rememberPage(cache, key, result) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, result);
+  while (cache.size > PAGE_CACHE_LIMIT) cache.delete(cache.keys().next().value);
+  return result;
+}
+
+function clearPageCaches() {
+  catalogPageCache.clear();
+  catalogPageInflight.clear();
+  searchPageCache.clear();
+  searchPageInflight.clear();
+}
+
+async function fetchCatalogPage(payload, { force = false } = {}) {
+  const key = requestKey(payload);
+  if (!force && catalogPageCache.has(key)) return catalogPageCache.get(key);
+  if (!force && catalogPageInflight.has(key)) return catalogPageInflight.get(key);
+  const pending = apiClient.searchDishes(payload).then((result) => rememberPage(catalogPageCache, key, result));
+  catalogPageInflight.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (catalogPageInflight.get(key) === pending) catalogPageInflight.delete(key);
+  }
+}
+
+async function fetchSearchPage(payload, { force = false } = {}) {
+  const key = requestKey(payload);
+  if (!force && searchPageCache.has(key)) return searchPageCache.get(key);
+  if (!force && searchPageInflight.has(key)) return searchPageInflight.get(key);
+  const pending = apiClient.searchDishes(payload).then((result) => rememberPage(searchPageCache, key, result));
+  searchPageInflight.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (searchPageInflight.get(key) === pending) searchPageInflight.delete(key);
+  }
 }
 
 async function hydrateExtras() {
@@ -217,6 +275,7 @@ async function wechatLogin({ phoneCode = '', agreementVersion = '2026-07', profi
 
 function logout() {
   apiClient.logout();
+  clearPageCaches();
   setState();
   todayMenu.value = emptyMenu();
   remoteRankings.value = { dishes: [], stalls: [], canteens: [] };
@@ -295,16 +354,24 @@ async function requestRecommendation(payload) {
   }
 }
 
-async function searchDishes(payload) {
-  return apiClient.searchDishes(payload);
+async function searchDishes(payload, { force = false } = {}) {
+  return fetchSearchPage(payload, { force });
 }
 
-async function loadCatalogDishes({ page = 1, pageSize = 20, ...filters } = {}) {
-  const result = await apiClient.searchDishes({ page, pageSize, ...filters });
+async function loadCatalogDishes({ page = 1, pageSize = 20, force = false, ...filters } = {}) {
+  const result = await fetchCatalogPage({ page, pageSize, ...filters }, { force });
   // Pagination owns the visible catalog page; do not retain previous pages.
   mergeDishes(result.items || [], { replace: true });
   catalogPage.value = result.page || { page, pageSize, total: state.value.dishes.length, hasMore: false };
   return result;
+}
+
+async function prefetchCatalogDishes({ page = 1, pageSize = 20, ...filters } = {}) {
+  return fetchCatalogPage({ page, pageSize, ...filters });
+}
+
+async function prefetchSearchDishes(payload) {
+  return fetchSearchPage(payload);
 }
 
 async function loadCatalogCategories(itemType = 'meal', { force = false } = {}) {
@@ -416,7 +483,7 @@ export function useCanteenStore() {
     discoveryMode, communitySection, motionReduced, searchFilters, user, canteens, stalls, dishes, profile, dishPreferences,
     rankings, searchedDishes, recommendation,
     load, ensureLoaded, refreshIfStale, login, register, phoneLogin, bindPhone, updatePublicProfile, wechatLogin, logout, getDishDetail, addReview, saveProfile, deferProfileOnboarding,
-    loadTodayMenu, loadMoreTodayMenu, loadCatalogDishes, loadMoreCatalog, loadCatalogCategories, loadSavedCatalog, loadCatalogRanking, loadCatalogRegions, loadCatalogRegionDishes, loadRecommendation, requestRecommendation, searchDishes, toggleFavorite, markDishEaten,
+    loadTodayMenu, loadMoreTodayMenu, loadCatalogDishes, prefetchCatalogDishes, loadMoreCatalog, loadCatalogCategories, loadSavedCatalog, loadCatalogRanking, loadCatalogRegions, loadCatalogRegionDishes, loadRecommendation, requestRecommendation, searchDishes, prefetchSearchDishes, toggleFavorite, markDishEaten,
     markDishDrawn, openDiscoveryMode, openCommunitySection, setMotionReduced,
     fetchDishDetail,
     runAgent: apiClient.runAgent,

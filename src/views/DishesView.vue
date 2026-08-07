@@ -77,6 +77,12 @@
 
   <section class="dish-layout">
     <div class="dish-list">
+      <div v-if="listLoading && !sortedDishes.length" class="dish-skeleton-list" role="status" aria-live="polite" aria-label="loading dishes">
+        <div v-for="index in 6" :key="`dish-skeleton-${index}`" class="dish-skeleton-card">
+          <span class="skeleton-block skeleton-thumb"></span>
+          <span class="skeleton-lines"><i></i><i></i><i></i></span>
+        </div>
+      </div>
       <RouterLink v-for="dish in sortedDishes" :key="dish.id" class="dish-card" :to="{ name: 'dish-detail', params: { id: dish.id } }">
         <img v-if="dish.imageUrl" :src="dish.imageUrl" :alt="dish.name" class="dish-thumb" />
         <span v-else class="emoji large">{{ dish.image }}</span>
@@ -92,6 +98,10 @@
         <span class="rating">{{ dishRatingText(dish) }}</span>
         <ChevronRight :size="18" class="dish-open-icon" aria-hidden="true" />
       </RouterLink>
+      <div v-if="listLoading && sortedDishes.length" class="dish-loading-mask" role="status" aria-live="polite">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <span>{{ loadingPageLabel }}</span>
+      </div>
       <p v-if="!sortedDishes.length" class="muted empty-dishes">暂无有效菜品。</p>
       <nav v-if="searchResultActive && searchPageCount > 1" class="pagination" aria-label="检索结果分页">
         <button type="button" :disabled="ragLoading || searchPage <= 1" @click="changeSearchPage(searchPage - 1)">上一页</button>
@@ -145,6 +155,11 @@ const catalogItemTypes = [
   { value: 'beverage', label: '饮品' },
 ];
 const catalogCategory = ref('');
+const listLoading = computed(() => searchResultActive.value ? ragLoading.value : catalogLoadingMore.value);
+const loadingPageLabel = computed(() => {
+  const page = searchResultActive.value ? Number(ragResult.value?.page?.page || 1) : Number(store.catalogPage.page || 1);
+  return `正在加载第 ${page} 页`;
+});
 const catalogCategoryOptions = computed(() => [
   { value: '', label: '全部', count: store.catalogCategories[catalogItemType.value]?.reduce((sum, item) => sum + Number(item.count || 0), 0) || 0 },
   ...(store.catalogCategories[catalogItemType.value] || []),
@@ -229,7 +244,11 @@ async function changeCatalogPage(page) {
   if (catalogLoadingMore.value || !Number.isInteger(targetPage) || targetPage < 1 || targetPage > catalogPageCount.value || targetPage === catalogPage.value) return;
   catalogLoadingMore.value = true;
   catalogError.value = '';
-  try { await store.loadCatalogDishes({ page: targetPage, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }); await scrollToTop(); }
+  try {
+    const result = await store.loadCatalogDishes({ page: targetPage, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() });
+    await scrollToTop();
+    preloadCatalogNext(result);
+  }
   catch (error) { catalogError.value = error.message || '目录分页加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
@@ -238,7 +257,10 @@ async function reloadCatalogPage() {
   if (catalogLoadingMore.value) return;
   catalogLoadingMore.value = true;
   catalogError.value = '';
-  try { await store.loadCatalogDishes({ page: 1, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }); }
+  try {
+    const result = await store.loadCatalogDishes({ page: 1, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() });
+    preloadCatalogNext(result);
+  }
   catch (error) { catalogError.value = error.message || '菜品加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
@@ -255,6 +277,7 @@ async function selectCatalogItemType(itemType) {
       store.loadCatalogDishes({ page: 1, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }),
     ]);
     await scrollToTop();
+    preloadCatalogNext(store.catalogPage);
   }
   catch (error) { catalogError.value = error.message || '目录分类加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
@@ -269,12 +292,24 @@ function catalogBrowseFilters() {
   };
 }
 
+function preloadCatalogNext(result) {
+  const page = result?.page || result || store.catalogPage;
+  const nextPage = Number(page?.page || 1) + 1;
+  const pageCount = Math.ceil(Number(page?.total || 0) / Number(page?.pageSize || DISH_PAGE_SIZE));
+  if (!page?.hasMore || nextPage > pageCount) return;
+  void store.prefetchCatalogDishes({ page: nextPage, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }).catch(() => {});
+}
+
 async function selectCatalogCategory(value) {
   if (catalogLoadingMore.value || catalogCategory.value === value) return;
   catalogLoadingMore.value = true;
   catalogCategory.value = value;
   catalogError.value = '';
-  try { await store.loadCatalogDishes({ page: 1, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }); await scrollToTop(); }
+  try {
+    const result = await store.loadCatalogDishes({ page: 1, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() });
+    await scrollToTop();
+    preloadCatalogNext(result);
+  }
   catch (error) { catalogError.value = error.message || '菜品分类加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
@@ -325,7 +360,10 @@ async function submitRagQuery() {
   citationsExpanded.value = false;
   try {
     const result = await store.searchDishes(buildSearchPayload(q, 1));
-    if (requestId === searchUiRequestId && result) ragResult.value = result;
+    if (requestId === searchUiRequestId && result) {
+      ragResult.value = result;
+      preloadSearchNext(result);
+    }
   } catch (err) {
     if (requestId !== searchUiRequestId) return;
     store.clearDishSearch();
@@ -359,10 +397,19 @@ async function changeSearchPage(page) {
     ragResult.value = result;
     citationsExpanded.value = false;
     await scrollToTop();
+    preloadSearchNext(result);
   } catch (error) {
     if (requestId !== searchUiRequestId) return;
     ragError.value = error.message || '检索分页加载失败，请重试。';
   }
+}
+
+function preloadSearchNext(result) {
+  const page = result?.page;
+  const nextPage = Number(page?.page || 1) + 1;
+  const pageCount = Math.ceil(Number(page?.total || 0) / Number(page?.pageSize || DISH_PAGE_SIZE));
+  if (!page?.hasMore || nextPage > pageCount) return;
+  void store.prefetchSearchDishes(buildSearchPayload(ragQuery.value.trim(), nextPage)).catch(() => {});
 }
 
 function dishMatchSnippet(dish) {
@@ -533,6 +580,20 @@ onMounted(async () => {
 .dish-thumb { width: 56px; height: 56px; border-radius: 16px; object-fit: cover; flex-shrink: 0; border: 1px solid rgba(255,255,255,.62); }
 .dish-layout { display: block; }
 .dish-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.dish-list { position: relative; }
+.dish-skeleton-list { display: grid; gap: 12px; }
+.dish-skeleton-card { display: flex; min-height: 96px; align-items: center; gap: 12px; padding: 14px; border: 1px solid rgba(31,122,77,.1); border-radius: 12px; background: #fff; }
+.skeleton-block, .skeleton-lines i { display: block; background: #edf2ee; animation: dish-skeleton-in 180ms ease-out both; }
+.skeleton-thumb { width: 56px; height: 56px; border-radius: 12px; flex: 0 0 auto; }
+.skeleton-lines { display: grid; flex: 1; gap: 8px; }
+.skeleton-lines i { width: 72%; height: 10px; border-radius: 5px; }
+.skeleton-lines i:nth-child(2) { width: 48%; }
+.skeleton-lines i:nth-child(3) { width: 62%; }
+.dish-loading-mask { position: absolute; inset: 0; z-index: 2; display: flex; min-height: 96px; align-items: center; justify-content: center; gap: 9px; border-radius: 12px; color: var(--primary-dark, #155f3b); background: rgba(255,255,255,.9); font-size: 13px; font-weight: 600; }
+.loading-spinner { width: 18px; height: 18px; border: 2px solid rgba(31,122,77,.2); border-top-color: var(--primary, #1f7a4d); border-radius: 50%; animation: dish-loading-in 180ms ease-out both; }
+@keyframes dish-skeleton-in { from { opacity: .55; } to { opacity: 1; } }
+@keyframes dish-loading-in { from { opacity: .55; transform: scale(.88); } to { opacity: 1; transform: none; } }
+.dish-list:has(.dish-skeleton-list) .empty-dishes { display: none; }
 .dish-card-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .catalog-item-type { width: fit-content; padding: 2px 7px; color: #176b45; background: #edf8f1; border: 1px solid #cce5d6; font-weight: 700; }
 .dish-card { color: inherit; text-decoration: none; transition: transform .2s ease, border-color .2s ease, background .2s ease; }.dish-card:hover { transform: translateX(3px); }
