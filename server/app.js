@@ -6,7 +6,7 @@ import { assignableRoles, hasPermission, requirePermission } from './rbac.js';
 import { decryptSecret, encryptPhone, encryptSecret, hashPassword, normalizePhone, phoneLookupHash, publicUser, resolveUploadReference, verifyPassword, verifySignedUploadUrl, verifyToken } from './security.js';
 import { deleteStoredUpload, readStoredUpload, storeUpload } from './storage.js';
 import { generateAgentToolCalls, generateDishSearchFilterSupplement, generateGroundedAgentAnswer, getAiProviderStatus, identifyDishFromImage, testAiProviderConnection, withAiRuntimeConfig } from './aiProvider.js';
-import { createCache, rankingCacheKey } from './cache.js';
+import { createCache, dishSearchCacheKey, rankingCacheKey } from './cache.js';
 import { clientIpFromRequest } from './network.js';
 import { handleAuthSessionRoute } from './modules/auth/routes.js';
 import { identityHash, syncLegacyUserIdentities, upsertIdentity } from './modules/auth/identityService.js';
@@ -73,6 +73,7 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 180;
 const LOGIN_FAILURE_LIMIT = 5;
 const LOGIN_LOCK_MS = 15 * 60_000;
+const DISH_SEARCH_CACHE_TTL_MS = Math.max(5_000, Number(process.env.DISH_SEARCH_CACHE_TTL_MS || 60_000));
 
 function loginKey(username, req) {
   const subject = createHash('sha256')
@@ -1285,6 +1286,28 @@ function communityTargetTable(targetType) {
   if (targetType === 'review') return 'reviews';
   if (targetType === 'comment') return 'post_comments';
   throw Object.assign(new Error('不支持的互动对象'), { status: 400 });
+}
+
+async function attachLatestModeration(db, tenantId, targetType, items, { includeAll = false } = {}) {
+  if (!items.length) return items;
+  const visibleItems = includeAll ? items : items.filter((item) => item.isOwn);
+  if (!visibleItems.length) return items;
+  const ids = [...new Set(visibleItems.map((item) => item.id))];
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await db.prepare(`SELECT target_id, outcome, reason_codes_json, rule_version, created_at
+    FROM community_moderation_decisions
+    WHERE tenant_id = ? AND target_type = ? AND target_id IN (${placeholders})
+    ORDER BY created_at DESC, id DESC`).all(tenantId, targetType, ...ids);
+  const latest = new Map();
+  for (const row of rows) {
+    if (latest.has(row.target_id)) continue;
+    latest.set(row.target_id, {
+      status: row.outcome,
+      reasonCodes: parseJsonField(row.reason_codes_json, []),
+      ruleVersion: row.rule_version,
+    });
+  }
+  return items.map((item) => latest.has(item.id) ? { ...item, moderation: latest.get(item.id) } : item);
 }
 
 async function requireCommunityTarget(db, tenantId, targetType, targetId, { approved = false } = {}) {
@@ -4022,6 +4045,7 @@ async function clearAiSettings(db, user = null) {
 }
 export function createApp({ db = openDatabase(), cache = createCache(), metrics = createRuntimeMetrics(), invitationRegistrationMode = process.env.PILOT_REGISTRATION_MODE } = {}) {
   const invitationRegistrationActive = invitationRegistrationEnabled({ PILOT_REGISTRATION_MODE: invitationRegistrationMode });
+  const dishSearchInflight = new Map();
   async function rankings(tenantId = 'default', date = businessDate(), mealType = 'all') {
     const key = rankingCacheKey({ tenantId, date, mealType });
     const cached = await cache.get(key);
@@ -4034,6 +4058,44 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
   async function invalidateRankings(tenantId = db.currentContext?.()?.tenantId || 'default') {
     await cache.del(rankingCacheKey({ tenantId, date: businessDate(), mealType: 'all' }));
   }
+
+  async function searchDishesCached({ tenantId, viewerRole, body, retrievalUser }) {
+    const revision = await catalogRevision(db, tenantId);
+    const key = dishSearchCacheKey({ tenantId, catalogRevision: revision, viewerRole, request: body });
+    const cached = await cache.get(key);
+    if (cached) return { ...cached, meta: { ...(cached.meta || {}), cache: { hit: true, backend: cache.backend || 'unknown' } } };
+    const existing = dishSearchInflight.get(key);
+    if (existing) {
+      const result = await existing;
+      return { ...result, meta: { ...(result.meta || {}), cache: { hit: false, coalesced: true, backend: cache.backend || 'unknown' } } };
+    }
+    const pending = (async () => {
+      const result = await searchCatalogDishes(db, tenantId, body, retrievalUser);
+      await cache.set(key, result, DISH_SEARCH_CACHE_TTL_MS);
+      return result;
+    })();
+    dishSearchInflight.set(key, pending);
+    try {
+      const result = await pending;
+      return { ...result, meta: { ...(result.meta || {}), cache: { hit: false, backend: cache.backend || 'unknown' } } };
+    } finally {
+      if (dishSearchInflight.get(key) === pending) dishSearchInflight.delete(key);
+    }
+  }
+
+  async function prewarmPublicDiscovery() {
+    if (process.env.NODE_ENV !== 'production' || process.env.DISH_SEARCH_PREWARM === '0') return;
+    const tenantId = String(process.env.DEFAULT_TENANT_ID || 'default');
+    await Promise.allSettled([
+      searchDishesCached({ tenantId, viewerRole: 'anonymous', body: { page: 1, pageSize: 20, itemType: 'meal', sort: 'rating_desc' }, retrievalUser: null }),
+      listCatalogCategories(db, tenantId, new URLSearchParams('itemType=meal')),
+      listCatalogRegions(db, tenantId, new URLSearchParams()),
+      listRealCatalogRankings(db, tenantId, new URLSearchParams('type=dishes&itemType=meal&page=1&pageSize=20')),
+    ]);
+  }
+
+  const prewarmTimer = setTimeout(() => { prewarmPublicDiscovery().catch(() => {}); }, 0);
+  prewarmTimer.unref?.();
 
   async function handler(req, res) {
     const requestId = requestIdFrom(req);
@@ -4333,7 +4395,8 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         return send(res, 200, await listCommunityDishOptions(db, tenantIdFor(activeUser), url.searchParams));
       }
       if (method === 'POST' && url.pathname === '/api/dishes/search') {
-        const result = await searchCatalogDishes(db, tenantIdFor(user), await readBody(req), user);
+        const body = await readBody(req);
+        const result = await searchDishesCached({ tenantId: tenantIdFor(user), viewerRole: user?.role || 'anonymous', body, retrievalUser: user });
         return send(res, 200, result);
       }
       if (method === 'GET' && url.pathname === '/api/dishes') return send(res, 200, await executeLegacyDishList(db, user, url.searchParams));
@@ -4682,9 +4745,9 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
         if (targetType && !['dish', 'canteen'].includes(targetType)) throw Object.assign(new Error('targetType 必须是 dish 或 canteen'), { status: 400 });
         if (!['rating_desc', 'rating_asc', 'latest'].includes(sort)) throw Object.assign(new Error('不支持的评价排序方式'), { status: 400 });
-        const enriched = await attachCommunityEngagement(db, tenantId, activeUser.id, 'review', rows.map(rowToReview)
+        const enriched = await attachLatestModeration(db, tenantId, 'review', await attachCommunityEngagement(db, tenantId, activeUser.id, 'review', rows.map(rowToReview)
           .map((review) => enrichReview(review, catalog, activeUser.id))
-          .filter((review) => review.targetType === 'dish' ? Boolean(review.dish) : Boolean(review.canteen)));
+          .filter((review) => review.targetType === 'dish' ? Boolean(review.dish) : Boolean(review.canteen))));
         const filtered = enriched.filter((review) => {
           if (targetType && review.targetType !== targetType) return false;
           if (canteenId && review.canteen?.id !== canteenId) return false;
@@ -4752,9 +4815,9 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
         const q = String(url.searchParams.get('q') || '').trim().slice(0, 80).toLocaleLowerCase();
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 100);
         const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
-        const enriched = await attachCommunityEngagement(db, tenantId, activeUser.id, 'post', rows.map(rowToPost)
+        const enriched = await attachLatestModeration(db, tenantId, 'post', await attachCommunityEngagement(db, tenantId, activeUser.id, 'post', rows.map(rowToPost)
           .map((post) => enrichPost(post, catalog, activeUser.id))
-          .filter((post) => post.targetType === 'dish' ? Boolean(post.dish) : Boolean(post.canteen)));
+          .filter((post) => post.targetType === 'dish' ? Boolean(post.dish) : Boolean(post.canteen))));
         const posts = enriched.filter((post) => {
           if (mine && !post.isOwn) return false;
           if (targetType && post.targetType !== targetType) return false;
@@ -4909,11 +4972,12 @@ export function createApp({ db = openDatabase(), cache = createCache(), metrics 
           WHERE post_comments.tenant_id = ? AND post_comments.post_id = ?
             AND (post_comments.status = 'approved' OR post_comments.user_id = ?)
           ORDER BY post_comments.created_at ASC`).all(tenantId, postId, activeUser.id);
-        return send(res, 200, { comments: comments.map((row) => commentResponse(row, activeUser.id)) });
+        const responseComments = comments.map((row) => commentResponse(row, activeUser.id));
+        return send(res, 200, { comments: await attachLatestModeration(db, tenantId, 'comment', responseComments) });
       }
 
       if (method === 'POST' && pathParts[0] === 'api' && pathParts[1] === 'posts' && pathParts[2] && pathParts[3] === 'comments' && pathParts.length === 4) {
-        const activeUser = await requireUser(db, req);
+        const activeUser = await requirePublicProfile(db, req);
         const tenantId = tenantIdFor(activeUser);
         const postId = decodeURIComponent(pathParts[2]);
         await requireCommunityTarget(db, tenantId, 'post', postId, { approved: true });

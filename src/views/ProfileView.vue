@@ -21,9 +21,11 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { useCanteenStore } from '../stores/canteenStore.js';
 const store = useCanteenStore();
+const route = useRoute();
+const router = useRouter();
 const reducedMotion = ref(localStorage.getItem('sc:web:reduced-motion') === '1');
 const nickname = ref('');
 const avatarReference = ref('');
@@ -36,7 +38,7 @@ const eatenCount = computed(() => Number(store.savedCatalog.eaten.page.total || 
 const profileSummary = computed(() => ['pending', 'deferred'].includes(store.profile?.onboardingStatus) ? '待完善过敏信息与预算' : `预算 ¥${store.profile?.budgetMax || 20} 内`);
 function saveMotion() { localStorage.setItem('sc:web:reduced-motion', reducedMotion.value ? '1' : '0'); document.documentElement.classList.toggle('reduce-motion', reducedMotion.value); }
 async function selectAvatar(event) { const file=event.target.files?.[0]; if(!file)return; profileMessage.value=''; const dataBase64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]||'');reader.onerror=reject;reader.readAsDataURL(file);}); try{const upload=await store.uploadImage({filename:file.name,contentType:file.type,dataBase64});avatarReference.value=upload.reference;}catch(error){profileError.value=true;profileMessage.value=error.message;} }
-async function savePublicProfile(){profileSaving.value=true;profileMessage.value='';profileError.value=false;try{await store.updatePublicProfile({nickname:nickname.value,avatarUrl:avatarReference.value||store.user?.avatarUrl});profileMessage.value='公开资料已保存。';}catch(error){profileError.value=true;profileMessage.value=error.message;}finally{profileSaving.value=false;}}
+async function savePublicProfile(){profileSaving.value=true;profileMessage.value='';profileError.value=false;try{await store.updatePublicProfile({nickname:nickname.value,avatarUrl:avatarReference.value||store.user?.avatarUrl});profileMessage.value='公开资料已保存。';const returnTo=String(route.query.returnTo||'').trim();if(returnTo.startsWith('/')&&returnTo!=='/profile'){await router.replace(returnTo);}}catch(error){profileError.value=true;profileMessage.value=error.message;}finally{profileSaving.value=false;}}
 onMounted(async () => { saveMotion(); nickname.value=store.user?.nickname||''; await Promise.all([store.loadSavedCatalog('favorite'), store.loadSavedCatalog('eaten'), store.loadOrders()]); });
 </script>
 

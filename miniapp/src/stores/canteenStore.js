@@ -29,7 +29,7 @@ const error = ref('');
 const loaded = ref(false);
 const lastLoadedAt = ref(0);
 const todayMenu = ref(emptyMenu());
-const catalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
+const catalogPage = ref({ page: 0, pageSize: 20, total: 0, hasMore: false });
 const catalogCategories = ref({ meal: [], snack: [], beverage: [] });
 const reservationCatalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
 const remoteRankings = ref({ dishes: [], stalls: [], canteens: [] });
@@ -86,7 +86,7 @@ async function hydrateExtras() {
   const results = await Promise.allSettled([
     apiClient.catalogVenues(),
     apiClient.catalogStalls({ page: 1, pageSize: 100 }),
-    apiClient.searchDishes({ page: 1, pageSize: 50, sort: 'rating_desc' }),
+    apiClient.searchDishes({ page: 1, pageSize: 20, sort: 'rating_desc' }),
     apiClient.catalogRankings({ type: 'dishes', page: 1, pageSize: 20 }),
     apiClient.catalogRankings({ type: 'stalls', page: 1, pageSize: 20 }),
     apiClient.catalogRankings({ type: 'venues', page: 1, pageSize: 20 }),
@@ -103,7 +103,7 @@ async function hydrateExtras() {
   if (results[2].status === 'fulfilled') {
     applyCatalogRevision(results[2].value.meta?.catalogRevision);
     state.value.dishes = results[2].value.items || [];
-    catalogPage.value = results[2].value.page || { page: 1, pageSize: 50, total: state.value.dishes.length, hasMore: false };
+    catalogPage.value = results[2].value.page || { page: 1, pageSize: 20, total: state.value.dishes.length, hasMore: false };
   }
   remoteRankings.value = {
     dishes: results[3].status === 'fulfilled' ? results[3].value.items || [] : [],
@@ -299,7 +299,7 @@ async function searchDishes(payload) {
   return apiClient.searchDishes(payload);
 }
 
-async function loadCatalogDishes({ page = 1, pageSize = 50, ...filters } = {}) {
+async function loadCatalogDishes({ page = 1, pageSize = 20, ...filters } = {}) {
   const result = await apiClient.searchDishes({ page, pageSize, ...filters });
   // Pagination owns the visible catalog page; do not retain previous pages.
   mergeDishes(result.items || [], { replace: true });
@@ -317,7 +317,7 @@ async function loadCatalogCategories(itemType = 'meal', { force = false } = {}) 
 
 async function loadMoreCatalog(filters = {}) {
   if (!catalogPage.value.hasMore) return { items: [], page: catalogPage.value };
-  return loadCatalogDishes({ ...filters, page: catalogPage.value.page + 1, pageSize: catalogPage.value.pageSize || 50 });
+  return loadCatalogDishes({ ...filters, page: catalogPage.value.page + 1, pageSize: catalogPage.value.pageSize || 20 });
 }
 
 async function fetchDishDetail(id) {

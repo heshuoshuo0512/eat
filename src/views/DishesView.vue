@@ -120,7 +120,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { ChevronRight } from '@lucide/vue';
 import RagTrustState from '../components/RagTrustState.vue';
@@ -130,6 +130,7 @@ import { buildProfilePrompts, compactCitationSnippet, createRatingMap, sortDishe
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
+const DISH_PAGE_SIZE = 20;
 const route = useRoute();
 const router = useRouter();
 
@@ -169,9 +170,9 @@ const sortedDishes = computed(() => sortDishesByRating(filteredDishes.value, rat
 
 const searchResultActive = computed(() => Boolean(store.dishSearchResult.query));
 const catalogPage = computed(() => Number(store.catalogPage.page || 1));
-const catalogPageCount = computed(() => Math.max(1, Math.ceil(Number(store.catalogPage.total || 0) / Number(store.catalogPage.pageSize || 50))));
+const catalogPageCount = computed(() => Math.max(1, Math.ceil(Number(store.catalogPage.total || 0) / Number(store.catalogPage.pageSize || DISH_PAGE_SIZE))));
 const searchPage = computed(() => Number(ragResult.value?.page?.page || 1));
-const searchPageCount = computed(() => Math.max(1, Math.ceil(Number(ragResult.value?.page?.total || 0) / Number(ragResult.value?.page?.pageSize || 50))));
+const searchPageCount = computed(() => Math.max(1, Math.ceil(Number(ragResult.value?.page?.total || 0) / Number(ragResult.value?.page?.pageSize || DISH_PAGE_SIZE))));
 const searchPaginationItems = computed(() => buildPaginationItems(searchPage.value, searchPageCount.value));
 const catalogPaginationItems = computed(() => buildPaginationItems(catalogPage.value, catalogPageCount.value));
 const resultCountLabel = computed(() => {
@@ -212,8 +213,15 @@ function buildPaginationItems(currentPage, pageCount) {
   return items;
 }
 
-function scrollToTop() {
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+async function scrollToTop() {
+  await nextTick();
+  const shell = document.querySelector('.shell');
+  if (shell && typeof shell.scrollTo === 'function') {
+    shell.scrollTo({ top: 0, behavior: 'auto' });
+    return;
+  }
+  document.querySelector('#main-content')?.scrollIntoView?.({ block: 'start', behavior: 'auto' });
+  window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
 async function changeCatalogPage(page) {
@@ -221,7 +229,7 @@ async function changeCatalogPage(page) {
   if (catalogLoadingMore.value || !Number.isInteger(targetPage) || targetPage < 1 || targetPage > catalogPageCount.value || targetPage === catalogPage.value) return;
   catalogLoadingMore.value = true;
   catalogError.value = '';
-  try { await store.loadCatalogDishes({ page: targetPage, pageSize: 50, ...catalogBrowseFilters() }); scrollToTop(); }
+  try { await store.loadCatalogDishes({ page: targetPage, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }); await scrollToTop(); }
   catch (error) { catalogError.value = error.message || '目录分页加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
@@ -230,7 +238,7 @@ async function reloadCatalogPage() {
   if (catalogLoadingMore.value) return;
   catalogLoadingMore.value = true;
   catalogError.value = '';
-  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }); }
+  try { await store.loadCatalogDishes({ page: 1, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }); }
   catch (error) { catalogError.value = error.message || '菜品加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
@@ -244,8 +252,9 @@ async function selectCatalogItemType(itemType) {
   try {
     await Promise.all([
       store.loadCatalogCategories(itemType),
-      store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }),
+      store.loadCatalogDishes({ page: 1, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }),
     ]);
+    await scrollToTop();
   }
   catch (error) { catalogError.value = error.message || '目录分类加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
@@ -265,7 +274,7 @@ async function selectCatalogCategory(value) {
   catalogLoadingMore.value = true;
   catalogCategory.value = value;
   catalogError.value = '';
-  try { await store.loadCatalogDishes({ page: 1, pageSize: 50, ...catalogBrowseFilters() }); }
+  try { await store.loadCatalogDishes({ page: 1, pageSize: DISH_PAGE_SIZE, ...catalogBrowseFilters() }); await scrollToTop(); }
   catch (error) { catalogError.value = error.message || '菜品分类加载失败，请重试。'; }
   finally { catalogLoadingMore.value = false; }
 }
@@ -289,6 +298,7 @@ const memoryPreferences = ref({});
 const memorySaving = ref(false);
 const memoryOpen = ref(false);
 const citationsExpanded = ref(false);
+let searchUiRequestId = 0;
 const profilePrompts = computed(() => buildProfilePrompts(store.profile, 'search'));
 const visibleSearchCitations = computed(() => visibleCitations(ragResult.value?.items || [], citationsExpanded.value));
 const ragAnswer = computed(() => {
@@ -309,12 +319,15 @@ function askPrompt(query) {
 async function submitRagQuery() {
   const q = ragQuery.value.trim();
   if (!q) return;
+  const requestId = ++searchUiRequestId;
   ragError.value = '';
   ragResult.value = null;
   citationsExpanded.value = false;
   try {
-    ragResult.value = await store.searchDishes(buildSearchPayload(q, 1));
+    const result = await store.searchDishes(buildSearchPayload(q, 1));
+    if (requestId === searchUiRequestId && result) ragResult.value = result;
   } catch (err) {
+    if (requestId !== searchUiRequestId) return;
     store.clearDishSearch();
     ragError.value = err.message || 'AI 检索失败，请重试。';
   }
@@ -323,7 +336,7 @@ async function submitRagQuery() {
 function buildSearchPayload(query, page = 1) {
   return {
       page,
-      pageSize: 50,
+      pageSize: DISH_PAGE_SIZE,
       query,
       filters: {
         itemType: catalogItemType.value,
@@ -339,11 +352,15 @@ function buildSearchPayload(query, page = 1) {
 async function changeSearchPage(page) {
   const targetPage = Number(page);
   if (!ragResult.value || ragLoading.value || !Number.isInteger(targetPage) || targetPage < 1 || targetPage > searchPageCount.value || targetPage === searchPage.value) return;
+  const requestId = ++searchUiRequestId;
   try {
-    ragResult.value = await store.searchDishes(buildSearchPayload(ragQuery.value.trim(), targetPage));
+    const result = await store.searchDishes(buildSearchPayload(ragQuery.value.trim(), targetPage));
+    if (requestId !== searchUiRequestId || !result) return;
+    ragResult.value = result;
     citationsExpanded.value = false;
-    scrollToTop();
+    await scrollToTop();
   } catch (error) {
+    if (requestId !== searchUiRequestId) return;
     ragError.value = error.message || '检索分页加载失败，请重试。';
   }
 }

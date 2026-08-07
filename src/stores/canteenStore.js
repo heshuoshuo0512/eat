@@ -107,7 +107,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const error = ref('');
   const searchFilters = ref({ keyword: '', maxPrice: 25, taste: '不限', halalOnly: false });
   const todayMenu = ref({ date: '', mealType: 'lunch', menus: [], dishes: [], source: 'fallback' });
-  const catalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
+  const catalogPage = ref({ page: 0, pageSize: 20, total: 0, hasMore: false });
   const catalogCategories = ref({ meal: [], snack: [], beverage: [] });
   const reservationCatalogPage = ref({ page: 0, pageSize: 50, total: 0, hasMore: false });
   const remoteRankings = ref({ dishes: [], stalls: [], canteens: [] });
@@ -127,6 +127,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const retrievalReindexResult = ref(null);
   const dishSearchResult = ref(emptyDishSearchResult());
   const dishSearchLoading = ref(false);
+  let dishSearchRequestId = 0;
   const recommendationLoading = ref(false);
   const contextualRecommendation = ref(emptyContextualRecommendation());
   const healthPlan = ref(null);
@@ -146,7 +147,7 @@ export const useCanteenStore = defineStore('canteen', () => {
       const [venuesResult, firstStalls, dishesResult, dishRanks, stallRanks, venueRanks] = await Promise.all([
         apiClient.catalogVenues(),
         apiClient.catalogStalls({ page: 1, pageSize: 100 }),
-        apiClient.dishesSearch({ page: 1, pageSize: 50, sort: 'rating_desc' }),
+        apiClient.dishesSearch({ page: 1, pageSize: 20, sort: 'rating_desc' }),
         apiClient.catalogRankings({ type: 'dishes', page: 1, pageSize: 20 }),
         apiClient.catalogRankings({ type: 'stalls', page: 1, pageSize: 20 }),
         apiClient.catalogRankings({ type: 'venues', page: 1, pageSize: 20 })
@@ -165,7 +166,7 @@ export const useCanteenStore = defineStore('canteen', () => {
         reviews: [],
         dishPreferences: preferences.preferences || []
       });
-      catalogPage.value = dishesResult.page || { page: 1, pageSize: 50, total: dishesResult.items?.length || 0, hasMore: false };
+      catalogPage.value = dishesResult.page || { page: 1, pageSize: 20, total: dishesResult.items?.length || 0, hasMore: false };
       remoteRankings.value = { dishes: dishRanks.items || [], stalls: stallRanks.items || [], canteens: venueRanks.items || [] };
       rankingMeta.value = { dishes: dishRanks.ranking || null, stalls: stallRanks.ranking || null, canteens: venueRanks.ranking || null };
       todayMenu.value = { date: '', mealType: state.value.profile.mealType, menus: [], dishes: [], source: 'stable_catalog' };
@@ -215,11 +216,13 @@ export const useCanteenStore = defineStore('canteen', () => {
   }
 
   async function searchDishes(payload, { append = false } = {}) {
+    const requestId = ++dishSearchRequestId;
     dishSearchLoading.value = true;
     const previous = append ? dishSearchResult.value : emptyDishSearchResult();
     if (!append) dishSearchResult.value = { ...previous, query: String(payload?.query || '').trim() };
     try {
       const result = await apiClient.dishesSearch(payload);
+      if (requestId !== dishSearchRequestId) return result;
       const entities = new Map((append ? previous.items : []).map((item) => [String(item.id), item]));
       for (const item of result.items || []) entities.set(String(item.id), item);
       dishSearchResult.value = {
@@ -232,6 +235,7 @@ export const useCanteenStore = defineStore('canteen', () => {
       };
       return dishSearchResult.value;
     } catch (error) {
+      if (requestId !== dishSearchRequestId) return null;
       dishSearchResult.value = {
         ...emptyDishSearchResult(),
         query: String(payload?.query || '').trim(),
@@ -239,11 +243,11 @@ export const useCanteenStore = defineStore('canteen', () => {
       };
       throw error;
     } finally {
-      dishSearchLoading.value = false;
+      if (requestId === dishSearchRequestId) dishSearchLoading.value = false;
     }
   }
 
-  async function loadCatalogDishes({ page = 1, pageSize = 50, ...filters } = {}) {
+  async function loadCatalogDishes({ page = 1, pageSize = 20, ...filters } = {}) {
     const result = await apiClient.dishesSearch({ page, pageSize, ...filters });
     // Pagination owns the visible catalog page; do not retain previous pages.
     mergeDishes(result.items || [], { replace: true });
@@ -260,7 +264,7 @@ export const useCanteenStore = defineStore('canteen', () => {
 
   async function loadMoreCatalog(filters = {}) {
     if (!catalogPage.value.hasMore) return { items: [], page: catalogPage.value };
-    return loadCatalogDishes({ ...filters, page: catalogPage.value.page + 1, pageSize: catalogPage.value.pageSize || 50 });
+    return loadCatalogDishes({ ...filters, page: catalogPage.value.page + 1, pageSize: catalogPage.value.pageSize || 20 });
   }
 
   async function fetchDishDetail(id) {
@@ -670,6 +674,7 @@ export const useCanteenStore = defineStore('canteen', () => {
   const studentReviewSummary = ref({ averageRating: 0, dishReviews: 0, canteenReviews: 0 });
   const communityPosts = ref([]);
   const communityPostTotal = ref(0);
+  const communityPostDraft = ref(null);
   const adminPosts = ref([]);
   const adminPostTotal = ref(0);
   const adminCommunityReports = ref([]);
@@ -863,8 +868,11 @@ export const useCanteenStore = defineStore('canteen', () => {
     const result = await apiClient.createPost(payload);
     communityPosts.value = [result.post, ...communityPosts.value.filter((post) => post.id !== result.post.id)];
     communityPostTotal.value += 1;
-    return result.post;
+    return result;
   }
+
+  function saveCommunityPostDraft(draft) { communityPostDraft.value = draft ? { ...draft } : null; }
+  function clearCommunityPostDraft() { communityPostDraft.value = null; }
 
   async function reactToCommunityContent(type, id, reaction) {
     const result = await apiClient.reactToContent(type, id, reaction);
@@ -1140,6 +1148,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     studentReviewSummary,
     communityPosts,
     communityPostTotal,
+    communityPostDraft,
     adminPosts,
     adminPostTotal,
     adminCommunityReports,
@@ -1182,6 +1191,7 @@ export const useCanteenStore = defineStore('canteen', () => {
     loadStudentReviews,
     loadCommunityPosts,
     createCommunityPost, reactToCommunityContent, reportCommunityContent, updateCommunityContent, deleteCommunityContent, setCommunityArchive,
+    saveCommunityPostDraft, clearCommunityPostDraft,
     listPostComments: apiClient.listPostComments, createPostComment: apiClient.createPostComment,
     updatePostComment: apiClient.updatePostComment, deletePostComment: apiClient.deletePostComment, reportPostComment: apiClient.reportPostComment,
     loadPostsAdmin,

@@ -19,10 +19,10 @@ describe('miniapp discovery and community search UI contracts', () => {
     assert.match(recommend, /switchTab\(\{ url: '\/pages\/dishes\/dishes' \}\)/);
   });
 
-  it('shows one ranked dish first and expands only on explicit action', () => {
+  it('shows the complete current search page while keeping recommendations expandable', () => {
     assert.match(dishes, /visibleDishes/);
-    assert.match(dishes, /resultsExpanded/);
-    assert.match(dishes, /查看全部 .*道排名菜品/);
+    assert.match(dishes, /searchPageSize=20/);
+    assert.doesNotMatch(dishes, /resultsExpanded/);
     assert.match(dishes, /visibleMealPicks/);
     assert.match(dishes, /recommendExpanded/);
     assert.match(dishes, /查看全部 .*道排名菜品/);

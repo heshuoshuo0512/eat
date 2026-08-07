@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 let IORedis;
 try {
   const mod = await import('ioredis');
@@ -188,4 +190,16 @@ function keyPart(value, fallback = 'all') {
 
 export function rankingCacheKey({ tenantId = 'default', date = 'current', mealType = 'all' } = {}) {
   return `sc:v1:${keyPart(tenantId, 'default')}:ranking:${keyPart(date, 'current')}:${keyPart(mealType, 'all')}`;
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
+  return value == null ? null : value;
+}
+
+export function dishSearchCacheKey({ tenantId = 'default', catalogRevision = '', viewerRole = 'anonymous', request = {} } = {}) {
+  const payload = stableValue({ tenantId, catalogRevision, viewerRole, request });
+  const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  return `sc:v1:${keyPart(tenantId, 'default')}:dish-search:${digest}`;
 }

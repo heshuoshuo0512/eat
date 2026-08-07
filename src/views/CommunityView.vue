@@ -40,6 +40,7 @@
   <section v-else-if="store.communityPosts.length" class="post-feed">
     <article v-for="post in store.communityPosts" :key="post.id" class="post-item">
       <header><div class="avatar">{{ post.user?.slice(0, 1) || '同' }}</div><div><strong>{{ post.user }}</strong><small>{{ formatDate(post.createdAt) }}</small></div><span v-if="post.isOwn" class="status-badge" :class="post.status">{{ statusLabel(post.status) }}</span></header>
+      <p v-if="post.isOwn && post.moderation?.reasonCodes?.length" class="moderation-note">{{ moderationReasonText(post.moderation) }}</p>
       <p class="post-content">{{ post.content }}</p>
       <img v-if="post.imageUrl" class="post-image" :src="post.imageUrl" :alt="`${post.user} 发布的用餐图片`" />
       <footer>
@@ -58,8 +59,9 @@
       </div>
       <section v-if="openCommentsId === post.id" class="comment-panel">
         <p v-if="commentsLoading">正在加载评论…</p>
-        <div v-for="comment in commentsByPost[post.id] || []" :key="comment.id" class="comment-row"><strong>{{ comment.user }}</strong><span>{{ comment.content }}</span><time>{{ formatDate(comment.createdAt) }}</time><div class="comment-actions"><button v-if="comment.isOwn" type="button" @click="editComment(post, comment)">修改</button><button v-if="comment.isOwn" type="button" @click="deleteComment(post, comment)">删除</button><button v-if="!comment.isOwn" type="button" @click="reportComment(post, comment)">举报</button></div></div>
-        <form class="comment-form" @submit.prevent="submitComment(post)"><input v-model.trim="commentDrafts[post.id]" maxlength="300" placeholder="写评论"><button class="primary" type="submit">发布</button></form>
+        <div v-for="comment in commentsByPost[post.id] || []" :key="comment.id" class="comment-row"><strong>{{ comment.user }}</strong><span>{{ comment.content }}</span><time>{{ formatDate(comment.createdAt) }}</time><span v-if="comment.isOwn" class="status-badge" :class="comment.status">{{ statusLabel(comment.status) }}</span><small v-if="comment.isOwn && comment.moderation?.reasonCodes?.length" class="moderation-note">{{ moderationReasonText(comment.moderation) }}</small><div class="comment-actions"><button v-if="comment.isOwn" type="button" @click="editComment(post, comment)">修改</button><button v-if="comment.isOwn" type="button" @click="deleteComment(post, comment)">删除</button><button v-if="!comment.isOwn" type="button" @click="reportComment(post, comment)">举报</button></div></div>
+        <p v-if="commentMessages[post.id]" class="form-message" :class="{ danger: commentErrors[post.id] }">{{ commentMessages[post.id] }}</p>
+        <form class="comment-form" @submit.prevent="submitComment(post)"><input v-model.trim="commentDrafts[post.id]" maxlength="300" placeholder="写评论"><button class="primary" type="submit" :disabled="commentSubmitting[post.id]">{{ commentSubmitting[post.id] ? '发布中…' : '发布' }}</button></form>
       </section>
     </article>
   </section>
@@ -68,11 +70,12 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 import SearchSelect from '../components/SearchSelect.vue';
 import { useCanteenStore } from '../stores/canteenStore.js';
 
 const store = useCanteenStore();
+const router = useRouter();
 const composerOpen = ref(false);
 const submitting = ref(false);
 const composerMessage = ref('');
@@ -129,6 +132,11 @@ const commentsByPost = reactive({});
 const commentDrafts = reactive({});
 const openCommentsId = ref('');
 const commentsLoading = ref(false);
+const commentSubmitting = reactive({});
+const commentMessages = reactive({});
+const commentErrors = reactive({});
+const uploadedImageReference = ref('');
+const uploadedImageUrl = ref('');
 let dishSearchTimer;
 let feedDishSearchTimer;
 
@@ -190,28 +198,77 @@ function selectImage(event) {
     return;
   }
   clearImage();
+  uploadedImageReference.value = '';
+  uploadedImageUrl.value = '';
   imageFile.value = file;
   imagePreview.value = URL.createObjectURL(file);
 }
 
-function clearImage() { if (imagePreview.value) URL.revokeObjectURL(imagePreview.value); imagePreview.value = ''; imageFile.value = null; }
+function clearImage() { if (imagePreview.value && imagePreview.value.startsWith('blob:')) URL.revokeObjectURL(imagePreview.value); imagePreview.value = ''; imageFile.value = null; uploadedImageReference.value = ''; uploadedImageUrl.value = ''; }
 function fileToBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '').split(',')[1] || ''); reader.onerror = reject; reader.readAsDataURL(file); }); }
+
+function savePostDraft() {
+  store.saveCommunityPostDraft({
+    form: { ...form },
+    selectedCanteenId: selectedCanteenId.value,
+    selectedStallId: selectedStallId.value,
+    imageFile: imageFile.value,
+    uploadedImageReference: uploadedImageReference.value,
+    uploadedImageUrl: uploadedImageUrl.value,
+  });
+}
+
+async function restorePostDraft() {
+  const draft = store.communityPostDraft;
+  if (!draft) return;
+  Object.assign(form, draft.form || {});
+  selectedCanteenId.value = draft.selectedCanteenId || '';
+  selectedStallId.value = draft.selectedStallId || '';
+  uploadedImageReference.value = draft.uploadedImageReference || '';
+  uploadedImageUrl.value = draft.uploadedImageUrl || '';
+  imageFile.value = draft.imageFile || null;
+  if (imageFile.value) imagePreview.value = URL.createObjectURL(imageFile.value);
+  else imagePreview.value = uploadedImageUrl.value;
+  composerOpen.value = true;
+  if (selectedStallId.value) {
+    try {
+      const result = await store.loadCommunityDishOptions({ stallId: selectedStallId.value, page: 1, pageSize: 100 });
+      availableDishes.value = result.options || [];
+    } catch { availableDishes.value = []; }
+  }
+}
 
 async function submitPost() {
   const targetId = form.targetType === 'canteen' ? selectedCanteenId.value : form.targetId;
   if (!targetId || form.content.length < 2) { composerMessage.value = '请选择关联对象并填写帖子内容。'; composerError.value = true; return; }
+  if (!store.user) { savePostDraft(); composerMessage.value = '请先登录后再发布帖子'; composerError.value = true; return; }
+  if (!store.user.profileComplete) {
+    savePostDraft();
+    await router.push({ path: '/profile', query: { returnTo: '/community', resumePost: '1' } });
+    return;
+  }
   submitting.value = true; composerMessage.value = ''; composerError.value = false;
   try {
-    let imageUrl = '';
-    if (imageFile.value) {
+    let imageUrl = uploadedImageReference.value || '';
+    if (imageFile.value && !imageUrl) {
       const upload = await store.uploadImage({ filename: imageFile.value.name, contentType: imageFile.value.type, dataBase64: await fileToBase64(imageFile.value) });
-      imageUrl = upload.reference || upload.url;
+      uploadedImageReference.value = upload.reference || '';
+      uploadedImageUrl.value = upload.url || upload.publicUrl || '';
+      imageUrl = uploadedImageReference.value || uploadedImageUrl.value;
     }
-    await store.createCommunityPost({ targetType: form.targetType, targetId, content: form.content, imageUrl, rating: form.targetType === 'dish' && form.rating ? form.rating : null });
-    composerMessage.value = '帖子已发布，自动规则通过后会立即公开。';
-    form.content = ''; form.rating = 0; form.targetId = ''; selectedCanteenId.value = ''; selectedStallId.value = ''; clearImage();
+    const result = await store.createCommunityPost({ targetType: form.targetType, targetId, content: form.content, imageUrl, rating: form.targetType === 'dish' && form.rating ? form.rating : null });
+    composerMessage.value = result.moderation?.status === 'rejected' ? moderationReasonText(result.moderation) : result.moderation?.status === 'pending' ? '内容正在审核，该帖子仅对你和管理员可见' : '帖子已公开';
+    composerError.value = result.moderation?.status === 'rejected';
+    form.content = ''; form.rating = 0; form.targetId = ''; selectedCanteenId.value = ''; selectedStallId.value = ''; uploadedImageReference.value = ''; uploadedImageUrl.value = ''; clearImage(); store.clearCommunityPostDraft();
     await loadPosts();
-  } catch (error) { composerError.value = true; composerMessage.value = error.message || '帖子发布失败'; }
+  } catch (error) {
+    if (error.status === 428 || error.code === 'PROFILE_REQUIRED') {
+      savePostDraft();
+      await router.push({ path: '/profile', query: { returnTo: '/community', resumePost: '1' } });
+      return;
+    }
+    composerError.value = true; composerMessage.value = error.message || '帖子发布失败';
+  }
   finally { submitting.value = false; }
 }
 
@@ -225,7 +282,7 @@ async function loadPosts() {
       q: feedKeyword.value,
       canteenId: feedCanteenId.value,
       dishId: feedDishId.value,
-      limit: 100
+       limit: 100
     });
   } catch (error) {
     loadError.value = error.message || '帖子加载失败';
@@ -236,6 +293,7 @@ async function loadPosts() {
 function targetLink(post) { return post.dish ? { name: 'dish-detail', params: { id: post.dish.id } } : { path: '/canteens', query: { canteen: post.canteen?.id } }; }
 function formatDate(value) { return String(value || '').replace('T', ' ').slice(0, 16); }
 function statusLabel(status) { return { pending: '审核中', approved: '已公开', rejected: '未通过', archived: '已封存' }[status] || status; }
+function moderationReasonText(moderation) { return `审核结果：${(moderation?.reasonCodes || []).join('、') || 'RULES_UNAVAILABLE'}`; }
 async function react(post, reaction) { await store.reactToCommunityContent('post', post.id, post.viewerReaction === reaction ? null : reaction); }
 async function report(post) { if (window.confirm('确认举报这条帖子？')) await store.reportCommunityContent('post', post.id, { reason: 'inappropriate' }); }
 async function toggleComments(post) {
@@ -247,10 +305,17 @@ async function toggleComments(post) {
 async function submitComment(post) {
   const content = commentDrafts[post.id]?.trim();
   if (!content) return;
-  const result = await store.createPostComment(post.id, content);
-  commentsByPost[post.id] = [...(commentsByPost[post.id] || []), result.comment];
-  commentDrafts[post.id] = '';
-  post.engagement = { ...(post.engagement || {}), comments: Number(post.engagement?.comments || 0) + 1 };
+  commentSubmitting[post.id] = true; commentErrors[post.id] = false; commentMessages[post.id] = '';
+  try {
+    const result = await store.createPostComment(post.id, content);
+    commentsByPost[post.id] = [...(commentsByPost[post.id] || []), { ...result.comment, moderation: result.moderation }];
+    commentDrafts[post.id] = '';
+    post.engagement = { ...(post.engagement || {}), comments: Number(post.engagement?.comments || 0) + 1 };
+    commentMessages[post.id] = result.moderation?.status === 'rejected' ? moderationReasonText(result.moderation) : result.moderation?.status === 'pending' ? '评论正在审核' : '评论已公开';
+  } catch (error) {
+    commentErrors[post.id] = true;
+    commentMessages[post.id] = error.status === 428 ? '请先完善头像和昵称' : (error.message || '评论发布失败');
+  } finally { commentSubmitting[post.id] = false; }
 }
 async function editPost(post) {
   const content = window.prompt('修改帖子内容，提交后将重新审核', post.content);
@@ -294,7 +359,7 @@ async function reportComment(post, comment) {
   catch (error) { window.alert(error.message || '评论举报失败'); }
 }
 async function deletePost(post) { if (window.confirm('删除后无法恢复，确认删除这条帖子？')) await store.deleteCommunityContent('post', post.id); }
-onMounted(loadPosts);
+onMounted(async () => { await restorePostDraft(); await loadPosts(); });
 onBeforeUnmount(() => { clearImage(); clearTimeout(dishSearchTimer); clearTimeout(feedDishSearchTimer); });
 </script>
 
@@ -312,6 +377,7 @@ onBeforeUnmount(() => { clearImage(); clearTimeout(dishSearchTimer); clearTimeou
 .post-feed { columns: 2; column-gap: 16px; }.post-item { break-inside: avoid; display: grid; gap: 14px; margin-bottom: 16px; padding: 18px; border: 1px solid rgba(31, 122, 77, .14); border-radius: 8px; background: #fff; animation: post-enter .34s ease both; transition: transform .22s ease, box-shadow .22s ease; }.post-item:hover { transform: translateY(-3px); box-shadow: 0 14px 28px rgba(21, 95, 59, .09); }.post-item:active { transform: scale(.99); }
 .post-item header { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 10px; }.post-item header > div:nth-child(2) { display: grid; gap: 2px; }.avatar { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: var(--primary); color: #fff; font-weight: 800; }.status-badge { padding: 4px 8px; border-radius: 10px; font-size: 11px; background: #eef2ed; }.status-badge.pending { color: #956400; background: #fff5d9; }.status-badge.approved { color: var(--primary-dark); background: #e8f4e5; }.status-badge.rejected { color: #a33737; background: #fdeaea; }
 .post-content { margin: 0; line-height: 1.75; white-space: pre-wrap; }.post-image { width: 100%; max-height: 440px; object-fit: cover; border-radius: 6px; }.post-item footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid rgba(31, 122, 77, .1); padding-top: 12px; }.post-target { display: grid; grid-template-columns: 30px minmax(0, 1fr); color: inherit; text-decoration: none; min-width: 0; }.post-target > span { grid-row: 1 / 3; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: #edf6e9; color: var(--primary-dark); font-size: 11px; }.post-target small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.post-rating { white-space: nowrap; color: #c9cec7; }.post-rating .active { color: #e0a11a; }
+.moderation-note { margin: 0; color: #a33737; font-size: 12px; line-height: 1.45; }
 .post-actions { display:flex; gap:6px; flex-wrap:wrap; }.post-actions button { min-height:32px; padding:0 9px; border:1px solid #dce5da; border-radius:5px; color:var(--muted); background:#fff; }.post-actions button.active { color:var(--primary-dark); border-color:#a9c9a4; background:#eef6eb; }.post-actions .danger-text { color:#a33737; }
 .comment-panel { display:grid; gap:8px; padding:12px; border-top:1px solid rgba(31,122,77,.1); background:#f8faf7; }.comment-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:8px; align-items:start; font-size:13px; }.comment-row time { color:var(--muted); font-size:11px; }.comment-form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; }.comment-form input { min-height:38px; }
 @keyframes composer-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
