@@ -41,7 +41,7 @@
             <span class="region-card-icon" aria-hidden="true">{{ region.icon }}</span>
           </div>
           <div class="region-card-body">
-            <span class="eyebrow">{{ region.subtitle }} · {{ region.source === 'derived' ? '推断分组' : '数据库标签' }}</span>
+            <span class="eyebrow">{{ region.subtitle }} · {{ regionSourceLabel(region) }}</span>
             <h2>{{ region.name }}</h2>
             <p>{{ region.description }}</p>
             <div class="region-card-meta">
@@ -66,7 +66,7 @@
         <span v-else class="region-card-fallback">{{ selectedRegion.icon }}</span>
       </div>
       <div class="region-detail-copy">
-        <p class="eyebrow">{{ selectedRegion.subtitle }} · {{ selectedRegion.source === 'derived' ? '推断分组' : '数据库标签' }}</p>
+        <p class="eyebrow">{{ selectedRegion.subtitle }} · {{ regionSourceLabel(selectedRegion) }}</p>
         <h2>{{ selectedRegion.name }}</h2>
         <p class="hero-copy">{{ selectedRegion.description }}</p>
         <div class="metric-grid compact region-stats">
@@ -224,6 +224,12 @@ function dishStallLabel(dish) {
 
 function dishRegionLabel(dish) {
   return dish.regionLabel || selectedRegion.value?.name || '其他地域风味（待核验）';
+}
+
+function regionSourceLabel(region) {
+  if (region?.source === 'unresolved') return '待人工核验';
+  if (region?.source === 'regional_taste') return '数据库地域标签';
+  return '逐条证据推断';
 }
 
 function regionEvidenceText(dish) {
