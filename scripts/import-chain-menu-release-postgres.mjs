@@ -234,10 +234,19 @@ async function main() {
       console.log(JSON.stringify({ ...summary, rolledBackDishCount: dishIds.length }, null, 2));
       return;
     }
+    if (existingBatch.rowCount) {
+      if (existingBatch.rows[0].release_digest !== digest) throw new Error('Existing release batch digest differs');
+      if (existingBatch.rows[0].status === 'imported') {
+        await client.query('ROLLBACK');
+        console.log(JSON.stringify({ ...summary, alreadyImported: true, existingStatus: 'imported' }, null, 2));
+        return;
+      }
+      throw new Error(`Release batch is not safely retryable: ${existingBatch.rows[0].status}`);
+    }
     const target = await validateTarget(client, release);
-    if (!apply || existingBatch.rowCount) {
+    if (!apply) {
       await client.query('ROLLBACK');
-      console.log(JSON.stringify({ ...summary, target, alreadyImported: existingBatch.rowCount > 0, existingStatus: existingBatch.rows[0]?.status || null }, null, 2));
+      console.log(JSON.stringify({ ...summary, target, alreadyImported: false, existingStatus: null }, null, 2));
       return;
     }
     const stallRecords = await ensureStalls(client, release, target.stallById);
