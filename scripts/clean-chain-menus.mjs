@@ -11,7 +11,6 @@ const targetLocations = {
   '0090汉堡工厂.md': ['0090汉堡工厂（大榕树餐厅）'],
   '茶百道.md': ['茶百道（广缘店）'],
   '茶瀑布.md': ['茶瀑布（西区大食堂3楼东）'],
-  '华莱士.md': [],
   '橘包包现烤面包.md': ['橘包包现烤面包（燕大西区广缘店）'],
   '肯德基.md': ['肯德基（广缘店）'],
   '库迪咖啡.md': ['库迪咖啡（广缘店）'],
@@ -112,6 +111,7 @@ function buildAudit() {
 
   for (const file of files) {
     const sourceName = file.split(/[\\/]/).pop();
+    if (sourceName === '华莱士.md') continue;
     if (sourceName === '连锁店菜单合集.md') {
       sourceAudit.push({ sourceName, status: 'reference_only', reason: 'aggregate_duplicate_source', sha256: sha256(readFileSync(file)) });
       continue;
